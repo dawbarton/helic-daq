@@ -6,9 +6,10 @@
 //! GP18 SCK, GP19 MOSI, GP20 RSTn, GP21 INTn, GP25 LED.
 //!
 //! Assignments made here:
-//! - GP0/GP1: UART0 TX/RX, optoNCDT laser (claimed in a later milestone)
+//! - GP0/GP1: UART0 TX/RX, optoNCDT laser (core 0)
 //! - GP2/GP3/GP4: AD7608 OS0/OS1/OS2
-//! - GP5: AD7608 RANGE, GP6: RESET, GP7: BUSY (input), GP8: CONVST
+//! - GP5: AD7608 RANGE, GP6: RESET, GP7: BUSY (input)
+//! - GP8: AD7608 CONVST — PWM slice 4 output A, the hardware sample clock
 //! - GP9: AD5064 ~SYNC (CS), GP15: AD5064 ~LDAC (held low)
 //! - GP10/GP11/GP12: SPI1 SCK/MOSI/MISO (shared: AD7608 + AD5064)
 //! - GP13: AD7608 ~CS, GP14: tick-timing debug pin
@@ -24,11 +25,13 @@ use cbc_drivers::ad5064::{Ad5064, ChannelPolarity};
 use cbc_drivers::ad7608::{Ad7608, ConfigPins};
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
-use embassy_rp::peripherals::{CORE1, SPI1};
+use embassy_rp::peripherals::{CORE1, DMA_CH1, PIN_1, PIN_8, PWM_SLICE4, SPI1, UART0};
+use embassy_rp::pwm::{self, Pwm};
 use embassy_rp::spi::{self, Blocking, Spi};
 use embassy_rp::{Peri, Peripherals};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use fixed::traits::ToFixed;
 use static_cell::StaticCell;
 
 /// DAC reference voltage (ADR-series reference on the analog board).
@@ -58,8 +61,19 @@ pub struct Board {
     pub led: Output<'static>,
     /// Everything the real-time loop owns, to be moved to core 1.
     pub analog: AnalogParts,
+    /// optoNCDT laser UART, owned by core 0.
+    pub laser: LaserParts,
     /// Second core, handed to `spawn_core1`.
     pub core1: Peri<'static, CORE1>,
+}
+
+/// Unconstructed UART0 RX for the laser sensor (assembled in `main`, where
+/// the interrupt bindings live). GP0 stays reserved for TX (sensor commands,
+/// later milestone).
+pub struct LaserParts {
+    pub uart: Peri<'static, UART0>,
+    pub rx: Peri<'static, PIN_1>,
+    pub rx_dma: Peri<'static, DMA_CH1>,
 }
 
 /// The core-1 peripherals in unassembled (`Send`) form.
@@ -68,15 +82,14 @@ pub struct AnalogParts {
     pub tick_pin: Output<'static>,
     /// AD7608 BUSY (GP7): falls when conversion data is ready.
     pub adc_busy: Input<'static>,
-    /// AD7608 CONVST (GP8). Plain output for now; becomes a PWM slice
-    /// output (hardware-timed sample clock) in the RT-loop milestone.
-    pub adc_convst: Output<'static>,
     /// AD5064 ~LDAC (GP15), held low: write-and-update per channel.
     pub dac_ldac: Output<'static>,
     spi: Spi<'static, SPI1, Blocking>,
     adc_cs: Output<'static>,
     adc_pins: ConfigPins<Output<'static>>,
     dac_cs: Output<'static>,
+    convst_slice: Peri<'static, PWM_SLICE4>,
+    convst_pin: Peri<'static, PIN_8>,
 }
 
 /// The assembled core-1 analog subsystem.
@@ -85,10 +98,9 @@ pub struct RtAnalog {
     pub dac: Dac,
     /// AD7608 BUSY: falls when conversion data is ready.
     pub adc_busy: Input<'static>,
-    /// AD7608 CONVST; PWM-driven in the RT-loop milestone.
-    pub adc_convst: Output<'static>,
     /// Tick-timing debug pin.
     pub tick_pin: Output<'static>,
+    convst: Option<(Peri<'static, PWM_SLICE4>, Peri<'static, PIN_8>)>,
 }
 
 impl AnalogParts {
@@ -123,9 +135,24 @@ impl AnalogParts {
             adc: Ad7608::new(adc_spi, self.adc_pins),
             dac: Ad5064::new(dac_spi, DAC_POLARITY, DAC_VREF),
             adc_busy: self.adc_busy,
-            adc_convst: self.adc_convst,
             tick_pin: self.tick_pin,
+            convst: Some((self.convst_slice, self.convst_pin)),
         }
+    }
+}
+
+impl RtAnalog {
+    /// Start the hardware sample clock: CONVST as a free-running PWM output.
+    /// Conversion starts on each rising edge, crystal-timed — software jitter
+    /// cannot move the sampling instant. Call after ADC init; the returned
+    /// handle must be kept alive.
+    pub fn start_convst_pwm(&mut self, divider: u8, top: u16) -> Pwm<'static> {
+        let (slice, pin) = self.convst.take().expect("CONVST PWM already started");
+        let mut cfg = pwm::Config::default();
+        cfg.divider = divider.to_fixed();
+        cfg.top = top;
+        cfg.compare_a = top / 2; // 50% duty; only the rising edge matters
+        Pwm::new_output_a(slice, pin, cfg)
     }
 }
 
@@ -137,8 +164,8 @@ impl Board {
             led: Output::new(p.PIN_25, Level::Low),
             analog: AnalogParts {
                 tick_pin: Output::new(p.PIN_14, Level::Low),
-                adc_busy: Input::new(p.PIN_7, Pull::None),
-                adc_convst: Output::new(p.PIN_8, Level::Low),
+                // Pull BUSY down so a missing ADC reads as "not converting".
+                adc_busy: Input::new(p.PIN_7, Pull::Down),
                 dac_ldac: Output::new(p.PIN_15, Level::Low),
                 spi,
                 adc_cs: Output::new(p.PIN_13, Level::High),
@@ -150,6 +177,13 @@ impl Board {
                     reset: Output::new(p.PIN_6, Level::Low),
                 },
                 dac_cs: Output::new(p.PIN_9, Level::High),
+                convst_slice: p.PWM_SLICE4,
+                convst_pin: p.PIN_8,
+            },
+            laser: LaserParts {
+                uart: p.UART0,
+                rx: p.PIN_1,
+                rx_dma: p.DMA_CH1,
             },
             core1: p.CORE1,
         }
