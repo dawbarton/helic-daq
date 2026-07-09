@@ -22,6 +22,20 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+  python:
+    name: Host package (cbc_daq)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: host
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy
+      - run: PYTHONPATH=.:tests python -m unittest discover -s tests -v
+
   firmware:
     name: Firmware (thumbv8m.main-none-eabihf)
     runs-on: ubuntu-latest

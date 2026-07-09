@@ -7,7 +7,7 @@
 //! 3       1     n_sources   values per record
 //! 4       4     seq         packet counter (LE)
 //! 8       4     first_index sample index of the first record (LE, wraps)
-//! 12      4     dropped     records dropped at source since stream start
+//! 12      4     dropped     cumulative records dropped at source (since boot)
 //! 16      2     decimation  records are every decimation-th sample
 //! 18      2     n_records
 //! 20      -     payload: n_records × n_sources × f32 (LE)
