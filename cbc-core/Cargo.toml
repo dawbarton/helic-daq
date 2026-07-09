@@ -1,0 +1,11 @@
+[package]
+name = "cbc-core"
+description = "Hardware-independent DSP for control-based continuation: signal generators, controllers, filters, Fourier estimation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libm = "0.2.16"
+
+[dev-dependencies]

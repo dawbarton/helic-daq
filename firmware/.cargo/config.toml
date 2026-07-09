@@ -1,0 +1,16 @@
+[build]
+target = "thumbv8m.main-none-eabihf"
+
+[target.thumbv8m.main-none-eabihf]
+# Flash and run with defmt logging over RTT (requires a debug probe and
+# probe-rs: `cargo install probe-rs-tools`). Without a probe, build a UF2
+# with `picotool uf2 convert` and flash via BOOTSEL.
+runner = "probe-rs run --chip RP235x"
+rustflags = [
+    "-C", "link-arg=--nmagic",
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=-Tdefmt.x",
+]
+
+[env]
+DEFMT_LOG = "debug"

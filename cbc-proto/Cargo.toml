@@ -1,0 +1,8 @@
+[package]
+name = "cbc-proto"
+description = "Wire protocol shared between the CBC-DAQ firmware and host: framing, message types, parameter type codes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

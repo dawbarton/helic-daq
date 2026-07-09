@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["cbc-core", "cbc-proto"]
+# The firmware is its own workspace: it always builds for
+# thumbv8m.main-none-eabihf (see firmware/.cargo/config.toml), whereas the
+# crates here build and test on the host.
+exclude = ["firmware"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+lto = true

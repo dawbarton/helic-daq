@@ -1,0 +1,5 @@
+target/
+*.uf2
+__pycache__/
+*.egg-info/
+.venv/
