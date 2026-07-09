@@ -30,6 +30,20 @@ pub trait Controller {
     /// Reset internal state (integrators, filter history). Called when
     /// control is enabled or re-armed.
     fn reset(&mut self) {}
+
+    /// Names of the controller's host-settable parameters, in `set_param`
+    /// id order. The firmware appends these to its parameter registry, so
+    /// adding a gain here makes it host-visible with no protocol changes.
+    fn param_names() -> &'static [&'static str]
+    where
+        Self: Sized,
+    {
+        &[]
+    }
+
+    /// Set a controller parameter by id (index into `param_names`).
+    /// Unknown ids are ignored.
+    fn set_param(&mut self, _id: u16, _value: f32) {}
 }
 
 /// Open-loop pass-through: output is the reference itself. The default
@@ -76,6 +90,20 @@ impl Controller for PidController {
 
     fn reset(&mut self) {
         self.pid.reset();
+    }
+
+    fn param_names() -> &'static [&'static str] {
+        &["ctrl_kp", "ctrl_ki", "ctrl_kd", "ctrl_tau_d"]
+    }
+
+    fn set_param(&mut self, id: u16, value: f32) {
+        match id {
+            0 => self.pid.config.kp = value,
+            1 => self.pid.config.ki = value,
+            2 => self.pid.config.kd = value,
+            3 => self.pid.config.tau_d = value,
+            _ => {}
+        }
     }
 }
 

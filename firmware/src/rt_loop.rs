@@ -43,6 +43,8 @@ pub enum RtCommand {
     SetForcingCoeffs(FourierCoeffs<HARMONICS>),
     /// Reset controller state (integrators, filter history).
     ResetController,
+    /// Set a controller parameter (id per `Controller::param_names`).
+    SetCtrlParam(u16, f32),
 }
 
 pub const COMMAND_QUEUE_LEN: usize = 32;
@@ -155,6 +157,7 @@ pub async fn rt_loop(
                 RtCommand::SetTargetCoeffs(c) => target_coeffs = c,
                 RtCommand::SetForcingCoeffs(c) => forcing_coeffs = c,
                 RtCommand::ResetController => controller.reset(),
+                RtCommand::SetCtrlParam(id, value) => controller.set_param(id, value),
             }
         }
 

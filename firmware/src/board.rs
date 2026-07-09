@@ -25,7 +25,10 @@ use cbc_drivers::ad5064::{Ad5064, ChannelPolarity};
 use cbc_drivers::ad7608::{Ad7608, ConfigPins};
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
-use embassy_rp::peripherals::{CORE1, DMA_CH1, PIN_1, PIN_8, PWM_SLICE4, SPI1, UART0};
+use embassy_rp::peripherals::{
+    CORE1, DMA_CH1, DMA_CH2, DMA_CH3, PIN_1, PIN_16, PIN_18, PIN_19, PIN_8, PWM_SLICE4, SPI0, SPI1,
+    UART0,
+};
 use embassy_rp::pwm::{self, Pwm};
 use embassy_rp::spi::{self, Blocking, Spi};
 use embassy_rp::{Peri, Peripherals};
@@ -63,8 +66,23 @@ pub struct Board {
     pub analog: AnalogParts,
     /// optoNCDT laser UART, owned by core 0.
     pub laser: LaserParts,
+    /// On-board W5500 Ethernet controller (SPI0), owned by core 0.
+    pub eth: EthParts,
     /// Second core, handed to `spawn_core1`.
     pub core1: Peri<'static, CORE1>,
+}
+
+/// Unconstructed W5500 interface, per the W5500-EVB-Pico2 wiring.
+pub struct EthParts {
+    pub spi: Peri<'static, SPI0>,
+    pub clk: Peri<'static, PIN_18>,
+    pub mosi: Peri<'static, PIN_19>,
+    pub miso: Peri<'static, PIN_16>,
+    pub cs: Output<'static>,
+    pub int: Input<'static>,
+    pub rst: Output<'static>,
+    pub tx_dma: Peri<'static, DMA_CH2>,
+    pub rx_dma: Peri<'static, DMA_CH3>,
 }
 
 /// Unconstructed UART0 RX for the laser sensor (assembled in `main`, where
@@ -184,6 +202,17 @@ impl Board {
                 uart: p.UART0,
                 rx: p.PIN_1,
                 rx_dma: p.DMA_CH1,
+            },
+            eth: EthParts {
+                spi: p.SPI0,
+                clk: p.PIN_18,
+                mosi: p.PIN_19,
+                miso: p.PIN_16,
+                cs: Output::new(p.PIN_17, Level::High),
+                int: Input::new(p.PIN_21, Pull::Up),
+                rst: Output::new(p.PIN_20, Level::High),
+                tx_dma: p.DMA_CH2,
+                rx_dma: p.DMA_CH3,
             },
             core1: p.CORE1,
         }

@@ -15,6 +15,14 @@ pub const OUTPUT_CHANNEL: usize = 0;
 /// 10/25/50/100/200/500).
 pub const LASER_RANGE_MM: f32 = 50.0;
 
+/// Static IPv4 address and prefix length (flash-stored config is a future
+/// milestone; until then, edit and reflash).
+pub const IP_ADDR: [u8; 4] = [192, 168, 1, 235];
+pub const IP_PREFIX: u8 = 24;
+
+/// Locally administered MAC address.
+pub const MAC_ADDR: [u8; 6] = [0x02, 0xCB, 0xCD, 0x00, 0x00, 0x01];
+
 /// The controller that runs inside every sample tick. Swap the alias (and
 /// `make_controller`) to change the control law at compile time, e.g.:
 ///
