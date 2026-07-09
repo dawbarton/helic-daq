@@ -5,6 +5,9 @@ continuation, built on the RP2350 (W5500-EVB-Pico2) and the Rust Embassy
 framework. Successor to the BeagleBone Black-based
 [rtc](https://github.com/dawbarton/rtc).
 
+- **User guide** (flashing, connecting, CLI/Python usage): [docs/user_guide.md](docs/user_guide.md)
+- **Developer guide** (architecture, extending, testing): [docs/developer_guide.md](docs/developer_guide.md)
+- Wire protocol: [docs/protocol.md](docs/protocol.md)
 - Requirements: [AGENTS.md](AGENTS.md)
 - Design & roadmap: [docs/implementation_plan.md](docs/implementation_plan.md)
 - Periodic signal generator design: [docs/periodic_signal_generator.md](docs/periodic_signal_generator.md)

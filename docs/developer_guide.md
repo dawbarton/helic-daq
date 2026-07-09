@@ -1,0 +1,212 @@
+# CBC-DAQ developer guide
+
+How the code is organised, how the real-time architecture works, and how to
+extend it. Design rationale and the milestone roadmap live in
+[implementation_plan.md](implementation_plan.md); the wire protocol in
+[protocol.md](protocol.md).
+
+## Repository layout
+
+Two Cargo workspaces plus a Python package:
+
+| Path | What | Builds for |
+|---|---|---|
+| `cbc-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
+| `cbc-drivers/` | AD7608, AD5064, optoNCDT drivers over `embedded-hal` 1.0 traits | host + firmware |
+| `cbc-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
+| `firmware/` | The binary: board wiring, RT loop, registry, network servers | `thumbv8m.main-none-eabihf` only (own workspace, own `.cargo/config.toml`) |
+| `host/` | Python package `cbc_daq` + `cbc-daq` CLI | host |
+
+The split exists so that **everything with logic in it is unit-tested on
+the host** (`cargo test` at the root runs ~60 tests; `python -m unittest`
+in `host/` another 24). The firmware crate is deliberately thin: pin
+wiring, task plumbing, and glue.
+
+## Firmware architecture
+
+```
+core 1 (real-time)                       core 0 (everything else)
+┌─────────────────────────────┐          ┌───────────────────────────────┐
+│ rt_loop task                │          │ TCP control server (:2350)    │
+│  PWM slice 4 → CONVST       │ commands │   ParamStore (registry+shadow)│
+│  BUSY↓ → SPI read (AD7608)  │◄─────────│ UDP streamer (:2351)          │
+│  apply queued commands      │  SPSC    │ laser UART task → atomic      │
+│  generators (target+forcing)│          │ status task (1 Hz defmt)      │
+│  controller → DAC (AD5064)  │ records  │ embassy-net + W5500 (SPI0)    │
+│  diagnostics atomics        │─────────►│ heartbeat LED                 │
+└─────────────────────────────┘  SPSC    └───────────────────────────────┘
+```
+
+### Timing (the part that matters most)
+
+The AD7608's CONVST pin is driven by **PWM slice 4** as a free-running
+output. The sampling instant is therefore crystal-timed — software load
+cannot move it. Sample-rate presets map to exact divider/wrap pairs from
+the 150 MHz system clock (`config.rs::SampleRate::pwm_params`).
+
+The software pipeline is edge-triggered: `rt_loop` awaits the BUSY falling
+edge (conversion complete), then runs
+
+1. SPI read of the 144-bit frame (~12 µs at 12 MHz) and scaling to volts;
+2. drain of the command mailbox (parameter updates land here, at a sample
+   boundary, never mid-tick);
+3. one `PhaseAccumulator::step()`, then evaluation of the **target** and
+   **forcing** Fourier series against the same phase (all harmonics of
+   both stay locked forever — wrapping-multiply phases, see
+   `docs/periodic_signal_generator.md`);
+4. `controller.tick(measurements, target, dt) + forcing` → DAC write;
+5. a `Record` pushed into the stream ring; diagnostics updated.
+
+A 2-period timeout on the BUSY wait keeps the loop alive (at reduced rate)
+with no ADC attached, so bench bring-up works; such ticks increment
+`busy_timeouts`.
+
+GP14 is high for the duration of the tick body — put a scope on it to see
+processing time and jitter directly.
+
+### Cross-core rules
+
+Core 0 never touches loop state. Three mechanisms, all lock-free:
+
+- **Commands** (core 0 → 1): `heapless::spsc` queue of `RtCommand`.
+  Array-valued parameters (coefficient sets) travel **by value** — the
+  enqueue/dequeue is the double-buffer swap, so a tick can never observe a
+  half-written array.
+- **Records** (core 1 → 0): 256-deep `heapless::spsc` ring. The RT loop
+  never blocks on it; overflow drops the record and increments
+  `records_dropped`.
+- **Scalars**: `AtomicU32` statics in `rt_loop.rs` (diagnostics written by
+  core 1, laser value written by core 0's UART task and read by the loop).
+
+The analog SPI bus (SPI1: ADC + DAC chip selects) belongs to core 1
+exclusively. `board.rs` hands the unassembled `AnalogParts` to core 1,
+which builds the shared-bus devices there — that is what lets the bus
+mutex be the zero-cost `NoopRawMutex` (it is `!Sync`, so this is also
+compiler-enforced).
+
+### Networking (core 0)
+
+`embassy-net-wiznet` drives the W5500 in MACRAW mode over async SPI0;
+`embassy-net` (smoltcp) provides the IP stack with the static address from
+`config.rs`. Two server tasks:
+
+- `comms::tcp::control_task` — accepts one client, reads CRC-checked
+  frames, dispatches to `ParamStore`, replies. Framing errors drop the
+  connection (no meaningful resync inside TCP). Disconnect stops streaming.
+- `comms::udp::stream_task` — every 5 ms drains the record ring; when a
+  session is active it packs the selected sources into ≤1472-byte packets.
+  Session config lives in `comms::STREAM` (a critical-section mutex shared
+  by the two tasks). `StreamStart` bumps a generation counter, which
+  re-arms the streamer (sequence reset, finite-capture countdown).
+
+### The parameter registry (`params.rs`)
+
+rtc-style discoverable registry: the host reads names/types/sizes at
+connect and uses indices thereafter, so **adding a parameter is a firmware-
+only change**. `ParamStore` serves reads from RT-loop atomics or from the
+shadow copies of writable values, and turns writes into `RtCommand`s.
+
+To add a platform parameter: append a `ParamDef` to `BASE_PARAMS`, add its
+index constant, and handle it in `get` (and `set` if writable). Controller
+parameters need no registry work at all — see below.
+
+## Extending
+
+### Writing a controller
+
+Implement `cbc_core::controller::Controller`:
+
+```rust
+pub struct MyController { /* gains, filters, state */ }
+
+impl Controller for MyController {
+    fn tick(&mut self, m: &Measurements, reference: f32, dt: f32) -> f32 {
+        // m.adc[0..8] volts, m.laser mm; return output volts
+    }
+    fn reset(&mut self) { /* clear integrators/filters */ }
+    fn param_names() -> &'static [&'static str] { &["ctrl_gain"] }
+    fn set_param(&mut self, id: u16, value: f32) { /* id indexes param_names */ }
+}
+```
+
+Then point `firmware/src/config.rs` at it:
+
+```rust
+pub type ActiveController = MyController;
+pub fn make_controller() -> ActiveController { ... }
+```
+
+`param_names` entries appear automatically in the registry (and therefore
+in `cbc-daq list`) as writable f32 parameters; writes arrive via
+`set_param` at a sample boundary. Everything in `cbc-core` is available:
+`SosFilter` biquad cascades, `Pid`, `FourierEstimator` (feed it the shared
+phase for phase-locked harmonic estimates), and the generators.
+
+Controllers are plain `no_std` structs — write host unit tests next to
+them (see `controller.rs` for the pattern of closing the loop around a
+simulated plant).
+
+### Budget
+
+At 8 kHz / 150 MHz there are 18,750 cycles per tick; the fixed costs (SPI
+read ~12 µs, DAC write ~2 µs, two 16-harmonic series ~2k cycles) leave
+roughly half the period for the controller. Check `loop_time_max` and
+`overruns` after changes; the GP14 pin shows the same thing on a scope.
+Avoid `f64` in the tick path (the M33 FPU is single-precision; doubles are
+software-emulated).
+
+### Swapping peripherals
+
+Drivers are generic over `embedded-hal` traits and the `AnalogIn` /
+`AnalogOut` traits in `cbc-drivers`. An AD7606B (SPI-configured) or AD5764
+replacement implements the same trait and slots into `board.rs`; the RT
+loop does not change. Pin assignments live **only** in `board.rs`.
+
+### Adding a stream source
+
+Stream sources are the fields of `rt_loop::Record`. Add the field, assign
+an id in `cbc_proto::source` (and `protocol.py`'s `SOURCES`), map it in
+`comms::udp::record_value`, and document it in `protocol.md`.
+
+## Hardware bring-up notes
+
+Unverified-on-hardware items to check with a scope on first assembly:
+
+- AD7608 SPI mode 2 at 12 MHz (readout after BUSY↓); raise the clock only
+  after clean captures.
+- AD5064 SPI mode 1 at 16 MHz; the part wants ~3 µs between consecutive
+  words — currently only one channel is written per tick, so this only
+  matters for multi-channel output work.
+- CONVST duty is 50%; only the rising edge is meaningful.
+- The `sine` CLI command plus a scope on output 0 exercises the whole
+  chain: TCP → registry → mailbox → generator → DAC.
+
+## Testing and CI
+
+```sh
+cargo test                                  # root: cbc-core/drivers/proto (~60 tests)
+cd firmware && cargo build --release        # firmware cross-build
+cd host && PYTHONPATH=.:tests python -m unittest discover -s tests
+```
+
+CI (GitHub Actions) runs fmt + clippy `-D warnings` + tests for the host
+crates, the firmware cross-build, and the Python suite. The Rust and
+Python protocol implementations share known-answer vectors
+(`docs/protocol.md`) so codec drift fails tests on both sides.
+
+Flashing/debugging: `cargo run --release` in `firmware/` uses probe-rs
+(`--chip RP235x`) and streams defmt logs over RTT; `DEFMT_LOG` is set in
+`firmware/.cargo/config.toml`. Without a probe, build a UF2 with picotool
+(see the user guide).
+
+## Known gaps / next steps
+
+- End-to-end behaviour on real hardware is unverified (milestones 1–6 were
+  developed bench-less); the diagnostics and smoke-test tooling exist to
+  make that verification quick.
+- `SetBlock`/`Commit` are reserved in the protocol but unimplemented; they
+  are the path for uploading arbitrary-signal tables (the
+  `ArbitraryGenerator` in cbc-core is ready but not wired into the loop).
+- USB serial as a second transport, flash-persisted configuration, laser
+  TX (sensor configuration from firmware), and per-period Fourier
+  statistics are planned extensions — see implementation_plan.md §8/§10.
