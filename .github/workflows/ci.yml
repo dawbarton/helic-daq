@@ -10,7 +10,7 @@ env:
 
 jobs:
   host:
-    name: Host crates (cbc-core, cbc-proto)
+    name: Host crates (cbc-core, cbc-drivers, cbc-proto)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
