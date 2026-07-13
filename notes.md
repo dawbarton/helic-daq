@@ -251,16 +251,57 @@ autonegotiation while still failing full data-rate RX specifically).
    candidate hardware fault on this specific board and try a different
    W5500-EVB-Pico2 if one is available.
 
-## 5. Suggested immediate next actions for whoever picks this up
+### 4.3 ADC/DAC hardware bring-up — DONE (2026-07-13)
 
-1. Decide what to do with the uncommitted diagnostic changes (§2): at
-   minimum keep the laser backoff fix and the checkpoint logs; decide
-   whether to commit `laser_task` disabled-with-comment as an honest
-   interim state, or hold the commit until a real fix lands; probably
-   remove or gate `net_beacon_task` once §4.2 is resolved.
-2. Continue §4.2 per the suggested next steps above — the cable swap (#1)
-   is the fastest signal.
-3. Independently of networking, ADC/DAC/RT-loop hardware bring-up has not
-   been attempted at all yet (no ADC/DAC physically wired this session) —
-   that's a fully separate, unblocked next milestone once you're ready,
-   and doesn't depend on resolving the networking issue.
+First analog bring-up. Interim board: the older **rtc analog cape**
+(github.com/dawbarton/rtc), all-unipolar DAC (wiring in `bbb-daq.md`). ADC is
+AD7609-compatible (±10 V range; readings calibrate 1:1, confirming the
+`Bipolar10V` scale). Verified end-to-end: RT loop runs at 8 kHz, ADC converts
+with a clean BUSY handshake (`busy_timeouts` = 0), and the **DAC→ADC loopback
+tracks to sub-millivolt across 0..4 V on channels A/C/D**. Committed the
+all-unipolar `DAC_POLARITY` (`dcd5d44`).
+
+**DAC channel B is dead on this specific board** — its output sits at ~5 V
+regardless of command (confirmed with a multimeter; unipolar max is 4.096 V, so
+it's railed to the supply, not a firmware issue). Use channels A/C/D;
+`OUTPUT_CHANNEL` = 0 (A) is fine. A replacement board/DAC is needed for full
+four-channel output.
+
+**Hardware gotchas found (these cost most of the session — none were firmware bugs):**
+- **Grounding**: the cape has several ground pins; a partial ground bond left
+  logic marginal — driven-low pins sat at ~0.8 V, BUSY stuck high, DOUT
+  all-ones, nothing worked. Bond *all* cape grounds to the Pico2 ground.
+- **Power**: the ADC's V_DRIVE (digital supply) must be **3.3 V, not 5 V**
+  (abs max ~3.6 V). A miswired 5 V rail overheated and **destroyed the first
+  AD7609** (and fed 5 V into the non-5V-tolerant RP2350 pins). If a chip gets
+  hot to the touch, kill power immediately.
+- **SWD link is fragile** and gets disturbed by handling the board (swapping the
+  cape, attaching cables). `target did not respond` → reseat the SWD wires; a
+  power cycle also revived it this session.
+
+**Streaming not yet verified end-to-end**: the macOS Application Firewall
+silently drops the device's UDP stream packets to a host socket (TCP control on
+:2350 works fine). ADC readback during bring-up was done over the defmt/RTT
+probe instead. To verify the UDP streamer, allow `python` through the firewall
+(or capture on another host) — a host security setting, not a firmware issue.
+
+## 5. Suggested next actions — firmware verification
+
+Networking (§4.2), the laser livelock (§4.1), and ADC/DAC (§4.3) are all
+resolved and verified on hardware; the RT loop, ADC-read, and DAC-write paths
+are trustworthy. Still unverified on hardware, roughly in priority order:
+
+1. **End-to-end streaming + signal generator.** Unblock the UDP stream (allow
+   `python` through the macOS firewall, or capture on another host), then
+   command a sine (`cbc-daq sine <f> <A>`, drives DAC A) and capture `adc0`.
+   Confirms the phase accumulator + Fourier generator + sine LUT produce a
+   correct waveform (frequency/amplitude/phase) *and* exercises the UDP
+   streamer, decimation, and finite-capture logic. Biggest single unverified
+   chunk.
+2. **Sample-rate accuracy**: verify the four presets (1/2/4/8 kHz) give the
+   actual rate — scope CONVST (GP8) or measure the stream cadence.
+3. **Parameter registry** round-trip for arrays (target/forcing coeffs, commit
+   semantics) beyond the DC/sine smoke tests.
+4. **Closed-loop control**: switch `config.rs` `ActiveController` to
+   `PidController` and confirm it regulates a fed-back ADC channel to a target.
+5. **Laser UART** with a real optoNCDT sensor (RX pull-up already fitted, §4.1).
