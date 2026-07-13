@@ -12,7 +12,7 @@ Two Cargo workspaces plus a Python package:
 | Path | What | Builds for |
 |---|---|---|
 | `cbc-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
-| `cbc-drivers/` | AD7608, AD5064, optoNCDT drivers over `embedded-hal` 1.0 traits | host + firmware |
+| `cbc-drivers/` | AD7609, AD5064, optoNCDT drivers over `embedded-hal` 1.0 traits | host + firmware |
 | `cbc-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `firmware/` | The binary: board wiring, RT loop, registry, network servers | `thumbv8m.main-none-eabihf` only (own workspace, own `.cargo/config.toml`) |
 | `host/` | Python package `cbc_daq` + `cbc-daq` CLI | host |
@@ -29,7 +29,7 @@ core 1 (real-time)                       core 0 (everything else)
 ┌─────────────────────────────┐          ┌───────────────────────────────┐
 │ rt_loop task                │          │ TCP control server (:2350)    │
 │  PWM slice 4 → CONVST       │ commands │   ParamStore (registry+shadow)│
-│  BUSY↓ → SPI read (AD7608)  │◄─────────│ UDP streamer (:2351)          │
+│  BUSY↓ → SPI read (AD7609)  │◄─────────│ UDP streamer (:2351)          │
 │  apply queued commands      │  SPSC    │ laser UART task → atomic      │
 │  generators (target+forcing)│          │ status task (1 Hz defmt)      │
 │  controller → DAC (AD5064)  │ records  │ embassy-net + W5500 (SPI0)    │
@@ -39,7 +39,7 @@ core 1 (real-time)                       core 0 (everything else)
 
 ### Timing (the part that matters most)
 
-The AD7608's CONVST pin is driven by **PWM slice 4** as a free-running
+The AD7609's CONVST pin is driven by **PWM slice 4** as a free-running
 output. The sampling instant is therefore crystal-timed — software load
 cannot move it. Sample-rate presets map to exact divider/wrap pairs from
 the 150 MHz system clock (`config.rs::SampleRate::pwm_params`).
@@ -172,7 +172,7 @@ an id in `cbc_proto::source` (and `protocol.py`'s `SOURCES`), map it in
 
 Unverified-on-hardware items to check with a scope on first assembly:
 
-- AD7608 SPI mode 2 at 12 MHz (readout after BUSY↓); raise the clock only
+- AD7609 SPI mode 2 at 12 MHz (readout after BUSY↓); raise the clock only
   after clean captures.
 - AD5064 SPI mode 1 at 16 MHz; the part wants ~3 µs between consecutive
   words — currently only one channel is written per tick, so this only

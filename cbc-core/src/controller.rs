@@ -4,7 +4,7 @@
 
 use crate::pid::Pid;
 
-/// Number of ADC input channels (AD7608).
+/// Number of ADC input channels (AD7609).
 pub const ADC_CHANNELS: usize = 8;
 
 /// One tick's worth of measurements, in engineering units. The controller

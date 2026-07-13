@@ -2,7 +2,7 @@
 
 CBC-DAQ is a real-time control and data acquisition instrument for
 control-based continuation (CBC) experiments, built on a W5500-EVB-Pico2
-(RP2350) with an AD7608 8-channel 18-bit ADC, an AD5064 4-channel 16-bit
+(RP2350) with an AD7609 8-channel 18-bit ADC, an AD5064 4-channel 16-bit
 DAC, and an optional Micro-Epsilon optoNCDT 1420 laser displacement sensor.
 
 ## What it does
@@ -117,7 +117,7 @@ pass-through controller the output is simply `target + forcing`.
 
 | Signal | Where |
 |---|---|
-| Analogue in 0–7 | AD7608 inputs, ±5 V (or ±10 V, compile-time) |
+| Analogue in 0–7 | AD7609 inputs, ±10 V (or ±20 V, compile-time) |
 | Analogue out 0, 2 | Bipolar outputs, ±4.096 V |
 | Analogue out 1, 3 | Unipolar outputs, 0–4.096 V |
 | Laser | optoNCDT 1420 via RS422→TTL at 921.6 kBaud, 8 kHz output rate |

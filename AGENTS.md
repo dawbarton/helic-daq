@@ -36,7 +36,7 @@ Don't re-derive this from the code — read the docs first:
 ## Hardware target
 
 - W5500-EVB-Pico2: RP2350, on-board Wiznet W5500 (Ethernet).
-- AD7608: 8-channel, 18-bit simultaneous-sampling ADC, ±5 V/±10 V,
+- AD7609: 8-channel, 18-bit true-bipolar differential ADC, ±10 V/±20 V,
   SPI readout, MCU-timed CONVST, BUSY handshake. Range/oversampling
   set via logic-level GPIO (a future AD7606B would set these over SPI
   instead — kept behind the `AnalogIn` trait for that reason).

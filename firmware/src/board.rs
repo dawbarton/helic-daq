@@ -7,12 +7,12 @@
 //!
 //! Assignments made here:
 //! - GP0/GP1: UART0 TX/RX, optoNCDT laser (core 0)
-//! - GP2/GP3/GP4: AD7608 OS0/OS1/OS2
-//! - GP5: AD7608 RANGE, GP6: RESET, GP7: BUSY (input)
-//! - GP8: AD7608 CONVST — PWM slice 4 output A, the hardware sample clock
+//! - GP2/GP3/GP4: AD7609 OS0/OS1/OS2
+//! - GP5: AD7609 RANGE, GP6: RESET, GP7: BUSY (input)
+//! - GP8: AD7609 CONVST — PWM slice 4 output A, the hardware sample clock
 //! - GP9: AD5064 ~SYNC (CS), GP15: AD5064 ~LDAC (held low)
-//! - GP10/GP11/GP12: SPI1 SCK/MOSI/MISO (shared: AD7608 + AD5064)
-//! - GP13: AD7608 ~CS, GP14: tick-timing debug pin
+//! - GP10/GP11/GP12: SPI1 SCK/MOSI/MISO (shared: AD7609 + AD5064)
+//! - GP13: AD7609 ~CS, GP14: tick-timing debug pin
 //!
 //! The analog SPI bus is used only by the real-time loop on core 1, so
 //! [`AnalogParts`] is moved to core 1 and assembled there — the shared-bus
@@ -22,7 +22,7 @@
 use core::cell::RefCell;
 
 use cbc_drivers::ad5064::{Ad5064, ChannelPolarity};
-use cbc_drivers::ad7608::{Ad7608, ConfigPins};
+use cbc_drivers::ad7609::{Ad7609, ConfigPins};
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::peripherals::{
@@ -54,7 +54,7 @@ type SpiDev =
     SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, Blocking>, Output<'static>>;
 
 /// Concrete driver types (embassy tasks cannot be generic).
-pub type Adc = Ad7608<SpiDev, Output<'static>>;
+pub type Adc = Ad7609<SpiDev, Output<'static>>;
 pub type Dac = Ad5064<SpiDev>;
 
 static SPI_BUS: StaticCell<SpiBus> = StaticCell::new();
@@ -98,7 +98,7 @@ pub struct LaserParts {
 pub struct AnalogParts {
     /// Timing-debug pin (GP14): high while the RT tick body runs.
     pub tick_pin: Output<'static>,
-    /// AD7608 BUSY (GP7): falls when conversion data is ready.
+    /// AD7609 BUSY (GP7): falls when conversion data is ready.
     pub adc_busy: Input<'static>,
     /// AD5064 ~LDAC (GP15), held low: write-and-update per channel.
     pub dac_ldac: Output<'static>,
@@ -114,7 +114,7 @@ pub struct AnalogParts {
 pub struct RtAnalog {
     pub adc: Adc,
     pub dac: Dac,
-    /// AD7608 BUSY: falls when conversion data is ready.
+    /// AD7609 BUSY: falls when conversion data is ready.
     pub adc_busy: Input<'static>,
     /// Tick-timing debug pin.
     pub tick_pin: Output<'static>,
@@ -128,7 +128,7 @@ impl AnalogParts {
     pub fn build(self) -> RtAnalog {
         let bus: &'static SpiBus = SPI_BUS.init(Mutex::new(RefCell::new(self.spi)));
 
-        // AD7608 reads in SPI mode 2 (clock idles high, data captured on
+        // AD7609 reads in SPI mode 2 (clock idles high, data captured on
         // the falling edge). 12 MHz: 18 bytes in ~12 µs. The datasheet
         // allows faster; verify on scope before raising.
         let mut adc_config = spi::Config::default();
@@ -150,7 +150,7 @@ impl AnalogParts {
         core::mem::forget(self.dac_ldac);
 
         RtAnalog {
-            adc: Ad7608::new(adc_spi, self.adc_pins),
+            adc: Ad7609::new(adc_spi, self.adc_pins),
             dac: Ad5064::new(dac_spi, DAC_POLARITY, DAC_VREF),
             adc_busy: self.adc_busy,
             tick_pin: self.tick_pin,

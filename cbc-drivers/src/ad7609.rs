@@ -1,4 +1,5 @@
-//! AD7608 driver: 8-channel, 18-bit simultaneous-sampling ADC.
+//! AD7609 driver: 8-channel, 18-bit, true-bipolar differential simultaneous-
+//! sampling ADC.
 //!
 //! Configuration (range, oversampling) is via logic inputs — individual GPIO
 //! pins, per the current hardware. The future AD7606B variant will configure
@@ -6,7 +7,9 @@
 //!
 //! Conversion is triggered externally (hardware-timed CONVST from a PWM
 //! slice); readout is 8 × 18 bits = 144 bits (18 bytes) on DOUTA over SPI
-//! mode 2 after BUSY falls.
+//! mode 2 after BUSY falls. The digital readout format is identical across the
+//! AD760x family; the AD7609 differs from the AD7608 only in its analog input
+//! ranges (±10 V / ±20 V differential rather than ±5 V / ±10 V).
 
 use crate::AnalogIn;
 use embedded_hal::delay::DelayNs;
@@ -16,21 +19,23 @@ use embedded_hal::spi::SpiDevice;
 pub const CHANNELS: usize = 8;
 pub const BITS: u32 = 18;
 
-/// Input range, set by the RANGE logic pin.
+/// Input range, set by the RANGE logic pin. The AD7609 supports two true-
+/// bipolar differential ranges; RANGE low selects the smaller (±10 V), RANGE
+/// high the larger (±20 V).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputRange {
-    /// ±5 V (RANGE pin low).
-    Bipolar5V,
-    /// ±10 V (RANGE pin high).
+    /// ±10 V (RANGE pin low).
     Bipolar10V,
+    /// ±20 V (RANGE pin high).
+    Bipolar20V,
 }
 
 impl InputRange {
     /// Full-scale range in volts (span).
     pub const fn fsr(self) -> f32 {
         match self {
-            Self::Bipolar5V => 10.0,
             Self::Bipolar10V => 20.0,
+            Self::Bipolar20V => 40.0,
         }
     }
 
@@ -40,7 +45,7 @@ impl InputRange {
     }
 
     const fn pin_high(self) -> bool {
-        matches!(self, Self::Bipolar10V)
+        matches!(self, Self::Bipolar20V)
     }
 }
 
@@ -93,7 +98,7 @@ pub fn decode_frame(raw: &[u8; 18]) -> [i32; CHANNELS] {
     out
 }
 
-/// The GPIO-configured control pins of the AD7608.
+/// The GPIO-configured control pins of the AD7609.
 pub struct ConfigPins<P> {
     pub os0: P,
     pub os1: P,
@@ -102,16 +107,16 @@ pub struct ConfigPins<P> {
     pub reset: P,
 }
 
-/// AD7608 driver. `SPI` is an `SpiDevice` (chip select managed by the HAL);
+/// AD7609 driver. `SPI` is an `SpiDevice` (chip select managed by the HAL);
 /// STBY is assumed tied high in hardware, CONVST and BUSY are owned by the
 /// real-time loop.
-pub struct Ad7608<SPI, P> {
+pub struct Ad7609<SPI, P> {
     spi: SPI,
     pins: ConfigPins<P>,
     range: InputRange,
 }
 
-impl<SPI, P, E> Ad7608<SPI, P>
+impl<SPI, P, E> Ad7609<SPI, P>
 where
     SPI: SpiDevice<Error = E>,
     P: OutputPin,
@@ -120,7 +125,7 @@ where
         Self {
             spi,
             pins,
-            range: InputRange::Bipolar5V,
+            range: InputRange::Bipolar10V,
         }
     }
 
@@ -158,7 +163,7 @@ where
     }
 }
 
-impl<SPI, P, E> AnalogIn<CHANNELS> for Ad7608<SPI, P>
+impl<SPI, P, E> AnalogIn<CHANNELS> for Ad7609<SPI, P>
 where
     SPI: SpiDevice<Error = E>,
     P: OutputPin,
@@ -206,11 +211,11 @@ mod tests {
 
     #[test]
     fn scale_matches_lsb_size() {
-        assert_eq!(InputRange::Bipolar5V.scale(), 10.0 / 262144.0);
         assert_eq!(InputRange::Bipolar10V.scale(), 20.0 / 262144.0);
-        // Full-scale code maps to (almost) +5 V.
-        let v = 131_071.0 * InputRange::Bipolar5V.scale();
-        assert!((v - 5.0).abs() < 1e-4);
+        assert_eq!(InputRange::Bipolar20V.scale(), 40.0 / 262144.0);
+        // Full-scale code maps to (almost) +10 V on the ±10 V range.
+        let v = 131_071.0 * InputRange::Bipolar10V.scale();
+        assert!((v - 10.0).abs() < 1e-4);
     }
 
     #[test]
@@ -227,7 +232,7 @@ mod tests {
             range: MockPin::default(),
             reset: MockPin::default(),
         };
-        let mut adc = Ad7608::new(spi, pins);
+        let mut adc = Ad7609::new(spi, pins);
         assert_eq!(adc.read_frame().unwrap(), values);
     }
 
@@ -240,9 +245,9 @@ mod tests {
             range: MockPin::default(),
             reset: MockPin::default(),
         };
-        let mut adc = Ad7608::new(MockSpi::default(), pins);
-        adc.init(InputRange::Bipolar10V, Oversampling::Os8, &mut MockDelay);
-        // Os8 = 0b011: os0 high, os1 high, os2 low; range high for ±10 V.
+        let mut adc = Ad7609::new(MockSpi::default(), pins);
+        adc.init(InputRange::Bipolar20V, Oversampling::Os8, &mut MockDelay);
+        // Os8 = 0b011: os0 high, os1 high, os2 low; range high for ±20 V.
         assert!(adc.pins.os0.level());
         assert!(adc.pins.os1.level());
         assert!(!adc.pins.os2.level());

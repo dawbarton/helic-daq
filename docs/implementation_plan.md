@@ -22,10 +22,10 @@ Decisions agreed so far (2026-07-09):
 
 ### Sample-tick timing (the low-jitter trick)
 
-The AD7608 CONVST pulse is generated **directly by an RP2350 PWM slice** at the sample rate. Conversion start is therefore hardware-timed from the crystal — zero software jitter on the sampling instant, which is what dominates measurement quality. The software pipeline then runs per tick:
+The AD7609 CONVST pulse is generated **directly by an RP2350 PWM slice** at the sample rate. Conversion start is therefore hardware-timed from the crystal — zero software jitter on the sampling instant, which is what dominates measurement quality. The software pipeline then runs per tick:
 
 ```
-PWM (hardware) ─ CONVST ↑ ──► AD7608 converts (~4 µs, no oversampling)
+PWM (hardware) ─ CONVST ↑ ──► AD7609 converts (~4 µs, no oversampling)
 BUSY ↓ (GPIO IRQ, core 1, highest priority)
   ├─ SPI read 8×18-bit frame            (~10 µs @ ~15 MHz)
   ├─ scale to f32 volts; snapshot laser value (atomic read)
@@ -62,7 +62,7 @@ cbc-daq/
 │       ├── board.rs           # pin map, SPI/UART/PWM setup (single place to rewire)
 │       ├── config.rs          # ActiveController type alias, presets, static IP
 │       ├── params.rs          # name-based parameter registry (§5a)
-│       ├── drivers/           # ad7608.rs, ad5064.rs, optoncdt.rs
+│       ├── drivers/           # ad7609.rs, ad5064.rs, optoncdt.rs
 │       └── comms/             # tcp_server.rs, udp_stream.rs, (later usb.rs)
 ├── cbc-core/        # no_std, no-alloc DSP library — host-testable with cargo test
 │   └── src/         # controllers, filters, generators, fourier, frame types
@@ -77,7 +77,7 @@ cbc-daq/
 
 Traits keep future part swaps localized:
 
-- `trait AnalogIn` — `start_conversion` handled by hardware (PWM); driver exposes `read_frame()`. Implemented by `Ad7608` (range/oversampling via GPIO); a future `Ad7606b` implements the same trait with SPI register configuration.
+- `trait AnalogIn` — `start_conversion` handled by hardware (PWM); driver exposes `read_frame()`. Implemented by `Ad7609` (range/oversampling via GPIO); a future `Ad7606b` implements the same trait with SPI register configuration.
 - `trait AnalogOut` — `write(channel_outputs)`. Implemented by `Ad5064` (per-channel unipolar/bipolar scaling, since two channels pass through inverting op-amp stages); future `Ad5764` swaps in.
 - `trait Displacement` (or a generic "aux sensor" slot) — implemented by `OptoNcdt1420`; leaves room for SSI encoders via PIO later.
 
@@ -88,14 +88,14 @@ The W5500 occupies SPI0 (GP16 MISO, GP17 CSn, GP18 SCK, GP19 MOSI, GP20 RSTn, GP
 | Function | Pin | Notes |
 |---|---|---|
 | Laser UART0 TX / RX | GP0 / GP1 | 921,600 baud for 8 kHz output rate |
-| AD7608 OS0 / OS1 / OS2 | GP2 / GP3 / GP4 | oversampling select |
-| AD7608 RANGE | GP5 | ±5 V / ±10 V |
-| AD7608 RESET | GP6 | pulsed at init |
-| AD7608 BUSY | GP7 | falling-edge IRQ, core 1 |
-| AD7608 CONVST A+B | GP8 | PWM slice 4A output = sample clock |
+| AD7609 OS0 / OS1 / OS2 | GP2 / GP3 / GP4 | oversampling select |
+| AD7609 RANGE | GP5 | ±10 V / ±20 V |
+| AD7609 RESET | GP6 | pulsed at init |
+| AD7609 BUSY | GP7 | falling-edge IRQ, core 1 |
+| AD7609 CONVST A+B | GP8 | PWM slice 4A output = sample clock |
 | AD5064 ~SYNC | GP9 | |
 | SPI1 SCK / MOSI / MISO | GP10 / GP11 / GP12 | shared bus, ADC + DAC |
-| AD7608 ~CS | GP13 | |
+| AD7609 ~CS | GP13 | |
 | Tick-timing debug pin | GP14 | scope verification of jitter/load |
 | AD5064 ~LDAC | GP15 | or tie low for immediate update |
 | Spare / future SSI (PIO) | GP22, GP26–28 | |
@@ -163,7 +163,7 @@ Buy a **Raspberry Pi Debug Probe** (~£12) and connect it to the Pico2's 3-pin S
 
 1. **Scaffolding** — workspace, Embassy skeleton booting both cores, defmt logging, blink + tick GPIO, CI (fmt, clippy, host tests, firmware build).
 2. **`cbc-core` DSP** — generators, PID, biquads, Fourier estimator, all with host unit tests. *(No hardware needed; can run in parallel with 3.)*
-3. **Drivers** — AD7608 (PWM CONVST + BUSY IRQ + SPI read), AD5064, OptoNCDT parser; verified with scope/loopback.
+3. **Drivers** — AD7609 (PWM CONVST + BUSY IRQ + SPI read), AD5064, OptoNCDT parser; verified with scope/loopback.
 4. **Real-time loop** — full tick pipeline on core 1, parameter mailbox, stream ring buffer; **measure jitter and CPU headroom** at 8 kHz via the debug pin; DAC-out → ADC-in loopback test.
 5. **Ethernet + protocol v1** — embassy-net-wiznet, static IP, TCP command server with registry discovery, UDP streamer.
 6. **Python host + end-to-end demo** — package + CLI; closed-loop PID demo against an RC-filter "plant" (DAC → RC → ADC); documented walkthrough.

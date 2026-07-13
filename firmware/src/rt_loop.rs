@@ -1,7 +1,7 @@
 //! The core-1 real-time loop and its cross-core interfaces.
 //!
 //! Timing architecture (`docs/implementation_plan.md` §1): a PWM slice
-//! generates CONVST at the sample rate, so the AD7608 sampling instant is
+//! generates CONVST at the sample rate, so the AD7609 sampling instant is
 //! crystal-timed regardless of software. The loop waits for BUSY to fall,
 //! then runs read → generators → controller → DAC write.
 //!
@@ -18,7 +18,7 @@ use cbc_core::controller::{Controller, Measurements};
 use cbc_core::generator::FourierCoeffs;
 use cbc_core::lut::SinLut;
 use cbc_core::phase::PhaseAccumulator;
-use cbc_drivers::ad7608::{InputRange, Oversampling};
+use cbc_drivers::ad7609::{InputRange, Oversampling};
 use cbc_drivers::AnalogIn;
 use defmt::{info, warn};
 use embassy_time::{with_timeout, Delay, Duration, Instant};
@@ -98,7 +98,7 @@ pub async fn rt_loop(
     let lut: &'static SinLut = SIN_LUT.init(SinLut::new());
 
     rt.adc.init(
-        InputRange::Bipolar5V,
+        InputRange::Bipolar10V,
         Oversampling::for_sample_rate(SAMPLE_RATE.hz()),
         &mut Delay,
     );

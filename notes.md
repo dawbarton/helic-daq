@@ -15,7 +15,7 @@ Six commits on `main`, one per milestone, all with passing tests
 2. **DSP library** (`cbc-core`) — phase accumulator, sine LUT, periodic
    Fourier generator, arbitrary LUT generator, biquad filters, PID,
    `Controller` trait, Fourier estimator. 33 host tests.
-3. **Drivers** (`cbc-drivers`) — AD7608, AD5064, optoNCDT parser, generic
+3. **Drivers** (`cbc-drivers`) — AD7609, AD5064, optoNCDT parser, generic
    over `embedded-hal` 1.0. 17 host tests.
 4. **Real-time loop** (`firmware/src/rt_loop.rs`) — PWM-timed CONVST
    (hardware-clocked sampling), BUSY-edge pipeline, generators + controller
