@@ -170,10 +170,12 @@ an id in `cbc_proto::source` (and `protocol.py`'s `SOURCES`), map it in
 
 ## Hardware bring-up notes
 
-Unverified-on-hardware items to check with a scope on first assembly:
+The acquisition + generation + closed-loop-control chain is **verified on
+hardware** (interim rtc analog cape, 2026-07; details and gotchas in
+`notes.md` §4.3). Reference points when re-checking on a new assembly or scope:
 
-- AD7609 SPI mode 2 at 12 MHz (readout after BUSY↓); raise the clock only
-  after clean captures.
+- AD7609 SPI mode 2 at 12 MHz (readout after BUSY↓) — verified; raise the clock
+  only after clean captures.
 - AD5064 SPI mode 1 at 16 MHz; the part wants ~3 µs between consecutive
   words — currently only one channel is written per tick, so this only
   matters for multi-channel output work.
@@ -201,9 +203,11 @@ Flashing/debugging: `cargo run --release` in `firmware/` uses probe-rs
 
 ## Known gaps / next steps
 
-- End-to-end behaviour on real hardware is unverified (milestones 1–6 were
-  developed bench-less); the diagnostics and smoke-test tooling exist to
-  make that verification quick.
+- End-to-end behaviour is **verified on hardware** (2026-07): networking, RT
+  loop, ADC read, DAC write, DAC→ADC loopback (DC + AC), signal generator, all
+  four sample-rate presets, parameter round-trip, and closed-loop PID. The only
+  path not yet exercised is the **laser UART with a real optoNCDT sensor**
+  (needs the physical sensor). See `notes.md` §4.3/§5.
 - `SetBlock`/`Commit` are reserved in the protocol but unimplemented; they
   are the path for uploading arbitrary-signal tables (the
   `ArbitraryGenerator` in cbc-core is ready but not wired into the loop).

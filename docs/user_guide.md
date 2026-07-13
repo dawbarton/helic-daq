@@ -118,13 +118,15 @@ pass-through controller the output is simply `target + forcing`.
 | Signal | Where |
 |---|---|
 | Analogue in 0–7 | AD7609 inputs, ±10 V (or ±20 V, compile-time) |
-| Analogue out 0, 2 | Bipolar outputs, ±4.096 V |
-| Analogue out 1, 3 | Unipolar outputs, 0–4.096 V |
+| Analogue out 0–3 | Per-channel polarity, set in `board.rs` (`DAC_POLARITY`): unipolar 0–4.096 V or bipolar ±4.096 V |
 | Laser | optoNCDT 1420 via RS422→TTL at 921.6 kBaud, 8 kHz output rate |
 
-The controller writes to output channel 0 by default. The laser sensor
-must be preconfigured (via Micro-Epsilon's tool) for binary output at
-921.6 kBaud; the firmware only listens.
+Output-channel polarity must match your analog board's output stages. The
+target design is two bipolar + two unipolar; the current build is **all four
+unipolar** (matching the interim bring-up board). The controller writes to
+output channel 0 by default. The laser sensor must be preconfigured (via
+Micro-Epsilon's tool) for binary output at 921.6 kBaud; the firmware only
+listens.
 
 ## Things you set at compile time
 
@@ -152,3 +154,10 @@ Edit `firmware/src/config.rs` and reflash:
 
 If something looks wrong, the same numbers appear once a second in the
 debug-probe log, along with connection events.
+
+**If `stream` times out with no data** while `status`/`get`/`set` work, a
+host firewall is almost certainly blocking inbound UDP on the stream port
+(2351) — control is outbound TCP and unaffected. Allow your client through the
+firewall, or receive on a host/binary the firewall permits. (On managed macOS
+the built-in Application Firewall silently drops UDP to unsigned Python builds;
+see `notes.md` for the Apple-signed-receiver workaround used during bring-up.)

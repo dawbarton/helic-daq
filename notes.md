@@ -320,8 +320,9 @@ Verified on hardware so far: networking (§4.2), laser livelock fix (§4.1),
 ADC/DAC (§4.3), streaming + signal generator (§4.3), **all four sample-rate
 presets** (measured tick rate = configured within measurement slop: 1000.0 /
 2000.0 / 3999.3 / 7997.7 Hz), **parameter-registry round-trip** (scalars, full
-33-element `forcing`/`target` coeff arrays via SetBlock+Commit — exact f32
-round-trip — and read-only writes correctly rejected), and **closed-loop PID**
+33-element `forcing`/`target` coeff arrays in one `SET_PAR`, applied atomically
+via the by-value command mailbox — exact f32 round-trip — and read-only writes
+correctly rejected), and **closed-loop PID**
 (temporarily set `ActiveController = PidController` with feedback on ADC ch0 over
 the DAC-A loopback: setpoint 2.0/3.0 V held to ±0.0000 V steady-state error,
 step settles to 2% in ~39 ms, gains live-tuned via `ctrl_kp`/`ctrl_ki`; reverted
