@@ -68,12 +68,11 @@ fn main() -> ! {
         executor1.run(|spawner| spawner.spawn(unwrap!(rt_loop::rt_loop(b.analog, cmd_rx, rec_tx))));
     });
 
-    // laser_task is confirmed to livelock core 0 when the optoNCDT's RX pin
-    // is left floating (continuous UART framing/break interrupts; no
-    // software backoff can fix a storm that happens within the interrupt
-    // re-enable window). Disabled until the sensor is wired or the pin gets
-    // a pull-up. See docs/developer_guide.md known gaps.
-    let _ = b.laser;
+    // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without it
+    // the floating line free-runs into a UART framing/break interrupt storm
+    // that livelocks core 0; an external 10k pull-up to 3V3 holds the line in
+    // the idle (mark) state so a disconnected/quiet sensor just parks in
+    // `rx.read().await`. See docs/developer_guide.md known gaps.
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
         spawner.spawn(unwrap!(core0_main(
@@ -83,6 +82,7 @@ fn main() -> ! {
             rec_rx
         )));
         spawner.spawn(unwrap!(blink(b.led)));
+        spawner.spawn(unwrap!(laser_task(b.laser)));
         spawner.spawn(unwrap!(status_task()));
     });
 }

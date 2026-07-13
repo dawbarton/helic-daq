@@ -84,7 +84,22 @@ revert.
 
 ## 4. What was found, in order
 
-### 4.1 `laser_task` livelocks core 0 when the sensor isn't connected — FIXED (partially)
+### 4.1 `laser_task` livelocks core 0 when the sensor isn't connected — RESOLVED (2026-07-13)
+
+**Resolution**: fitted an external **10 kΩ pull-up from GP1 (RX, header pin 2)
+to 3V3 (header pin 36)**, the first "proper fix option" listed below. This
+holds the disconnected/idle line in the UART mark (HIGH) state, so it no longer
+free-runs into the framing/break interrupt storm. `laser_task` is now spawned
+again ([main.rs](firmware/src/main.rs)); verified on hardware: core 0 stays
+alive (1 Hz status line ran continuously, ticks 3.3k→126k over 37 s, vs. silent
+after boot before), and the TCP control port still answered while `laser_task`
+ran — no starvation. `laser 0.0 mm` because no sensor is wired yet; with the
+line held idle the task simply parks in `rx.read().await`. The 10 ms retry
+backoff was kept as defence-in-depth. Safe to leave the pull-up in permanently
+(UART idles HIGH, so it never fights the sensor's push-pull driver). Original
+investigation retained below.
+
+
 
 **Symptom**: with the laser UART, network, and status tasks all spawned,
 core 0 appeared completely wedged — no LED blink, no log output at all
