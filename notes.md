@@ -36,25 +36,30 @@ bring-up.
 
 ## 2. Uncommitted changes right now
 
-`git status` shows two modified files, **not yet committed** — this
-session's bring-up diagnostics and one real bug fix. Do not lose these:
+None — the working tree is clean. The 2026-07-10 bring-up changes and the
+**2026-07-13 code-review fixes** (see §4.4) are all committed on `main`;
+the latter as `fix: harden parameter/DAC paths and stream control after
+code review`, touching:
 
-- `firmware/src/main.rs`:
-  - `laser_task` is **disabled** (not spawned) — see §4.1, this is a real
-    unresolved robustness bug, not just a diagnostic toggle.
-  - `laser_task`'s error-retry loop gained a 10 ms backoff
-    (`Timer::after_millis(10).await` before retrying `rx.read()`) — a
-    correctness fix, keep this regardless of what happens with §4.1.
-  - `core0_main` and `comms::init` gained one-shot `info!` checkpoint logs
-    (harmless, useful, keep them).
-  - A new `net_beacon_task` was added: broadcasts a 4-byte UDP packet to
-    `255.255.255.255:9999` once/second. This was a diagnostic for §4.2 and
-    should be removed once that's resolved (or kept behind a feature flag
-    if it's judged generally useful for future bring-up).
-- `firmware/src/comms/mod.rs`: the two checkpoint logs referenced above.
+- `cbc-core/src/pid.rs` — manual `Default` for `Pid` (derived one skipped
+  the first-sample derivative-spike suppression); regression test.
+- `cbc-drivers/src/ad5064.rs` — `code_for_volts` maps non-finite inputs to
+  the 0 V code (NaN previously cast to code 0 = negative full-scale on a
+  bipolar channel); tests.
+- `firmware/src/params.rs` — `SetPar` rejects non-finite f32 values
+  (coefficient sets and controller params) with `BadValue`.
+- `firmware/src/comms/tcp.rs` — responses use `write_all` (short-write
+  hazard); `StreamSetup` while a stream is running returns `Busy`.
+- `host/cbc_daq/device.py` — socket closed if `__init__` fails after
+  connect; `StreamReceiver` import moved to module top.
+- `host/cbc_daq/cli.py` — `sine --harmonic` bounds-checked; drop-counter
+  message reworded (it is cumulative since boot).
+- `host/tests/emulator.py` — accepts sequential connections.
+- `docs/protocol.md` — documents the StreamSetup busy rule, non-finite
+  rejection, and the ~49.7-day `uptime_ms` wrap.
 
-Run `git diff` to see the exact patch before deciding what to keep/commit/
-revert.
+All suites pass: `cargo test`, `cargo clippy -D warnings` + `cargo fmt
+--check` (both workspaces), 24 Python tests.
 
 ## 3. Hardware bring-up environment
 
@@ -314,6 +319,30 @@ streamer/framing/decimation path.
   receives in-process under Homebrew Python — this is a host security-policy
   limitation, not a firmware or protocol bug.
 
+### 4.4 Code-review pass (2026-07-13) — fixes applied, two need hardware verification
+
+A full review of the codebase found no critical issues; the fixes applied
+are listed in §2. Two of them change **firmware protocol behaviour** and
+were verified only by compilation, review, and the host-side test suite —
+not on hardware:
+
+- **`StreamSetup` while streaming → error 7 (Busy)**: previously a live
+  `StreamSetup` silently changed the packet layout mid-session without
+  re-arming the streamer. Now it must be preceded by `StreamStop`. The
+  Python client's setup→start→stop flow is unaffected, but verify on the
+  rig (see §5).
+- **Non-finite `SetPar` values → error 6 (BadValue)**: NaN/±∞ in
+  `target_coeffs`/`forcing_coeffs`/controller params previously reached
+  the DAC conversion, where `NaN as u16` = code 0 = negative full-scale on
+  a bipolar channel (0 V on the current all-unipolar board, but the target
+  board has bipolar stages). Defence-in-depth also added in
+  `code_for_volts` itself.
+
+Deliberately **not** done: wiring `FourierCoeffs::amplitude_bound` into a
+pre-commit clip check — needs a policy decision on allowed output range
+per channel (and interacts with controller output + forcing summation).
+Candidate for a future milestone.
+
 ## 5. Suggested next actions — firmware verification
 
 Verified on hardware so far: networking (§4.2), laser livelock fix (§4.1),
@@ -332,5 +361,10 @@ timing, control-protocol, and closed-loop-control paths are all trustworthy.
 Still unverified on hardware:
 
 1. **Laser UART** with a real optoNCDT sensor (RX pull-up already fitted, §4.1)
-   — needs the physical sensor; nothing else in the firmware is left to exercise
-   from the bench without new hardware.
+   — needs the physical sensor.
+2. **StreamSetup-while-streaming rejection** (§4.4, no new hardware needed):
+   start a continuous stream, send a second `StreamSetup` → expect error 7
+   (Busy) and the running stream to continue undisturbed; after `StreamStop`,
+   a fresh `StreamSetup`/`StreamStart` must work as before. While at it,
+   confirm a NaN `SetPar` write (e.g. `forcing_coeffs`) returns error 6 and
+   leaves the output unchanged.

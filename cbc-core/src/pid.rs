@@ -29,13 +29,21 @@ impl Default for PidConfig {
 }
 
 /// PID state. `update` is RT-safe (no allocation, no branches beyond clamps).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct Pid {
     pub config: PidConfig,
     integral: f32,
     prev_error: f32,
     deriv: f32,
     first: bool,
+}
+
+// Manual impl: the derived `Default` would set `first: false`, skipping the
+// first-sample derivative-spike suppression that `new` establishes.
+impl Default for Pid {
+    fn default() -> Self {
+        Self::new(PidConfig::default())
+    }
 }
 
 impl Pid {
@@ -169,6 +177,15 @@ mod tests {
         // unwinding a huge integral.
         let out = pid.update(-10.0, DT);
         assert!(out <= -1.0 + 1e-6, "out {out} still saturated high");
+    }
+
+    #[test]
+    fn default_suppresses_first_derivative_spike() {
+        // Regression: the derived Default left `first: false`, so a
+        // default-constructed Pid produced a (error - 0)/dt kick.
+        let mut pid = Pid::default();
+        pid.config.kd = 1.0;
+        assert_eq!(pid.update(1.0, DT), 0.0);
     }
 
     #[test]

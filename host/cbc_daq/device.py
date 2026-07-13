@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from . import protocol
 from .protocol import MsgType, ProtocolError
+from .stream import StreamReceiver
 
 
 class DeviceError(Exception):
@@ -53,12 +54,16 @@ class Device:
 
     def __init__(self, host: str, port: int = protocol.CONTROL_PORT, timeout: float = 5.0):
         self._sock = socket.create_connection((host, port), timeout=timeout)
-        self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self._seq = 0
-        self.host = host
-        self.params: list[Parameter] = []
-        self._by_name: dict[str, Parameter] = {}
-        self._discover()
+        try:
+            self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self._seq = 0
+            self.host = host
+            self.params: list[Parameter] = []
+            self._by_name: dict[str, Parameter] = {}
+            self._discover()
+        except BaseException:
+            self._sock.close()
+            raise
         self.par = _ParamAccessor(self)
 
     # -- transport ---------------------------------------------------------
@@ -220,8 +225,6 @@ class Device:
 
         Give either `samples` (records after decimation) or `seconds`.
         """
-        from .stream import StreamReceiver  # deferred: needs numpy
-
         if (samples is None) == (seconds is None):
             raise ValueError("specify exactly one of samples / seconds")
         if samples is None:

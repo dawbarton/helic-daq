@@ -59,10 +59,18 @@ strings.
 
 `StreamSetup`: `decimation ≥ 1` keeps every decimation-th sample;
 `count` is the total number of records to send before the stream stops
-itself (0 = continuous); `source` ids are listed below.
+itself (0 = continuous); `source` ids are listed below. A `StreamSetup`
+while a stream is running is rejected with error 7 (busy) — send
+`StreamStop` first, so the packet layout never changes mid-session.
+
+`SetPar`: non-finite f32 values (NaN, ±∞) are rejected with error 6
+(bad value) — they would otherwise propagate to the DAC output.
+
+`Status`: `uptime_ms` is a u32 and wraps after ~49.7 days.
 
 **Error codes:** 1 bad frame, 2 unknown type, 3 bad index, 4 bad length,
-5 read-only, 6 bad value, 7 busy (command queue full — retry).
+5 read-only, 6 bad value, 7 busy (command queue full or stream running —
+stop the stream / retry).
 
 ### Parameters
 

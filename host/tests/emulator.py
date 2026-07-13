@@ -63,29 +63,35 @@ class Emulator:
         self._listener.close()
 
     def _serve(self):
-        try:
-            conn, _ = self._listener.accept()
-        except OSError:
-            return
-        with conn:
-            buf = b""
-            while True:
-                try:
-                    data = conn.recv(4096)
-                except OSError:
-                    return
-                if not data:
-                    return
-                buf += data
-                while len(buf) >= protocol.HEADER_LEN:
-                    (length,) = struct.unpack_from("<H", buf, 4)
-                    total = protocol.HEADER_LEN + length + protocol.TRAILER_LEN
-                    if len(buf) < total:
-                        break
-                    frame, buf = buf[:total], buf[total:]
-                    msg_type, seq, payload = protocol.decode_frame(frame)
-                    resp_type, resp = self._handle(msg_type, payload)
-                    conn.sendall(protocol.encode_frame(resp_type, seq, resp))
+        # Like the firmware: one connection at a time, but accept the next
+        # one once the current client disconnects.
+        while True:
+            try:
+                conn, _ = self._listener.accept()
+            except OSError:
+                return
+            with conn:
+                self._serve_connection(conn)
+
+    def _serve_connection(self, conn):
+        buf = b""
+        while True:
+            try:
+                data = conn.recv(4096)
+            except OSError:
+                return
+            if not data:
+                return
+            buf += data
+            while len(buf) >= protocol.HEADER_LEN:
+                (length,) = struct.unpack_from("<H", buf, 4)
+                total = protocol.HEADER_LEN + length + protocol.TRAILER_LEN
+                if len(buf) < total:
+                    break
+                frame, buf = buf[:total], buf[total:]
+                msg_type, seq, payload = protocol.decode_frame(frame)
+                resp_type, resp = self._handle(msg_type, payload)
+                conn.sendall(protocol.encode_frame(resp_type, seq, resp))
 
     def _error(self, code, msg_type):
         return MsgType.ERROR, bytes([code, msg_type])

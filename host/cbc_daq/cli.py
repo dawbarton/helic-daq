@@ -62,6 +62,8 @@ def cmd_sine(args) -> None:
         coeffs = dev._param("forcing_coeffs")
         n = coeffs.count  # 1 + 2K: mean, a[1..K], b[1..K]
         harmonics = (n - 1) // 2
+        if not 1 <= args.harmonic <= harmonics:
+            raise DeviceError(f"--harmonic must be between 1 and {harmonics}")
         values = [0.0] * n
         values[1 + harmonics + (args.harmonic - 1)] = args.amplitude  # b_k (sin)
         dev.set("freq", args.freq)
@@ -85,7 +87,9 @@ def cmd_stream(args) -> None:
         else:
             data = dev.capture(sources, samples=args.samples, decimation=args.decimation)
     n = len(data["index"])
-    print(f"captured {n} records ({data['dropped']} dropped at source)")
+    # `dropped` is the device's cumulative since-boot drop counter, not the
+    # number of drops during this capture.
+    print(f"captured {n} records (source drop counter: {data['dropped']})")
     if args.output:
         import numpy as np
 

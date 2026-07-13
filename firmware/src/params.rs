@@ -262,14 +262,14 @@ impl ParamStore {
                 )
             }
             IDX_TARGET => {
-                let coeffs = deserialize_coeffs(data);
+                let coeffs = deserialize_coeffs(data)?;
                 (
                     RtCommand::SetTargetCoeffs(coeffs),
                     ShadowUpdate::Target(coeffs),
                 )
             }
             IDX_FORCING => {
-                let coeffs = deserialize_coeffs(data);
+                let coeffs = deserialize_coeffs(data)?;
                 (
                     RtCommand::SetForcingCoeffs(coeffs),
                     ShadowUpdate::Forcing(coeffs),
@@ -284,6 +284,9 @@ impl ParamStore {
             i => {
                 let id = (i - BASE_PARAMS.len()) as u16;
                 let value = f32::from_le_bytes(data.try_into().unwrap());
+                if !value.is_finite() {
+                    return Err(ErrorCode::BadValue);
+                }
                 (
                     RtCommand::SetCtrlParam(id, value),
                     ShadowUpdate::CtrlParam(id as usize, value),
@@ -312,7 +315,9 @@ fn serialize_coeffs(c: &FourierCoeffs<HARMONICS>, out: &mut [u8]) {
     }
 }
 
-fn deserialize_coeffs(data: &[u8]) -> FourierCoeffs<HARMONICS> {
+/// Non-finite coefficients are rejected: a NaN would propagate through the
+/// generators to `code_for_volts`, and an infinity pins the output at a rail.
+fn deserialize_coeffs(data: &[u8]) -> Result<FourierCoeffs<HARMONICS>, ErrorCode> {
     let f = |i: usize| f32::from_le_bytes(data[4 * i..4 * i + 4].try_into().unwrap());
     let mut c = FourierCoeffs::zero();
     c.mean = f(0);
@@ -320,5 +325,12 @@ fn deserialize_coeffs(data: &[u8]) -> FourierCoeffs<HARMONICS> {
         c.a[k] = f(1 + k);
         c.b[k] = f(1 + HARMONICS + k);
     }
-    c
+    let finite = c.mean.is_finite()
+        && c.a.iter().all(|v| v.is_finite())
+        && c.b.iter().all(|v| v.is_finite());
+    if finite {
+        Ok(c)
+    } else {
+        Err(ErrorCode::BadValue)
+    }
 }

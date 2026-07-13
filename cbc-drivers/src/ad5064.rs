@@ -51,8 +51,12 @@ pub enum ChannelPolarity {
 }
 
 /// Volts→code conversion for one channel. `vref` is the DAC reference
-/// (4.096 V on this board). Input is clamped to the representable range.
+/// (4.096 V on this board). Input is clamped to the representable range;
+/// non-finite inputs (an upstream fault) map to the safe 0 V code rather
+/// than whatever `NaN as u16` yields (code 0 = negative full-scale on a
+/// bipolar channel).
 pub fn code_for_volts(volts: f32, polarity: ChannelPolarity, vref: f32) -> u16 {
+    let volts = if volts.is_finite() { volts } else { 0.0 };
     let normalized = match polarity {
         ChannelPolarity::Unipolar => volts / vref,
         ChannelPolarity::Bipolar => (volts + vref) / (2.0 * vref),
@@ -171,6 +175,14 @@ mod tests {
             65535
         );
         assert_eq!(code_for_volts(0.0, ChannelPolarity::Bipolar, 4.096), 32768);
+    }
+
+    #[test]
+    fn non_finite_volts_map_to_zero_volts() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(code_for_volts(bad, ChannelPolarity::Bipolar, 4.096), 32768);
+            assert_eq!(code_for_volts(bad, ChannelPolarity::Unipolar, 4.096), 0);
+        }
     }
 
     #[test]

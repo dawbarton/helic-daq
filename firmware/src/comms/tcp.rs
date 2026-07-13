@@ -7,7 +7,7 @@ use defmt::{info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{IpAddress, Stack};
 use embassy_time::{Duration, Instant};
-use embedded_io_async::Read;
+use embedded_io_async::{Read, Write};
 
 use super::{MAX_STREAM_SOURCES, STREAM};
 use crate::config::SAMPLE_RATE;
@@ -87,7 +87,9 @@ async fn serve(socket: &mut TcpSocket<'_>, store: &mut ParamStore) {
             ),
         }
         .expect("response encoding cannot fail");
-        if socket.write(&resp_frame[..n]).await.is_err() {
+        // write_all: the inherent `write` may accept only part of the frame,
+        // which would silently corrupt the response stream.
+        if socket.write_all(&resp_frame[..n]).await.is_err() {
             return;
         }
         let _ = socket.flush().await;
@@ -166,6 +168,12 @@ fn handle(
             }
             STREAM.lock(|s| {
                 let mut s = s.borrow_mut();
+                // Reconfiguring a live stream would change the packet layout
+                // mid-session without re-arming the streamer; require a
+                // StreamStop first.
+                if s.enabled {
+                    return Err(ErrorCode::Busy);
+                }
                 if s.sources.len() < n {
                     s.sources.clear();
                 }
