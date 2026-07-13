@@ -68,6 +68,12 @@ fn main() -> ! {
         executor1.run(|spawner| spawner.spawn(unwrap!(rt_loop::rt_loop(b.analog, cmd_rx, rec_tx))));
     });
 
+    // laser_task is confirmed to livelock core 0 when the optoNCDT's RX pin
+    // is left floating (continuous UART framing/break interrupts; no
+    // software backoff can fix a storm that happens within the interrupt
+    // re-enable window). Disabled until the sensor is wired or the pin gets
+    // a pull-up. See docs/developer_guide.md known gaps.
+    let _ = b.laser;
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
         spawner.spawn(unwrap!(core0_main(
@@ -77,7 +83,6 @@ fn main() -> ! {
             rec_rx
         )));
         spawner.spawn(unwrap!(blink(b.led)));
-        spawner.spawn(unwrap!(laser_task(b.laser)));
         spawner.spawn(unwrap!(status_task()));
     });
 }
@@ -91,6 +96,7 @@ async fn core0_main(
     store: ParamStore,
     records: rt_loop::RecordConsumer,
 ) {
+    info!("core0_main: task started");
     let stack = comms::init(spawner, eth).await;
     spawner.spawn(unwrap!(comms::tcp::control_task(stack, store)));
     spawner.spawn(unwrap!(comms::udp::stream_task(stack, records)));
@@ -118,7 +124,11 @@ async fn laser_task(parts: LaserParts) -> ! {
     let mut buf = [0u8; 3];
     loop {
         if rx.read(&mut buf).await.is_err() {
-            // Break/overrun: parser resynchronises on the flag bits.
+            // Break/overrun: parser resynchronises on the flag bits. A
+            // disconnected or floating RX line free-runs into framing
+            // errors; back off instead of retrying immediately so a
+            // missing sensor can't starve the rest of core 0.
+            Timer::after_millis(10).await;
             continue;
         }
         for byte in buf {

@@ -63,6 +63,7 @@ static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
 /// Bring up Ethernet and the IP stack; returns the stack handle for the
 /// server tasks. Must be called from the core-0 executor.
 pub async fn init(spawner: Spawner, parts: EthParts) -> Stack<'static> {
+    info!("comms::init: entered, constructing SPI0");
     let spi = Spi::new(
         parts.spi,
         parts.clk,
@@ -78,6 +79,7 @@ pub async fn init(spawner: Spawner, parts: EthParts) -> Stack<'static> {
         },
     );
     let spi_dev = unwrap!(ExclusiveDevice::new(spi, parts.cs, Delay));
+    info!("comms::init: SPI0 device ready, starting W5500 init (reset + register access)");
 
     let (device, runner) = embassy_net_wiznet::new(
         config::MAC_ADDR,
@@ -88,6 +90,7 @@ pub async fn init(spawner: Spawner, parts: EthParts) -> Stack<'static> {
     )
     .await
     .expect("W5500 init failed");
+    info!("comms::init: W5500 responded, spawning ethernet_task");
     spawner.spawn(unwrap!(ethernet_task(runner)));
 
     let ip = config::IP_ADDR;

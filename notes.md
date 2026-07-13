@@ -139,7 +139,23 @@ backoff fix is real and should stay, but is not sufficient by itself.
   aggressively (seconds, not milliseconds), or stop retrying until
   something (a parameter write) explicitly re-enables it.
 
-### 4.2 W5500 Ethernet: TX and link work, RX does not — UNRESOLVED
+### 4.2 W5500 Ethernet: TX and link work, RX does not — RESOLVED (2026-07-13)
+
+**Resolution**: it was the physical layer, exactly as the firmware/driver code
+review predicted (the `embassy-net-wiznet` RX path and firmware config were
+correct throughout). After moving the board off the direct-cable /
+USB-Ethernet-adapter link onto a known-good switch socket + cable — the Mac now
+reaches the device via `en8` (`192.168.1.10/16`), not the old `en7` — receive
+works. Confirmed with three independent proofs: (1) `arp -a` resolves
+`192.168.1.235` to `02:cb:cd:00:00:01` (device replied to a broadcast ARP
+request → RX + TX); (2) firmware logged `net_probe: RX 14 bytes from
+192.168.1.10` (unicast UDP end-to-end through smoltcp); (3) TCP connect to the
+control port `2350` completed the 3-way handshake (`control: client connected`).
+The `net_beacon_task`/RX-probe diagnostic has been removed. Note: `ping` still
+times out — expected, embassy-net has no ICMP echo responder; it is not an RX
+fault. Original investigation retained below for reference.
+
+
 
 **What works, confirmed with hard evidence:**
 - W5500 SPI0 register access works (accurate, correct periodic PHY link
