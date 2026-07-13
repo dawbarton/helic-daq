@@ -287,14 +287,32 @@ pipeline lag). Confirms the phase accumulator + Fourier generator + sine LUT,
 the frequency setting, the 8 kHz clock, AC DAC output, and the whole UDP
 streamer/framing/decimation path.
 
-**macOS firewall workaround (managed Mac — firewall can't be changed):** the
-Application Firewall silently drops UDP to the *unsigned Homebrew* `python3`,
-but an **Apple-signed `/usr/bin/python3` receiver passes**. TCP control (:2350,
-outbound) works from any Python. So: drive control with the normal client and
-receive the UDP stream with `/usr/bin/python3` (stdlib socket → raw file →
-decode offline). Probe/decode scripts used are in the scratchpad; the `cbc-daq`
-CLI's own `stream` capture will still time out because it receives in-process
-under Homebrew Python.
+**macOS firewall / code-signing issue + workaround (this managed Mac):**
+- Symptom: `cbc-daq stream` (and any `cbc_daq` capture) **times out with zero
+  packets**, while `cbc-daq status`/`set`/`get` work fine.
+- Cause: the macOS Application Firewall is **enabled and MDM-locked** — it
+  cannot be turned off or edited (`socketfilterfw` returns *"Firewall settings
+  cannot be modified from command line on managed Mac computers"*, and the GUI
+  toggle is greyed out). The ALF gates **inbound** connections **per binary**
+  and, on this policy, silently drops UDP to the **unsigned Homebrew Python**
+  (`/opt/homebrew/.../python3.14`). Outbound TCP (control, :2350) is unaffected,
+  which is why control works but streaming doesn't.
+- Workaround: receive the UDP stream with an **Apple-signed system binary**,
+  `/usr/bin/python3` (a platform binary the ALF permits), while still driving
+  control from the normal Homebrew client. The device streams to whichever host
+  opened the TCP control socket, so the two can be different processes. Recipe:
+    1. Control (Homebrew python, `host/`): `d.set('freq', …)`,
+       `d.set('forcing_coeffs', …)`, `d.stream_setup([...], count=0)`,
+       then `d.stream_start(2351)` / `d.stream_stop()`.
+    2. Receiver (**`/usr/bin/python3`**, stdlib only, run concurrently): bind
+       `('0.0.0.0', 2351)`, `recvfrom` in a loop, append each datagram to a file
+       as `struct.pack('<H', len)+data`.
+    3. Decode offline (Homebrew python + numpy): per packet,
+       `decode_stream_header(pkt)` then
+       `np.frombuffer(pkt, '<f4', offset=STREAM_HEADER_LEN).reshape(n_records, n_sources)`.
+  The `cbc-daq` CLI's built-in `stream` will keep timing out here because it
+  receives in-process under Homebrew Python — this is a host security-policy
+  limitation, not a firmware or protocol bug.
 
 ## 5. Suggested next actions — firmware verification
 
