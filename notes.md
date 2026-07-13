@@ -316,17 +316,18 @@ streamer/framing/decimation path.
 
 ## 5. Suggested next actions — firmware verification
 
-Networking (§4.2), the laser livelock (§4.1), ADC/DAC (§4.3), and the streaming
-+ signal-generator path (§4.3) are all resolved and verified on hardware; the
-RT loop, ADC-read, DAC-write, generator, and UDP-stream paths are trustworthy.
-Still unverified on hardware, roughly in priority order:
+Verified on hardware so far: networking (§4.2), laser livelock fix (§4.1),
+ADC/DAC (§4.3), streaming + signal generator (§4.3), **all four sample-rate
+presets** (measured tick rate = configured within measurement slop: 1000.0 /
+2000.0 / 3999.3 / 7997.7 Hz), and **parameter-registry round-trip** (scalars,
+full 33-element `forcing`/`target` coeff arrays via SetBlock+Commit — exact f32
+round-trip — and read-only writes correctly rejected). The RT loop, ADC-read,
+DAC-write, generator, UDP-stream, timing, and control-protocol paths are all
+trustworthy.
 
-1. **Sample-rate accuracy across presets**: only 8 kHz is proven (the 100 Hz
-   sine read back at 100.0 Hz). The preset is compile-time (`config.rs`
-   `SAMPLE_RATE`), so verifying 1/2/4 kHz means a rebuild per preset — capture a
-   known sine at each and confirm the recovered frequency, or scope CONVST (GP8).
-2. **Parameter registry** round-trip for arrays (target/forcing coeffs, commit
-   semantics) beyond the sine smoke test.
-3. **Closed-loop control**: switch `config.rs` `ActiveController` to
-   `PidController` and confirm it regulates a fed-back ADC channel to a target.
-4. **Laser UART** with a real optoNCDT sensor (RX pull-up already fitted, §4.1).
+Still unverified on hardware:
+
+1. **Closed-loop control**: switch `config.rs` `ActiveController` to
+   `PidController` and confirm it regulates a fed-back ADC channel to a target
+   (the DAC→ADC loopback makes a convenient plant).
+2. **Laser UART** with a real optoNCDT sensor (RX pull-up already fitted, §4.1).
