@@ -31,6 +31,9 @@ use crate::config;
 type EthSpi = ExclusiveDevice<Spi<'static, SPI0, Async>, Output<'static>, Delay>;
 type EthRunner = WiznetRunner<'static, W5500, EthSpi, Input<'static>, Output<'static>>;
 
+/// Maximum number of stream sources in one record.
+pub const MAX_STREAM_SOURCES: usize = 16;
+
 /// Stream session state shared between the TCP server (writer) and the UDP
 /// streamer (reader). Both tasks live on core 0.
 pub struct StreamState {
@@ -38,7 +41,7 @@ pub struct StreamState {
     pub target: Option<(Ipv4Address, u16)>,
     pub enabled: bool,
     /// Source ids (cbc_proto::source) in record order.
-    pub sources: Vec<u8, 16>,
+    pub sources: Vec<u8, MAX_STREAM_SOURCES>,
     /// Keep every n-th sample (>= 1).
     pub decimation: u16,
     /// Records to send before auto-stop; 0 = continuous.

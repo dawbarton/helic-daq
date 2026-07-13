@@ -129,6 +129,15 @@ const IDX_CTRL_RESET: usize = 13;
 /// Maximum number of controller parameters supported.
 pub const MAX_CTRL_PARAMS: usize = 8;
 
+#[derive(Clone, Copy)]
+enum ShadowUpdate {
+    None,
+    Freq(f32),
+    Target(FourierCoeffs<HARMONICS>),
+    Forcing(FourierCoeffs<HARMONICS>),
+    CtrlParam(usize, f32),
+}
+
 /// Registry state: shadow copies of the writable parameters plus the
 /// command producer that forwards writes to the RT loop.
 pub struct ParamStore {
@@ -141,6 +150,10 @@ pub struct ParamStore {
 
 impl ParamStore {
     pub fn new(commands: CommandProducer) -> Self {
+        assert!(
+            Self::ctrl_names().len() <= MAX_CTRL_PARAMS,
+            "controller exposes more parameters than ParamStore can shadow"
+        );
         Self {
             commands,
             freq_hz: 0.0,
@@ -234,40 +247,58 @@ impl ParamStore {
         if data.len() != def.ty.size() * def.count as usize {
             return Err(ErrorCode::BadLength);
         }
-        let cmd = match index {
+        let (cmd, shadow) = match index {
             IDX_FREQ => {
                 let freq = f32::from_le_bytes(data.try_into().unwrap());
                 if !(0.0..SAMPLE_RATE.hz() / 2.0).contains(&freq) {
                     return Err(ErrorCode::BadValue);
                 }
-                self.freq_hz = freq;
-                RtCommand::SetIncrement(PhaseAccumulator::increment_for(
-                    freq as f64,
-                    SAMPLE_RATE.hz() as f64,
-                ))
+                (
+                    RtCommand::SetIncrement(PhaseAccumulator::increment_for(
+                        freq as f64,
+                        SAMPLE_RATE.hz() as f64,
+                    )),
+                    ShadowUpdate::Freq(freq),
+                )
             }
             IDX_TARGET => {
-                self.target = deserialize_coeffs(data);
-                RtCommand::SetTargetCoeffs(self.target)
+                let coeffs = deserialize_coeffs(data);
+                (
+                    RtCommand::SetTargetCoeffs(coeffs),
+                    ShadowUpdate::Target(coeffs),
+                )
             }
             IDX_FORCING => {
-                self.forcing = deserialize_coeffs(data);
-                RtCommand::SetForcingCoeffs(self.forcing)
+                let coeffs = deserialize_coeffs(data);
+                (
+                    RtCommand::SetForcingCoeffs(coeffs),
+                    ShadowUpdate::Forcing(coeffs),
+                )
             }
             IDX_CTRL_RESET => {
                 if u32::from_le_bytes(data.try_into().unwrap()) == 0 {
                     return Ok(());
                 }
-                RtCommand::ResetController
+                (RtCommand::ResetController, ShadowUpdate::None)
             }
             i => {
                 let id = (i - BASE_PARAMS.len()) as u16;
                 let value = f32::from_le_bytes(data.try_into().unwrap());
-                self.ctrl_params[id as usize] = value;
-                RtCommand::SetCtrlParam(id, value)
+                (
+                    RtCommand::SetCtrlParam(id, value),
+                    ShadowUpdate::CtrlParam(id as usize, value),
+                )
             }
         };
-        self.commands.enqueue(cmd).map_err(|_| ErrorCode::Busy)
+        self.commands.enqueue(cmd).map_err(|_| ErrorCode::Busy)?;
+        match shadow {
+            ShadowUpdate::None => {}
+            ShadowUpdate::Freq(freq) => self.freq_hz = freq,
+            ShadowUpdate::Target(coeffs) => self.target = coeffs,
+            ShadowUpdate::Forcing(coeffs) => self.forcing = coeffs,
+            ShadowUpdate::CtrlParam(id, value) => self.ctrl_params[id] = value,
+        }
+        Ok(())
     }
 }
 

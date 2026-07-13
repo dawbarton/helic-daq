@@ -11,6 +11,7 @@
 //! than writing back-to-back.
 
 use crate::AnalogOut;
+use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 
 pub const CHANNELS: usize = 4;
@@ -102,6 +103,18 @@ where
         }
         Ok(())
     }
+
+    /// Set every channel to 0 V, spacing consecutive SPI words for parts
+    /// that require an inter-word settling time.
+    pub fn zero_all_with_delay(&mut self, delay: &mut impl DelayNs) -> Result<(), E> {
+        for ch in 0..CHANNELS {
+            self.write_volts(ch, 0.0)?;
+            if ch + 1 < CHANNELS {
+                delay.delay_us(3);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<SPI, E> AnalogOut<CHANNELS> for Ad5064<SPI>
@@ -186,5 +199,25 @@ mod tests {
         for ch in 0..4u8 {
             assert_eq!(dac.spi.written[ch as usize * 4 + 1] >> 4, ch);
         }
+    }
+
+    #[derive(Default)]
+    struct RecordingDelay {
+        calls_us: Vec<u32>,
+    }
+
+    impl DelayNs for RecordingDelay {
+        fn delay_ns(&mut self, ns: u32) {
+            self.calls_us.push(ns / 1_000);
+        }
+    }
+
+    #[test]
+    fn zero_all_with_delay_spaces_successive_words() {
+        let mut dac = Ad5064::new(MockSpi::default(), [ChannelPolarity::Unipolar; 4], 4.096);
+        let mut delay = RecordingDelay::default();
+        dac.zero_all_with_delay(&mut delay).unwrap();
+        assert_eq!(dac.spi.written.len(), 16);
+        assert_eq!(delay.calls_us, vec![3, 3, 3]);
     }
 }

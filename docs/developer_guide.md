@@ -138,7 +138,10 @@ pub fn make_controller() -> ActiveController { ... }
 
 `param_names` entries appear automatically in the registry (and therefore
 in `cbc-daq list`) as writable f32 parameters; writes arrive via
-`set_param` at a sample boundary. Everything in `cbc-core` is available:
+`set_param` at a sample boundary. The firmware currently supports up to
+eight controller parameters and fails at boot if the active controller exposes
+more, so an over-large controller configuration is caught before an
+experiment. Everything in `cbc-core` is available:
 `SosFilter` biquad cascades, `Pid`, `FourierEstimator` (feed it the shared
 phase for phase-locked harmonic estimates), and the generators.
 

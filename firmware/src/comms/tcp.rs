@@ -9,7 +9,7 @@ use embassy_net::{IpAddress, Stack};
 use embassy_time::{Duration, Instant};
 use embedded_io_async::Read;
 
-use super::STREAM;
+use super::{MAX_STREAM_SOURCES, STREAM};
 use crate::config::SAMPLE_RATE;
 use crate::params::ParamStore;
 
@@ -157,7 +157,7 @@ fn handle(
             let decimation = u16::from_le_bytes([payload[0], payload[1]]);
             let count = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
             let n = payload[6] as usize;
-            if decimation == 0 || n == 0 || payload.len() != 7 + n {
+            if decimation == 0 || n == 0 || n > MAX_STREAM_SOURCES || payload.len() != 7 + n {
                 return Err(ErrorCode::BadValue);
             }
             let sources = &payload[7..7 + n];
@@ -169,12 +169,15 @@ fn handle(
                 if s.sources.len() < n {
                     s.sources.clear();
                 }
-                let _ = s.sources.resize_default(n);
+                s.sources
+                    .resize_default(n)
+                    .map_err(|_| ErrorCode::BadValue)?;
                 s.sources[..n].copy_from_slice(sources);
                 s.sources.truncate(n);
                 s.decimation = decimation;
                 s.count = count;
-            });
+                Ok(())
+            })?;
             Ok(0)
         }
         MsgType::StreamStart => {

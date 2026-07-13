@@ -102,7 +102,7 @@ pub async fn rt_loop(
         Oversampling::for_sample_rate(SAMPLE_RATE.hz()),
         &mut Delay,
     );
-    if rt.dac.zero_all().is_err() {
+    if rt.dac.zero_all_with_delay(&mut Delay).is_err() {
         warn!("DAC zeroing failed");
     }
 
