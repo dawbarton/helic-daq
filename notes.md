@@ -319,15 +319,17 @@ streamer/framing/decimation path.
 Verified on hardware so far: networking (§4.2), laser livelock fix (§4.1),
 ADC/DAC (§4.3), streaming + signal generator (§4.3), **all four sample-rate
 presets** (measured tick rate = configured within measurement slop: 1000.0 /
-2000.0 / 3999.3 / 7997.7 Hz), and **parameter-registry round-trip** (scalars,
-full 33-element `forcing`/`target` coeff arrays via SetBlock+Commit — exact f32
-round-trip — and read-only writes correctly rejected). The RT loop, ADC-read,
-DAC-write, generator, UDP-stream, timing, and control-protocol paths are all
-trustworthy.
+2000.0 / 3999.3 / 7997.7 Hz), **parameter-registry round-trip** (scalars, full
+33-element `forcing`/`target` coeff arrays via SetBlock+Commit — exact f32
+round-trip — and read-only writes correctly rejected), and **closed-loop PID**
+(temporarily set `ActiveController = PidController` with feedback on ADC ch0 over
+the DAC-A loopback: setpoint 2.0/3.0 V held to ±0.0000 V steady-state error,
+step settles to 2% in ~39 ms, gains live-tuned via `ctrl_kp`/`ctrl_ki`; reverted
+to `PassThrough` after). The RT loop, ADC-read, DAC-write, generator, UDP-stream,
+timing, control-protocol, and closed-loop-control paths are all trustworthy.
 
 Still unverified on hardware:
 
-1. **Closed-loop control**: switch `config.rs` `ActiveController` to
-   `PidController` and confirm it regulates a fed-back ADC channel to a target
-   (the DAC→ADC loopback makes a convenient plant).
-2. **Laser UART** with a real optoNCDT sensor (RX pull-up already fitted, §4.1).
+1. **Laser UART** with a real optoNCDT sensor (RX pull-up already fitted, §4.1)
+   — needs the physical sensor; nothing else in the firmware is left to exercise
+   from the bench without new hardware.
