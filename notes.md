@@ -279,29 +279,36 @@ four-channel output.
   cape, attaching cables). `target did not respond` → reseat the SWD wires; a
   power cycle also revived it this session.
 
-**Streaming not yet verified end-to-end**: the macOS Application Firewall
-silently drops the device's UDP stream packets to a host socket (TCP control on
-:2350 works fine). ADC readback during bring-up was done over the defmt/RTT
-probe instead. To verify the UDP streamer, allow `python` through the firewall
-(or capture on another host) — a host security setting, not a firmware issue.
+**Streaming + signal generator verified end-to-end (2026-07-13):** commanded a
+2.0 V + 1.5 V·sin(2π·100 t) forcing on DAC A and captured `adc0`/`out` over the
+UDP stream — recovered 100.0 Hz, correct amplitude/offset, adc/out amplitude
+ratio 1.000, corr 0.997 (the <1 is the expected one-sample read→generate→write
+pipeline lag). Confirms the phase accumulator + Fourier generator + sine LUT,
+the frequency setting, the 8 kHz clock, AC DAC output, and the whole UDP
+streamer/framing/decimation path.
+
+**macOS firewall workaround (managed Mac — firewall can't be changed):** the
+Application Firewall silently drops UDP to the *unsigned Homebrew* `python3`,
+but an **Apple-signed `/usr/bin/python3` receiver passes**. TCP control (:2350,
+outbound) works from any Python. So: drive control with the normal client and
+receive the UDP stream with `/usr/bin/python3` (stdlib socket → raw file →
+decode offline). Probe/decode scripts used are in the scratchpad; the `cbc-daq`
+CLI's own `stream` capture will still time out because it receives in-process
+under Homebrew Python.
 
 ## 5. Suggested next actions — firmware verification
 
-Networking (§4.2), the laser livelock (§4.1), and ADC/DAC (§4.3) are all
-resolved and verified on hardware; the RT loop, ADC-read, and DAC-write paths
-are trustworthy. Still unverified on hardware, roughly in priority order:
+Networking (§4.2), the laser livelock (§4.1), ADC/DAC (§4.3), and the streaming
++ signal-generator path (§4.3) are all resolved and verified on hardware; the
+RT loop, ADC-read, DAC-write, generator, and UDP-stream paths are trustworthy.
+Still unverified on hardware, roughly in priority order:
 
-1. **End-to-end streaming + signal generator.** Unblock the UDP stream (allow
-   `python` through the macOS firewall, or capture on another host), then
-   command a sine (`cbc-daq sine <f> <A>`, drives DAC A) and capture `adc0`.
-   Confirms the phase accumulator + Fourier generator + sine LUT produce a
-   correct waveform (frequency/amplitude/phase) *and* exercises the UDP
-   streamer, decimation, and finite-capture logic. Biggest single unverified
-   chunk.
-2. **Sample-rate accuracy**: verify the four presets (1/2/4/8 kHz) give the
-   actual rate — scope CONVST (GP8) or measure the stream cadence.
-3. **Parameter registry** round-trip for arrays (target/forcing coeffs, commit
-   semantics) beyond the DC/sine smoke tests.
-4. **Closed-loop control**: switch `config.rs` `ActiveController` to
+1. **Sample-rate accuracy across presets**: only 8 kHz is proven (the 100 Hz
+   sine read back at 100.0 Hz). The preset is compile-time (`config.rs`
+   `SAMPLE_RATE`), so verifying 1/2/4 kHz means a rebuild per preset — capture a
+   known sine at each and confirm the recovered frequency, or scope CONVST (GP8).
+2. **Parameter registry** round-trip for arrays (target/forcing coeffs, commit
+   semantics) beyond the sine smoke test.
+3. **Closed-loop control**: switch `config.rs` `ActiveController` to
    `PidController` and confirm it regulates a fed-back ADC channel to a target.
-5. **Laser UART** with a real optoNCDT sensor (RX pull-up already fitted, §4.1).
+4. **Laser UART** with a real optoNCDT sensor (RX pull-up already fitted, §4.1).
