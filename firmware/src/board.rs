@@ -40,12 +40,14 @@ use static_cell::StaticCell;
 /// DAC reference voltage (ADR-series reference on the analog board).
 pub const DAC_VREF: f32 = 4.096;
 
-/// Output-stage polarity per DAC channel: two bipolar (via inverting op-amp
-/// stages), two unipolar, per AGENTS.md.
+/// Output-stage polarity per DAC channel. The target design has two bipolar
+/// (via inverting op-amp stages) and two unipolar per AGENTS.md, but the
+/// interim older rtc board in use for bring-up has **all four unipolar**
+/// (0..Vref, no inverting stages).
 pub const DAC_POLARITY: [ChannelPolarity; 4] = [
-    ChannelPolarity::Bipolar,
     ChannelPolarity::Unipolar,
-    ChannelPolarity::Bipolar,
+    ChannelPolarity::Unipolar,
+    ChannelPolarity::Unipolar,
     ChannelPolarity::Unipolar,
 ];
 
