@@ -16,6 +16,7 @@ use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
 use helic_proto::{ErrorCode, ParamType};
 
+use crate::rig::Rig;
 use crate::rt_loop::{self, CommandProducer, RtCommand};
 use crate::{SampleRate, HARMONICS};
 
@@ -79,7 +80,7 @@ pub const BASE_PARAMS: &[ParamDef] = &[
         writable: false,
     },
     ParamDef {
-        name: "busy_timeouts",
+        name: "tick_timeouts",
         ty: ParamType::U32,
         count: 1,
         writable: false,
@@ -129,6 +130,7 @@ const IDX_CTRL_RESET: usize = 13;
 
 /// Maximum number of controller parameters supported.
 pub const MAX_CTRL_PARAMS: usize = 8;
+pub const MAX_RIG_PARAMS: usize = 8;
 
 #[derive(Clone, Copy)]
 enum ShadowUpdate {
@@ -136,35 +138,49 @@ enum ShadowUpdate {
     Freq(f32),
     Target(FourierCoeffs<HARMONICS>),
     Forcing(FourierCoeffs<HARMONICS>),
+    RigParam(usize, f32),
     CtrlParam(usize, f32),
 }
 
 /// Registry state: shadow copies of the writable parameters plus the
 /// command producer that forwards writes to the RT loop.
-pub struct ParamStore<C: Controller> {
+pub struct ParamStore<C: Controller, R: Rig> {
     commands: CommandProducer,
     sample_rate: SampleRate,
     freq_hz: f32,
     target: FourierCoeffs<HARMONICS>,
     forcing: FourierCoeffs<HARMONICS>,
+    rig_params: [f32; MAX_RIG_PARAMS],
     ctrl_params: [f32; MAX_CTRL_PARAMS],
-    controller: PhantomData<C>,
+    types: PhantomData<(C, R)>,
 }
 
-impl<C: Controller> ParamStore<C> {
+impl<C: Controller, R: Rig> ParamStore<C, R> {
     pub fn new(commands: CommandProducer, sample_rate: SampleRate) -> Self {
+        assert!(
+            Self::rig_names().len() <= MAX_RIG_PARAMS,
+            "rig exposes more parameters than ParamStore can shadow"
+        );
         assert!(
             Self::ctrl_names().len() <= MAX_CTRL_PARAMS,
             "controller exposes more parameters than ParamStore can shadow"
         );
+        let mut rig_params = [0.0; MAX_RIG_PARAMS];
+        let defaults = R::param_defaults();
+        assert!(
+            defaults.is_empty() || defaults.len() == Self::rig_names().len(),
+            "rig parameter defaults must be empty or match param_names"
+        );
+        rig_params[..defaults.len()].copy_from_slice(defaults);
         Self {
             commands,
             sample_rate,
             freq_hz: 0.0,
             target: FourierCoeffs::zero(),
             forcing: FourierCoeffs::zero(),
+            rig_params,
             ctrl_params: [0.0; MAX_CTRL_PARAMS],
-            controller: PhantomData,
+            types: PhantomData,
         }
     }
 
@@ -172,17 +188,30 @@ impl<C: Controller> ParamStore<C> {
         C::param_names()
     }
 
+    fn rig_names() -> &'static [&'static str] {
+        R::param_names()
+    }
+
     pub fn count(&self) -> usize {
-        BASE_PARAMS.len() + Self::ctrl_names().len()
+        BASE_PARAMS.len() + Self::rig_names().len() + Self::ctrl_names().len()
     }
 
     /// Definition of parameter `index` (base or controller).
     pub fn def(&self, index: usize) -> Option<ParamDef> {
         if index < BASE_PARAMS.len() {
             Some(BASE_PARAMS[index])
+        } else if index < BASE_PARAMS.len() + Self::rig_names().len() {
+            Self::rig_names()
+                .get(index - BASE_PARAMS.len())
+                .map(|name| ParamDef {
+                    name,
+                    ty: ParamType::F32,
+                    count: 1,
+                    writable: true,
+                })
         } else {
             Self::ctrl_names()
-                .get(index - BASE_PARAMS.len())
+                .get(index - BASE_PARAMS.len() - Self::rig_names().len())
                 .map(|name| ParamDef {
                     name,
                     ty: ParamType::F32,
@@ -226,7 +255,7 @@ impl<C: Controller> ParamStore<C> {
                     .to_le_bytes(),
             ),
             6 => out.copy_from_slice(&rt_loop::OVERRUNS.load(Ordering::Relaxed).to_le_bytes()),
-            7 => out.copy_from_slice(&rt_loop::BUSY_TIMEOUTS.load(Ordering::Relaxed).to_le_bytes()),
+            7 => out.copy_from_slice(&rt_loop::TICK_TIMEOUTS.load(Ordering::Relaxed).to_le_bytes()),
             8 => out.copy_from_slice(
                 &rt_loop::RECORDS_DROPPED
                     .load(Ordering::Relaxed)
@@ -237,7 +266,12 @@ impl<C: Controller> ParamStore<C> {
             IDX_TARGET => serialize_coeffs(&self.target, out),
             IDX_FORCING => serialize_coeffs(&self.forcing, out),
             IDX_CTRL_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
-            i => out.copy_from_slice(&self.ctrl_params[i - BASE_PARAMS.len()].to_le_bytes()),
+            i if i < BASE_PARAMS.len() + Self::rig_names().len() => {
+                out.copy_from_slice(&self.rig_params[i - BASE_PARAMS.len()].to_le_bytes())
+            }
+            i => out.copy_from_slice(
+                &self.ctrl_params[i - BASE_PARAMS.len() - Self::rig_names().len()].to_le_bytes(),
+            ),
         }
         Ok(size)
     }
@@ -286,8 +320,19 @@ impl<C: Controller> ParamStore<C> {
                 }
                 (RtCommand::ResetController, ShadowUpdate::None)
             }
-            i => {
+            i if i < BASE_PARAMS.len() + Self::rig_names().len() => {
                 let id = (i - BASE_PARAMS.len()) as u16;
+                let value = f32::from_le_bytes(data.try_into().unwrap());
+                if !value.is_finite() {
+                    return Err(ErrorCode::BadValue);
+                }
+                (
+                    RtCommand::SetRigParam(id, value),
+                    ShadowUpdate::RigParam(id as usize, value),
+                )
+            }
+            i => {
+                let id = (i - BASE_PARAMS.len() - Self::rig_names().len()) as u16;
                 let value = f32::from_le_bytes(data.try_into().unwrap());
                 if !value.is_finite() {
                     return Err(ErrorCode::BadValue);
@@ -304,6 +349,7 @@ impl<C: Controller> ParamStore<C> {
             ShadowUpdate::Freq(freq) => self.freq_hz = freq,
             ShadowUpdate::Target(coeffs) => self.target = coeffs,
             ShadowUpdate::Forcing(coeffs) => self.forcing = coeffs,
+            ShadowUpdate::RigParam(id, value) => self.rig_params[id] = value,
             ShadowUpdate::CtrlParam(id, value) => self.ctrl_params[id] = value,
         }
         Ok(())

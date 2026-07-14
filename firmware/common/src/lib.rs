@@ -3,6 +3,7 @@
 pub mod comms;
 pub mod laser;
 pub mod params;
+pub mod rig;
 pub mod rt_loop;
 
 /// Number of harmonics in the periodic target and forcing generators.

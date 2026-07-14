@@ -30,10 +30,10 @@ mod board;
 mod config;
 mod rt_loop;
 
-use board::LaserParts;
+use board::{LaserParts, RtAnalog};
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
-type Store = ParamStore<config::ActiveController>;
+type Store = ParamStore<config::ActiveController, RtAnalog>;
 
 /// RP2350 boot image definition, required in flash for the boot ROM.
 #[unsafe(link_section = ".start_block")]
@@ -42,6 +42,7 @@ pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ => uart::InterruptHandler<UART0>;
+    PWM_IRQ_WRAP_0 => helic_fw_common::rig::PwmWrapInterruptHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH1>,
         embassy_rp::dma::InterruptHandler<DMA_CH2>,
         embassy_rp::dma::InterruptHandler<DMA_CH3>;
@@ -56,6 +57,10 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let p = embassy_rp::init(Default::default());
+    shared_rt::LASER_RANGE_MM.store(
+        config::LASER_RANGE_MM.to_bits(),
+        core::sync::atomic::Ordering::Relaxed,
+    );
     info!("helic-daq firmware boot: {}", params::FIRMWARE_VERSION);
 
     let b = board::Board::new(p);
@@ -132,7 +137,7 @@ async fn laser_task(parts: LaserParts) -> ! {
     let mut uart_config = uart::Config::default();
     uart_config.baudrate = 921_600;
     let rx = uart::UartRx::new(parts.uart, parts.rx, Irqs, parts.rx_dma, uart_config);
-    helic_fw_common::laser::laser_run(rx, config::LASER_RANGE_MM, &shared_rt::LASER_VALUE).await
+    helic_fw_common::laser::laser_run(rx, &shared_rt::LASER_RANGE_MM, &shared_rt::LASER_VALUE).await
 }
 
 /// Core 0: 1 Hz diagnostics over defmt.

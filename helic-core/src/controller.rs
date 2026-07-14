@@ -4,20 +4,6 @@
 
 use crate::pid::Pid;
 
-/// Number of ADC input channels (AD7609).
-pub const ADC_CHANNELS: usize = 8;
-
-/// One tick's worth of measurements, in engineering units. The controller
-/// picks what it uses (agreed design: feedback source is configurable).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Measurements {
-    /// ADC inputs in volts.
-    pub adc: [f32; ADC_CHANNELS],
-    /// Latest laser displacement value (sensor units; may be up to one
-    /// sample old relative to `adc`).
-    pub laser: f32,
-}
-
 /// A controller that runs once per sample tick.
 ///
 /// `reference` is the current value of the periodic reference generator;
@@ -25,7 +11,7 @@ pub struct Measurements {
 /// contribution to the output in volts (the firmware adds any feed-forward
 /// forcing and handles DAC scaling/clamping).
 pub trait Controller {
-    fn tick(&mut self, m: &Measurements, reference: f32, dt: f32) -> f32;
+    fn tick(&mut self, inputs: &[f32], reference: f32, dt: f32) -> f32;
 
     /// Reset internal state (integrators, filter history). Called when
     /// control is enabled or re-armed.
@@ -44,6 +30,11 @@ pub trait Controller {
     /// Set a controller parameter by id (index into `param_names`).
     /// Unknown ids are ignored.
     fn set_param(&mut self, _id: u16, _value: f32) {}
+
+    /// Per-tick internal signals exposed after the experiment inputs.
+    const TELEMETRY: &'static [(&'static str, &'static str)] = &[];
+
+    fn telemetry(&self, _out: &mut [f32]) {}
 }
 
 /// Open-loop pass-through: output is the reference itself. The default
@@ -53,39 +44,39 @@ pub struct PassThrough;
 
 impl Controller for PassThrough {
     #[inline]
-    fn tick(&mut self, _m: &Measurements, reference: f32, _dt: f32) -> f32 {
+    fn tick(&mut self, _inputs: &[f32], reference: f32, _dt: f32) -> f32 {
         reference
     }
 }
 
-/// PID feedback on a selectable ADC channel (or the laser input), tracking
-/// the reference.
+/// PID feedback on a selectable input slot, tracking the reference.
 #[derive(Clone, Copy, Debug)]
 pub struct PidController {
     pub pid: Pid,
-    /// Which measurement is fed back: `Some(ch)` = ADC channel, `None` = laser.
-    pub feedback: Option<usize>,
+    pub feedback: usize,
+    error: f32,
 }
 
 impl PidController {
-    pub fn new(pid: Pid, feedback: Option<usize>) -> Self {
-        Self { pid, feedback }
+    pub fn new(pid: Pid, feedback: usize) -> Self {
+        Self {
+            pid,
+            feedback,
+            error: 0.0,
+        }
     }
 
     #[inline]
-    fn measurement(&self, m: &Measurements) -> f32 {
-        match self.feedback {
-            Some(ch) => m.adc[ch],
-            None => m.laser,
-        }
+    fn measurement(&self, inputs: &[f32]) -> f32 {
+        inputs.get(self.feedback).copied().unwrap_or(0.0)
     }
 }
 
 impl Controller for PidController {
     #[inline]
-    fn tick(&mut self, m: &Measurements, reference: f32, dt: f32) -> f32 {
-        let error = reference - self.measurement(m);
-        self.pid.update(error, dt)
+    fn tick(&mut self, inputs: &[f32], reference: f32, dt: f32) -> f32 {
+        self.error = reference - self.measurement(inputs);
+        self.pid.update(self.error, dt)
     }
 
     fn reset(&mut self) {
@@ -93,7 +84,13 @@ impl Controller for PidController {
     }
 
     fn param_names() -> &'static [&'static str] {
-        &["ctrl_kp", "ctrl_ki", "ctrl_kd", "ctrl_tau_d"]
+        &[
+            "ctrl_kp",
+            "ctrl_ki",
+            "ctrl_kd",
+            "ctrl_tau_d",
+            "ctrl_feedback",
+        ]
     }
 
     fn set_param(&mut self, id: u16, value: f32) {
@@ -102,7 +99,19 @@ impl Controller for PidController {
             1 => self.pid.config.ki = value,
             2 => self.pid.config.kd = value,
             3 => self.pid.config.tau_d = value,
+            // Rust's float-to-integer conversion truncates towards zero and
+            // saturates outside the usize range, so malformed values cannot
+            // wrap into an arbitrary slot.
+            4 => self.feedback = value as usize,
             _ => {}
+        }
+    }
+
+    const TELEMETRY: &'static [(&'static str, &'static str)] = &[("error", "V")];
+
+    fn telemetry(&self, out: &mut [f32]) {
+        if let Some(slot) = out.first_mut() {
+            *slot = self.error;
         }
     }
 }
@@ -117,8 +126,7 @@ mod tests {
     #[test]
     fn pass_through_returns_reference() {
         let mut c = PassThrough;
-        let m = Measurements::default();
-        assert_eq!(c.tick(&m, 1.25, DT), 1.25);
+        assert_eq!(c.tick(&[], 1.25, DT), 1.25);
     }
 
     #[test]
@@ -131,30 +139,38 @@ mod tests {
                 ki: 50.0,
                 ..Default::default()
             }),
-            Some(0),
+            0,
         );
         let tau = 0.05f32;
-        let mut m = Measurements::default();
+        let mut inputs = [0.0];
         for _ in 0..80_000 {
-            let u = c.tick(&m, 1.0, DT);
-            m.adc[0] += (u - m.adc[0]) / tau * DT;
+            let u = c.tick(&inputs, 1.0, DT);
+            inputs[0] += (u - inputs[0]) / tau * DT;
         }
-        assert!((m.adc[0] - 1.0).abs() < 1e-3, "settled at {}", m.adc[0]);
+        assert!((inputs[0] - 1.0).abs() < 1e-3, "settled at {}", inputs[0]);
     }
 
     #[test]
-    fn feedback_source_selects_laser() {
+    fn feedback_selects_input_slot_and_reports_error() {
         let mut c = PidController::new(
             Pid::new(PidConfig {
                 kp: 1.0,
                 ..Default::default()
             }),
-            None,
+            1,
         );
-        let m = Measurements {
-            laser: 0.25,
-            ..Default::default()
-        };
-        assert_eq!(c.tick(&m, 1.0, DT), 0.75);
+        assert_eq!(c.tick(&[10.0, 0.25], 1.0, DT), 0.75);
+        let mut telemetry = [0.0];
+        c.telemetry(&mut telemetry);
+        assert_eq!(telemetry, [0.75]);
+        assert_eq!(PidController::TELEMETRY, &[("error", "V")]);
+    }
+
+    #[test]
+    fn feedback_parameter_truncates_to_slot_index() {
+        let mut c = PidController::new(Pid::default(), 0);
+        c.set_param(4, 2.9);
+        assert_eq!(c.feedback, 2);
+        assert_eq!(PidController::param_names()[4], "ctrl_feedback");
     }
 }

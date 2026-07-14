@@ -8,11 +8,10 @@ use helic_drivers::optoncdt::{DistanceScale, Parser, Reading};
 
 pub async fn laser_run(
     mut rx: UartRx<'static, Async>,
-    range_mm: f32,
+    range_mm: &'static AtomicU32,
     destination: &'static AtomicU32,
 ) -> ! {
     let mut parser = Parser::new();
-    let scale = DistanceScale::new(range_mm);
     let mut buf = [0u8; 3];
     loop {
         if rx.read(&mut buf).await.is_err() {
@@ -27,6 +26,7 @@ pub async fn laser_run(
                 continue;
             };
             if value.first {
+                let scale = DistanceScale::new(f32::from_bits(range_mm.load(Ordering::Relaxed)));
                 if let Reading::InRange(mm) = scale.convert(value.value) {
                     destination.store(mm.to_bits(), Ordering::Relaxed);
                 }

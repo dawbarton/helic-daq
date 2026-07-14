@@ -17,7 +17,7 @@ Six commits on `main`, one per milestone, all with passing tests
    `Controller` trait, Fourier estimator. 33 host tests.
 3. **Drivers** (`helic-drivers`) — AD7609, AD5064, optoNCDT parser, generic
    over `embedded-hal` 1.0. 17 host tests.
-4. **Real-time loop** (`firmware/experiments/cbc-rig/src/rt_loop.rs`) — PWM-timed CONVST
+4. **Real-time loop** (`firmware/common/src/rt_loop.rs`) — PWM-timed CONVST
    (hardware-clocked sampling), BUSY-edge pipeline, generators + controller
    + DAC write, lock-free cross-core queues (`heapless::spsc`), diagnostics
    as atomics.
@@ -262,7 +262,7 @@ First analog bring-up. Interim board: the older **rtc analog cape**
 (github.com/dawbarton/rtc), all-unipolar DAC (wiring in `bbb-daq.md`). ADC is
 AD7609-compatible (±10 V range; readings calibrate 1:1, confirming the
 `Bipolar10V` scale). Verified end-to-end: RT loop runs at 8 kHz, ADC converts
-with a clean BUSY handshake (`busy_timeouts` = 0), and the **DAC→ADC loopback
+with a clean BUSY handshake (`tick_timeouts` = 0), and the **DAC→ADC loopback
 tracks to sub-millivolt across 0..4 V on channels A/C/D**. Committed the
 all-unipolar `DAC_POLARITY` (`dcd5d44`).
 

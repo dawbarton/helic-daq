@@ -14,7 +14,7 @@ pub mod lut;
 pub mod phase;
 pub mod pid;
 
-pub use controller::{Controller, Measurements, PassThrough, PidController, ADC_CHANNELS};
+pub use controller::{Controller, PassThrough, PidController};
 pub use filter::{BiquadCoeffs, SosFilter};
 pub use fourier::FourierEstimator;
 pub use generator::{

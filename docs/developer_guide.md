@@ -55,12 +55,12 @@ edge (conversion complete), then runs
    **forcing** Fourier series against the same phase (all harmonics of
    both stay locked forever — wrapping-multiply phases, see
    `docs/periodic_signal_generator.md`);
-4. `controller.tick(measurements, target, dt) + forcing` → DAC write;
+4. `controller.tick(inputs, target, dt) + forcing` → rig actuation;
 5. a `Record` pushed into the stream ring; diagnostics updated.
 
 A 2-period timeout on the BUSY wait keeps the loop alive (at reduced rate)
 with no ADC attached, so bench bring-up works; such ticks increment
-`busy_timeouts`.
+`tick_timeouts`.
 
 GP14 is high for the duration of the tick body — put a scope on it to see
 processing time and jitter directly.
@@ -123,12 +123,15 @@ Implement `helic_core::controller::Controller`:
 pub struct MyController { /* gains, filters, state */ }
 
 impl Controller for MyController {
-    fn tick(&mut self, m: &Measurements, reference: f32, dt: f32) -> f32 {
-        // m.adc[0..8] volts, m.laser mm; return output volts
+    fn tick(&mut self, inputs: &[f32], reference: f32, dt: f32) -> f32 {
+        // Input slot names and units come from the active rig.
+        reference - inputs[0]
     }
     fn reset(&mut self) { /* clear integrators/filters */ }
     fn param_names() -> &'static [&'static str] { &["ctrl_gain"] }
     fn set_param(&mut self, id: u16, value: f32) { /* id indexes param_names */ }
+    const TELEMETRY: &'static [(&'static str, &'static str)] = &[("error", "V")];
+    fn telemetry(&self, out: &mut [f32]) { /* fill after tick */ }
 }
 ```
 
@@ -170,9 +173,12 @@ loop does not change. Pin assignments live **only** in `board.rs`.
 
 ### Adding a stream source
 
-Stream sources are the fields of `rt_loop::Record`. Add the field, assign
-an id in `helic_proto::source` (and `protocol.py`'s `SOURCES`), map it in
-`comms::udp::record_value`, and document it in `protocol.md`.
+Experiment inputs are declared by `Rig::INPUTS`; write their values in the
+same order from `Rig::measure`. Controller-internal signals are declared by
+`Controller::TELEMETRY` and filled by `telemetry`. The common loop appends
+`target`, `forcing`, `table` and `out`, so neither rigs nor controllers manage
+numeric slots. Protocol-v2 source discovery will expose this assembled table
+to the host in phase 3.
 
 ## Hardware bring-up notes
 

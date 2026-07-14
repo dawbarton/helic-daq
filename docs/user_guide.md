@@ -149,8 +149,8 @@ Edit `firmware/experiments/cbc-rig/src/config.rs` and reflash:
 - `loop_time_last` / `loop_time_max` — tick processing time in µs; must
   stay well under the sample period (125 µs at 8 kHz).
 - `overruns` — ticks that ran over the period. Should be 0.
-- `busy_timeouts` — non-zero means the ADC isn't responding (not wired,
-  not powered).
+- `tick_timeouts` — non-zero means the selected tick source isn't responding;
+  for `cbc-rig`, the ADC may not be wired or powered.
 - `records_dropped` — stream data lost because the host wasn't keeping up.
 
 If something looks wrong, the same numbers appear once a second in the

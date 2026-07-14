@@ -1,15 +1,19 @@
-//! Cross-core real-time mailboxes, records and diagnostics.
+//! Generic real-time loop, cross-core mailboxes, records and diagnostics.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use defmt::info;
-use embassy_time::{Duration, Ticker};
+use embassy_time::{Duration, Instant, Ticker};
 use heapless::spsc::{Consumer, Producer};
+use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
+use helic_core::lut::SinLut;
+use helic_core::phase::PhaseAccumulator;
+use static_cell::StaticCell;
 
-use crate::HARMONICS;
+use crate::rig::{source_count, Rig, TickSource, MAX_SOURCES};
+use crate::{SampleRate, HARMONICS};
 
-/// Commands applied by the real-time loop at sample boundaries.
 #[derive(Clone, Copy, Debug)]
 pub enum RtCommand {
     SetIncrement(u32),
@@ -17,6 +21,7 @@ pub enum RtCommand {
     SetForcingCoeffs(FourierCoeffs<HARMONICS>),
     ResetController,
     SetCtrlParam(u16, f32),
+    SetRigParam(u16, f32),
 }
 
 pub const COMMAND_QUEUE_LEN: usize = 32;
@@ -26,11 +31,8 @@ pub type CommandConsumer = Consumer<'static, RtCommand>;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Record {
     pub index: u32,
-    pub adc: [f32; 8],
-    pub laser: f32,
-    pub target: f32,
-    pub forcing: f32,
-    pub out: f32,
+    pub n: u8,
+    pub values: [f32; MAX_SOURCES],
 }
 
 pub const RECORD_QUEUE_LEN: usize = 256;
@@ -41,25 +43,120 @@ pub static LOOP_TIME_LAST_US: AtomicU32 = AtomicU32::new(0);
 pub static LOOP_TIME_MAX_US: AtomicU32 = AtomicU32::new(0);
 pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
 pub static CLOCK_JITTER_US: AtomicU32 = AtomicU32::new(0);
-pub static BUSY_TIMEOUTS: AtomicU32 = AtomicU32::new(0);
+pub static TICK_TIMEOUTS: AtomicU32 = AtomicU32::new(0);
 pub static RECORDS_DROPPED: AtomicU32 = AtomicU32::new(0);
 pub static TICKS: AtomicU32 = AtomicU32::new(0);
-
-/// Latest laser reading as `f32::to_bits()`, published by core 0.
 pub static LASER_VALUE: AtomicU32 = AtomicU32::new(0);
+pub static LASER_RANGE_MM: AtomicU32 = AtomicU32::new(0);
+
+static SIN_LUT: StaticCell<SinLut> = StaticCell::new();
+
+pub async fn run_rt_loop<R: Rig>(
+    mut rig: R,
+    mut tick: R::Tick,
+    mut controller: R::Ctrl,
+    sample_rate: SampleRate,
+    mut commands: CommandConsumer,
+    mut records: RecordProducer,
+) -> ! {
+    let n_inputs = R::INPUTS.len();
+    let n_telemetry = R::Ctrl::TELEMETRY.len();
+    let n_sources = source_count::<R>();
+    assert!(n_sources <= MAX_SOURCES);
+
+    rig.init();
+    let lut = SIN_LUT.init(SinLut::new());
+    let mut phase = PhaseAccumulator::new();
+    let mut target_coeffs = FourierCoeffs::<HARMONICS>::zero();
+    let mut forcing_coeffs = FourierCoeffs::<HARMONICS>::zero();
+    let dt = sample_rate.dt();
+    let mut index = 0u32;
+    let mut last_tick: Option<Instant> = None;
+
+    info!(
+        "core 1: RT loop running at {} Hz, {} harmonics, {} sources",
+        sample_rate.hz(),
+        HARMONICS,
+        n_sources
+    );
+
+    loop {
+        tick.wait().await;
+        let t0 = Instant::now();
+        rig.tick_start();
+
+        if let Some(last) = last_tick {
+            let spacing = (t0 - last).as_micros() as u32;
+            let nominal = sample_rate.period_us() as u32;
+            if spacing > nominal {
+                CLOCK_JITTER_US.fetch_max(spacing - nominal, Ordering::Relaxed);
+            }
+        }
+        last_tick = Some(t0);
+
+        while let Some(command) = commands.dequeue() {
+            match command {
+                RtCommand::SetIncrement(increment) => phase.set_increment(increment),
+                RtCommand::SetTargetCoeffs(coeffs) => target_coeffs = coeffs,
+                RtCommand::SetForcingCoeffs(coeffs) => forcing_coeffs = coeffs,
+                RtCommand::ResetController => controller.reset(),
+                RtCommand::SetCtrlParam(id, value) => controller.set_param(id, value),
+                RtCommand::SetRigParam(id, value) => rig.set_param(id, value),
+            }
+        }
+
+        let mut values = [0.0; MAX_SOURCES];
+        rig.measure(&mut values[..n_inputs]);
+        let (theta, _period_start) = phase.step();
+        let target = target_coeffs.evaluate(lut, theta);
+        let forcing = forcing_coeffs.evaluate(lut, theta);
+        let controller_out = controller.tick(&values[..n_inputs], target, dt);
+        let table = 0.0;
+        let out = controller_out + forcing + table;
+        rig.actuate(out);
+
+        controller.telemetry(&mut values[n_inputs..n_inputs + n_telemetry]);
+        let generated = n_inputs + n_telemetry;
+        values[generated] = target;
+        values[generated + 1] = forcing;
+        values[generated + 2] = table;
+        values[generated + 3] = out;
+
+        if records
+            .enqueue(Record {
+                index,
+                n: n_sources as u8,
+                values,
+            })
+            .is_err()
+        {
+            RECORDS_DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+        index = index.wrapping_add(1);
+        rig.tick_end();
+
+        let elapsed = t0.elapsed().as_micros() as u32;
+        LOOP_TIME_LAST_US.store(elapsed, Ordering::Relaxed);
+        LOOP_TIME_MAX_US.fetch_max(elapsed, Ordering::Relaxed);
+        if elapsed > sample_rate.period_us() as u32 {
+            OVERRUNS.fetch_add(1, Ordering::Relaxed);
+        }
+        TICKS.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 pub async fn status_run() -> ! {
     let mut ticker = Ticker::every(Duration::from_secs(1));
     loop {
         ticker.next().await;
         info!(
-            "ticks {} | loop {}/{} us | jitter {} us | overruns {} | busy timeouts {} | dropped {} | laser {} mm",
+            "ticks {} | loop {}/{} us | jitter {} us | overruns {} | tick timeouts {} | dropped {} | laser {} mm",
             TICKS.load(Ordering::Relaxed),
             LOOP_TIME_LAST_US.load(Ordering::Relaxed),
             LOOP_TIME_MAX_US.load(Ordering::Relaxed),
             CLOCK_JITTER_US.load(Ordering::Relaxed),
             OVERRUNS.load(Ordering::Relaxed),
-            BUSY_TIMEOUTS.load(Ordering::Relaxed),
+            TICK_TIMEOUTS.load(Ordering::Relaxed),
             RECORDS_DROPPED.load(Ordering::Relaxed),
             f32::from_bits(LASER_VALUE.load(Ordering::Relaxed)),
         );

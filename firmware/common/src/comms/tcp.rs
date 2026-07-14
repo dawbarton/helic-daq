@@ -12,8 +12,12 @@ use helic_proto::{source, ErrorCode, MAGIC, VERSION};
 
 use super::{MAX_STREAM_SOURCES, STREAM};
 use crate::params::ParamStore;
+use crate::rig::Rig;
 
-pub async fn control_run<C: Controller>(stack: Stack<'static>, mut store: ParamStore<C>) -> ! {
+pub async fn control_run<C: Controller, R: Rig>(
+    stack: Stack<'static>,
+    mut store: ParamStore<C, R>,
+) -> ! {
     let mut rx_buf = [0u8; 2048];
     let mut tx_buf = [0u8; 2048];
     loop {
@@ -34,7 +38,7 @@ pub async fn control_run<C: Controller>(stack: Stack<'static>, mut store: ParamS
 /// Handle framed requests until the connection drops or a framing error
 /// makes resynchronisation impossible (TCP guarantees ordering, so any
 /// framing error means a broken peer).
-async fn serve<C: Controller>(socket: &mut TcpSocket<'_>, store: &mut ParamStore<C>) {
+async fn serve<C: Controller, R: Rig>(socket: &mut TcpSocket<'_>, store: &mut ParamStore<C, R>) {
     let mut frame_buf = [0u8; HEADER_LEN + MAX_PAYLOAD + TRAILER_LEN];
     let mut resp_payload = [0u8; MAX_PAYLOAD];
     let mut resp_frame = [0u8; HEADER_LEN + MAX_PAYLOAD + TRAILER_LEN];
@@ -98,7 +102,7 @@ async fn serve<C: Controller>(socket: &mut TcpSocket<'_>, store: &mut ParamStore
 fn handle(
     ty: u8,
     payload: &[u8],
-    store: &mut ParamStore<impl Controller>,
+    store: &mut ParamStore<impl Controller, impl Rig>,
     socket: &TcpSocket<'_>,
     resp: &mut [u8; MAX_PAYLOAD],
 ) -> Result<usize, ErrorCode> {

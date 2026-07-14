@@ -18,6 +18,7 @@ embassy-sync.workspace = true
 embassy-time.workspace = true
 embedded-hal-bus.workspace = true
 embedded-io-async.workspace = true
+fixed.workspace = true
 heapless.workspace = true
 rand_core.workspace = true
 static_cell.workspace = true

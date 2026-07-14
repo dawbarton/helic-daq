@@ -20,7 +20,9 @@
 //! could not be shared across cores anyway).
 
 use core::cell::RefCell;
+use core::sync::atomic::Ordering;
 
+use defmt::warn;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::peripherals::{CORE1, DMA_CH1, PIN_1, PIN_8, PWM_SLICE4, SPI1, UART0};
@@ -32,8 +34,14 @@ use embassy_sync::blocking_mutex::Mutex;
 use fixed::traits::ToFixed;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
 use helic_drivers::ad7609::{Ad7609, ConfigPins};
+use helic_drivers::AnalogIn;
 use helic_fw_common::comms::EthernetParts;
+use helic_fw_common::rig::{BusyEdgeTick, Rig};
+use helic_fw_common::rt_loop::{LASER_RANGE_MM, LASER_VALUE};
+use helic_fw_common::SampleRate;
 use static_cell::StaticCell;
+
+use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
 
 /// DAC reference voltage (ADR-series reference on the analog board).
 pub const DAC_VREF: f32 = 4.096;
@@ -101,18 +109,21 @@ pub struct AnalogParts {
 pub struct RtAnalog {
     pub adc: Adc,
     pub dac: Dac,
-    /// AD7609 BUSY: falls when conversion data is ready.
-    pub adc_busy: Input<'static>,
     /// Tick-timing debug pin.
     pub tick_pin: Output<'static>,
     convst: Option<(Peri<'static, PWM_SLICE4>, Peri<'static, PIN_8>)>,
+    convst_pwm: Option<Pwm<'static>>,
+    sample_rate: SampleRate,
+    adc_scale: f32,
+    output_channel: usize,
 }
 
 impl AnalogParts {
     /// Assemble the shared-bus SPI devices and drivers. Call **on core 1**;
     /// the bus mutex is a `NoopRawMutex`, sound only because everything it
     /// guards lives on that single core.
-    pub fn build(self) -> RtAnalog {
+    pub fn build(self, sample_rate: SampleRate) -> (RtAnalog, BusyEdgeTick) {
+        let tick = BusyEdgeTick::new(self.adc_busy, sample_rate);
         let bus: &'static SpiBus = SPI_BUS.init(Mutex::new(RefCell::new(self.spi)));
 
         // AD7609 reads in SPI mode 2 (clock idles high, data captured on
@@ -136,12 +147,87 @@ impl AnalogParts {
         // addressing); leak the pin driver so it is never deconfigured.
         core::mem::forget(self.dac_ldac);
 
-        RtAnalog {
+        let rig = RtAnalog {
             adc: Ad7609::new(adc_spi, self.adc_pins),
             dac: Ad5064::new(dac_spi, DAC_POLARITY, DAC_VREF),
-            adc_busy: self.adc_busy,
             tick_pin: self.tick_pin,
             convst: Some((self.convst_slice, self.convst_pin)),
+            convst_pwm: None,
+            sample_rate,
+            adc_scale: 0.0,
+            output_channel: OUTPUT_CHANNEL,
+        };
+        (rig, tick)
+    }
+}
+
+impl Rig for RtAnalog {
+    const INPUTS: &'static [(&'static str, &'static str)] = &[
+        ("adc0", "V"),
+        ("adc1", "V"),
+        ("adc2", "V"),
+        ("adc3", "V"),
+        ("adc4", "V"),
+        ("adc5", "V"),
+        ("adc6", "V"),
+        ("adc7", "V"),
+        ("laser", "mm"),
+    ];
+
+    type Tick = BusyEdgeTick;
+    type Ctrl = ActiveController;
+
+    fn init(&mut self) {
+        self.adc.init(
+            helic_drivers::ad7609::InputRange::Bipolar10V,
+            helic_drivers::ad7609::Oversampling::for_sample_rate(self.sample_rate.hz()),
+            &mut embassy_time::Delay,
+        );
+        self.adc_scale = self.adc.scale();
+        if self
+            .dac
+            .zero_all_with_delay(&mut embassy_time::Delay)
+            .is_err()
+        {
+            warn!("DAC zeroing failed");
+        }
+        let (divider, top) = self.sample_rate.pwm_params();
+        self.convst_pwm = Some(self.start_convst_pwm(divider, top));
+    }
+
+    fn measure(&mut self, values: &mut [f32]) {
+        let frame = self.adc.read_frame().unwrap_or_default();
+        for (value, raw) in values[..8].iter_mut().zip(frame) {
+            *value = raw as f32 * self.adc_scale;
+        }
+        values[8] = f32::from_bits(LASER_VALUE.load(Ordering::Relaxed));
+    }
+
+    fn actuate(&mut self, out: f32) {
+        let _ = self.dac.write_volts(self.output_channel, out);
+    }
+
+    fn tick_start(&mut self) {
+        self.tick_pin.set_high();
+    }
+
+    fn tick_end(&mut self) {
+        self.tick_pin.set_low();
+    }
+
+    fn param_names() -> &'static [&'static str] {
+        &["rig_laser_range", "rig_out_channel"]
+    }
+
+    fn param_defaults() -> &'static [f32] {
+        &[DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL as f32]
+    }
+
+    fn set_param(&mut self, id: u16, value: f32) {
+        match id {
+            0 if value > 0.0 => LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed),
+            1 => self.output_channel = (value as usize).min(3),
+            _ => {}
         }
     }
 }

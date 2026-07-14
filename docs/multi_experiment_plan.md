@@ -1,6 +1,6 @@
 # Multi-experiment support plan
 
-Status: **in progress** (phase 1 software complete; hardware verification
+Status: **in progress** (phase 2 software complete; hardware verification
 pending). This document is the
 implementation spec for making HELIC-DAQ support multiple physical
 experiments from one repository, plus the protocol-v2 and generator
@@ -155,9 +155,9 @@ Two implementations:
   (overflow) event. Crystal-exact instants, identical presets.
   - Use `embassy_rp::pwm::Pwm::new_free` (no output pin needed) when
     the tick is not also CONVST.
-  - Preferred wait mechanism: `Pwm::wait_for_wrap()` if the pinned
-    embassy-rp 0.10 exposes it. If not (§9 R1): a ~40-line fallback —
-    enable `PWM_IRQ_WRAP` for the slice, a handler that clears the
+  - embassy-rp 0.10 exposes only a blocking `Pwm::wait_for_wrap()`, so the
+    implementation uses the fallback (§9 R1):
+    enable `PWM_IRQ_WRAP_0` for the slice, a handler that clears the
     slice's `INTR` bit and wakes an `AtomicWaker`; the interrupt
     binding itself lives in the experiment's `main.rs` alongside the
     existing `bind_interrupts!`.
@@ -807,7 +807,7 @@ convergence.
 
 | # | Risk | Mitigation |
 |---|---|---|
-| R1 | embassy-rp 0.10 may not expose an async PWM wrap wait (`Pwm::wait_for_wrap`). | Check first; fallback is the small `PWM_IRQ_WRAP` + `AtomicWaker` handler in §4.1. Also confirm `Pwm::new_free` exists in 0.10. |
+| R1 | embassy-rp 0.10 may not expose an async PWM wrap wait (`Pwm::wait_for_wrap`). | **Resolved:** 0.10 has `Pwm::new_free` but only a blocking wrap wait; `PwmWrapTick` uses `PWM_IRQ_WRAP_0` plus an `AtomicWaker`. |
 | R2 | `SetDutyCycle` may be implemented on `PwmOutput` (via `Pwm::split()`) rather than `Pwm` itself, or not at all, in the pinned version. | If absent, a ~20-line adapter in `common` implementing `SetDutyCycle` over compare-register writes; the helic-drivers driver is unaffected either way. |
 | R3 | RMB20 datasheet specifics (bit count, Gray/binary, clock max, monoflop t_m) assumed from the SSI class, not verified. | `SsiFormat` is runtime data — get the ordered part's datasheet before hardware bring-up; only constants change. |
 | R4 | `UartRx` genericity: if embassy-rp 0.10 still types `UartRx` by UART instance, `common::laser::laser_run` needs a `T: uart::Instance` generic (fine — it's a fn, not a task). | Check the pinned API; both forms work with the wrapper pattern. |

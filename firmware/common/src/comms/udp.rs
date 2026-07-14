@@ -23,11 +23,10 @@ const FLUSH_MS: u64 = 5;
 
 fn record_value(r: &Record, src: u8) -> f32 {
     match src {
-        0..=7 => r.adc[src as usize],
-        source::LASER => r.laser,
-        source::TARGET => r.target,
-        source::FORCING => r.forcing,
-        source::OUT => r.out,
+        0..=10 => r.values[src as usize],
+        // Protocol v1 has no table slot. During the phase-2 transition its
+        // OUT id maps to the final source in the discoverable record shape.
+        source::OUT => r.values[r.n.saturating_sub(1) as usize],
         _ => 0.0,
     }
 }

@@ -86,7 +86,7 @@ between firmware versions. Current registry (firmware 0.1):
 | loop_time_max | I | ro | max tick processing time, µs |
 | clock_jitter | I | ro | worst tick-spacing excess over nominal, µs |
 | overruns | I | ro | ticks that exceeded the sample period |
-| busy_timeouts | I | ro | ADC BUSY waits that timed out |
+| tick_timeouts | I | ro | sample-clock waits that timed out |
 | records_dropped | I | ro | stream records dropped at source (cumulative) |
 | laser | f | ro | latest laser distance, mm |
 | freq | f | rw | fundamental frequency of the periodic generators, Hz |
