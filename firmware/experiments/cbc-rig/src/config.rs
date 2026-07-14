@@ -3,6 +3,7 @@
 //! instrument for their experiment.
 
 use helic_core::controller::PassThrough;
+use helic_fw_common::net::NetConfig;
 pub use helic_fw_common::SampleRate;
 
 pub const EXPERIMENT: &str = "cbc-rig";
@@ -16,8 +17,10 @@ pub const LASER_RANGE_MM: f32 = 50.0;
 
 /// Static IPv4 address and prefix length (flash-stored config is a future
 /// milestone; until then, edit and reflash).
-pub const IP_ADDR: [u8; 4] = [192, 168, 1, 235];
-pub const IP_PREFIX: u8 = 24;
+pub const NET_CONFIG: NetConfig = NetConfig::Static {
+    address: [192, 168, 1, 235],
+    prefix: 24,
+};
 
 /// Locally administered MAC address.
 pub const MAC_ADDR: [u8; 6] = [0x02, 0x48, 0x4C, 0x00, 0x00, 0x01];

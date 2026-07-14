@@ -61,7 +61,13 @@ to flash it.
 
 ## Connecting to it
 
-The experiments use static addresses by default: `192.168.1.235/24` for
+Find devices without knowing their addresses:
+
+```sh
+helic-daq find
+```
+
+The wired experiments use static addresses by default: `192.168.1.235/24` for
 `cbc-rig`, `192.168.1.236/24` for `sig-gen`, and `192.168.1.237/24` for
 `pwm-rig`. `encoder-rig` uses `192.168.1.238/24`.
 Connect it to your machine directly or via a switch, give your machine an
@@ -71,9 +77,12 @@ address on the same subnet (e.g. `192.168.1.10/24`), and check:
 ping 192.168.1.235
 ```
 
-To use a different address, edit `IP_ADDR` in the selected experiment's
-`config.rs` and reflash. The sample rate, laser measuring range and
-controller are selected there too.
+To use a different address, edit `NET_CONFIG` in the selected experiment's
+`config.rs` and reflash. Select `NetConfig::Dhcp` to request an address from
+the network instead. The sample rate, laser measuring range and controller
+are selected there too. Discovery uses local UDP broadcasts; on Wi-Fi, disable
+access-point client isolation if `find` sees nothing but direct connections
+still work.
 
 The encoder build reports position in revolutions as the discovered `encoder`
 source. Set `rig_encoder_zero` to subtract a host-selected datum. Its 13-bit
@@ -198,7 +207,7 @@ Edit `firmware/experiments/cbc-rig/src/config.rs` and reflash:
 | Controller | `ActiveController` + `make_controller()` | pass-through |
 | Harmonics | `HARMONICS` | 16 |
 | Output channel | `OUTPUT_CHANNEL` | 0 |
-| IP address | `IP_ADDR` / `IP_PREFIX` | 192.168.1.235/24 |
+| Network | `NET_CONFIG` | static 192.168.1.235/24 |
 | Laser range | `LASER_RANGE_MM` | 50 mm |
 
 ## Health monitoring

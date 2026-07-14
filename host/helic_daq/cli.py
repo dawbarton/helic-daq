@@ -12,6 +12,7 @@ import sys
 
 from . import protocol
 from .device import Device, DeviceError
+from .discovery import find_devices
 
 
 def _connect(args) -> Device:
@@ -62,6 +63,16 @@ def cmd_sources(args) -> None:
         print(f"{'id':>3}  {'name':<16} unit")
         for source in dev.sources:
             print(f"{source.index:>3}  {source.name:<16} {source.unit}")
+
+
+def cmd_find(args) -> None:
+    devices = find_devices(args.timeout, args.discovery_port, args.address)
+    print(f"{'address':<15} {'port':>5}  {'experiment':<16} {'firmware':<16} mac")
+    for device in devices:
+        print(
+            f"{device.address:<15} {device.control_port:>5}  "
+            f"{device.experiment:<16} {device.firmware:<16} {device.mac}"
+        )
 
 
 def cmd_sine(args) -> None:
@@ -166,6 +177,11 @@ def main(argv=None) -> int:
     p.set_defaults(fn=cmd_set)
 
     sub.add_parser("status", help="device status").set_defaults(fn=cmd_status)
+    p = sub.add_parser("find", help="discover HELIC-DAQ devices")
+    p.add_argument("--timeout", type=float, default=1.0)
+    p.add_argument("--discovery-port", type=int, default=protocol.DISCOVERY_PORT)
+    p.add_argument("--address", action="append", help="query this address instead of broadcast")
+    p.set_defaults(fn=cmd_find)
     sub.add_parser("sources", help="list discoverable stream sources").set_defaults(
         fn=cmd_sources
     )

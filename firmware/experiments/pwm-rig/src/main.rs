@@ -14,7 +14,9 @@ use embassy_rp::peripherals::{DMA_CH1, DMA_CH2, DMA_CH3, UART0};
 use embassy_rp::uart;
 use embassy_time::Timer;
 use heapless::spsc::Queue;
-use helic_fw_common::comms::{self, EthernetParts, StaticNetConfig};
+use helic_fw_common::comms;
+use helic_fw_common::net;
+use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::params::{self, ExtraParam, ParamDef, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
 use helic_proto::ParamType;
@@ -124,18 +126,14 @@ async fn core0_main(
     store: Store,
     records: shared_rt::RecordConsumer,
 ) {
-    let stack = comms::init(
-        spawner,
-        eth,
-        StaticNetConfig {
-            mac: config::MAC_ADDR,
-            addr: config::IP_ADDR,
-            prefix: config::IP_PREFIX,
-        },
-    )
-    .await;
+    let stack = net::wiznet::init(spawner, eth, config::MAC_ADDR, config::NET_CONFIG).await;
     spawner.spawn(unwrap!(control_task(stack, store)));
     spawner.spawn(unwrap!(comms::udp::stream_task(stack, records)));
+    spawner.spawn(unwrap!(comms::beacon::beacon_task(
+        stack,
+        config::MAC_ADDR,
+        config::EXPERIMENT,
+    )));
 }
 
 #[embassy_executor::task]

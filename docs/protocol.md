@@ -148,11 +148,10 @@ Within a packet, record i has sample index
 
 ## Discovery beacon (UDP :2352)
 
-This v2 extension is reserved for phase 9. The request is `magic u16, 0x01`.
+The request is `magic u16, 0x01`.
 The response is `magic u16, 0x02, version u8, control_port u16, mac[6],
-experiment c×16, firmware c×16`. Until phase 9 hardware firmware does not
-bind this port; the host simulator responds now so discovery clients can be
-developed independently.
+experiment c×16, firmware c×16`. Both hardware firmware and the host simulator
+respond. Requests and responses are fixed-size and carry no control-frame CRC.
 
 ## Known-answer vectors
 
@@ -174,3 +173,6 @@ developed independently.
   uptime 42000 ms:
   `48 4C 0A 01 0C 00 02 11 00 0D 00 00 FA 45 10 A4 00 00 03 09`.
 - Beacon request: `48 4C 01`.
+- Beacon response for protocol 2, port 2350, MAC `02:48:4c:00:00:01`,
+  experiment `cbc-rig`, firmware `helic-daq sim`:
+  `48 4C 02 02 2E 09 02 48 4C 00 00 01 63 62 63 2D 72 69 67 00 00 00 00 00 00 00 00 00 68 65 6C 69 63 2D 64 61 71 20 73 69 6D 00 00 00`.

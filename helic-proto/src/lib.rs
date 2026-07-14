@@ -7,11 +7,13 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod beacon;
 pub mod crc;
 pub mod frame;
 pub mod payload;
 pub mod stream;
 
+pub use beacon::{BeaconError, BeaconResponse};
 pub use crc::crc16;
 pub use frame::{decode, encode, FrameError, MsgType, HEADER_LEN, MAX_PAYLOAD, TRAILER_LEN};
 pub use stream::StreamHeader;

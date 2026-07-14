@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["net-wiznet"]
+net-wiznet = ["dep:embassy-net-wiznet", "dep:embedded-hal-bus"]
+
 [dependencies]
 helic-core.workspace = true
 helic-drivers.workspace = true
@@ -12,11 +16,11 @@ helic-proto.workspace = true
 defmt.workspace = true
 embassy-executor.workspace = true
 embassy-net.workspace = true
-embassy-net-wiznet.workspace = true
+embassy-net-wiznet = { workspace = true, optional = true }
 embassy-rp.workspace = true
 embassy-sync.workspace = true
 embassy-time.workspace = true
-embedded-hal-bus.workspace = true
+embedded-hal-bus = { workspace = true, optional = true }
 embedded-io-async.workspace = true
 fixed.workspace = true
 heapless.workspace = true

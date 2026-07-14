@@ -144,25 +144,21 @@ class Simulator:
         self._beacon_thread.join(timeout=1.0)
 
     def _serve_beacon(self) -> None:
-        request = struct.pack("<HB", protocol.MAGIC, 1)
         while not self._closed.is_set():
             try:
                 payload, peer = self._beacon.recvfrom(64)
             except (OSError, socket.timeout):
                 continue
-            if payload != request:
+            if payload != protocol.BEACON_REQUEST:
                 continue
-            experiment = str(self._by_name["experiment"].value).encode()[:16].ljust(16, b"\0")
-            firmware = str(self._by_name["firmware"].value).encode()[:16].ljust(16, b"\0")
-            response = struct.pack(
-                "<HBBH6s16s16s",
-                protocol.MAGIC,
-                2,
-                self.version,
-                self.port,
-                b"\x02HL\x00\x00\x01",
-                experiment,
-                firmware,
+            response = protocol.encode_beacon_response(
+                protocol.BeaconResponse(
+                    self.version,
+                    self.port,
+                    b"\x02HL\x00\x00\x01",
+                    str(self._by_name["experiment"].value),
+                    str(self._by_name["firmware"].value),
+                )
             )
             self._beacon.sendto(response, peer)
 

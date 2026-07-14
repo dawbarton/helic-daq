@@ -99,6 +99,28 @@ class TestPayload(unittest.TestCase):
             protocol.decode_sources(b"adc0\0V")
 
 
+class TestBeacon(unittest.TestCase):
+    def test_known_request_and_response_round_trip(self):
+        self.assertEqual(protocol.BEACON_REQUEST, bytes.fromhex("48 4c 01"))
+        beacon = protocol.BeaconResponse(
+            2, 2350, bytes.fromhex("02 48 4c 00 00 01"), "cbc-rig", "helic-daq sim"
+        )
+        encoded = protocol.encode_beacon_response(beacon)
+        self.assertEqual(
+            encoded,
+            bytes.fromhex(
+                "48 4c 02 02 2e 09 02 48 4c 00 00 01 "
+                "63 62 63 2d 72 69 67 00 00 00 00 00 00 00 00 00 "
+                "68 65 6c 69 63 2d 64 61 71 20 73 69 6d 00 00 00"
+            ),
+        )
+        self.assertEqual(protocol.decode_beacon_response(encoded), beacon)
+
+    def test_malformed_response_is_rejected(self):
+        with self.assertRaises(ProtocolError):
+            protocol.decode_beacon_response(b"")
+
+
 class TestStreamHeader(unittest.TestCase):
     def test_round_trip(self):
         h = StreamHeader(

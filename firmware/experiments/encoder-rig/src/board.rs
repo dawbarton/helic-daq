@@ -40,7 +40,7 @@ use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
 use helic_drivers::ad7609::{Ad7609, ConfigPins};
 use helic_drivers::ssi::{SsiFormat, SsiScale};
 use helic_drivers::AnalogIn;
-use helic_fw_common::comms::EthernetParts;
+use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::rig::{BusyEdgeTick, Rig};
 use helic_fw_common::ssi_pio::SsiReader;
 use helic_fw_common::SampleRate;

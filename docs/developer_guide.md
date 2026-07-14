@@ -26,6 +26,12 @@ the host** (`cargo test` at the root runs ~60 tests; `python -m unittest`
 in `host/` another 24). The firmware crate is deliberately thin: pin
 wiring, task plumbing, and glue.
 
+`common::net` owns transport-independent static/DHCP configuration and stack
+resources. `common::net::wiznet` owns W5500 reset, SPI and runner tasks behind
+the default `net-wiznet` feature. TCP, UDP streaming and discovery consume
+only `embassy_net::Stack`, so experiment crates select transport without
+changing protocol tasks.
+
 ## Firmware architecture
 
 ```

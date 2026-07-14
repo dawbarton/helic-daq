@@ -14,7 +14,7 @@ use embassy_rp::{Peri, Peripherals};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
-use helic_fw_common::comms::EthernetParts;
+use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::rig::{PwmWrapTick, Rig};
 use helic_fw_common::SampleRate;
 

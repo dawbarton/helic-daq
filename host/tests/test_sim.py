@@ -12,6 +12,7 @@ import numpy as np
 
 from helic_daq import Device, protocol
 from helic_daq import cli
+from helic_daq.discovery import find_devices
 from helic_daq.protocol import MsgType
 from helic_daq.sim import Simulator
 
@@ -64,6 +65,31 @@ class TestSimulator(unittest.TestCase):
         magic, kind, version, port = struct.unpack_from("<HBBH", response)
         self.assertEqual((magic, kind, version, port), (protocol.MAGIC, 2, 2, self.sim.port))
         self.assertEqual(response[12:28].rstrip(b"\0"), b"cbc-rig")
+
+    def test_find_devices_and_cli(self):
+        devices = find_devices(
+            timeout=0.1,
+            port=self.sim.beacon_port,
+            addresses=["127.0.0.1"],
+        )
+        self.assertEqual(len(devices), 1)
+        self.assertEqual(devices[0].experiment, "cbc-rig")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = cli.main(
+                [
+                    "find",
+                    "--timeout",
+                    "0.1",
+                    "--discovery-port",
+                    str(self.sim.beacon_port),
+                    "--address",
+                    "127.0.0.1",
+                ]
+            )
+        self.assertEqual(result, 0)
+        self.assertIn("cbc-rig", output.getvalue())
 
     def test_cli_capture_end_to_end(self):
         self.dev.close()

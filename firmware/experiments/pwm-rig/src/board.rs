@@ -12,7 +12,7 @@ use embassy_rp::pwm::{self, Pwm, PwmOutput};
 use embassy_rp::spi::{self, Async, Spi};
 use embassy_rp::{Peri, Peripherals};
 use helic_drivers::pwm_out::PwmOut;
-use helic_fw_common::comms::EthernetParts;
+use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::rig::{PwmWrapTick, Rig};
 use helic_fw_common::SampleRate;
 

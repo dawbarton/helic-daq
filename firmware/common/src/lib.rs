@@ -2,6 +2,7 @@
 
 pub mod comms;
 pub mod laser;
+pub mod net;
 pub mod params;
 pub mod rig;
 pub mod rt_loop;

@@ -16,6 +16,10 @@ CONTROL_PORT = 2350
 STREAM_PORT = 2351
 DISCOVERY_PORT = 2352
 
+BEACON_REQUEST = struct.pack("<HB", MAGIC, 1)
+_BEACON_RESPONSE = struct.Struct("<HBBH6s16s16s")
+BEACON_RESPONSE_LEN = _BEACON_RESPONSE.size
+
 HEADER_LEN = 6
 TRAILER_LEN = 2
 MAX_PAYLOAD = 512
@@ -48,6 +52,45 @@ ERROR_NAMES = {
 
 class ProtocolError(Exception):
     """Malformed frame or packet."""
+
+
+@dataclass(frozen=True)
+class BeaconResponse:
+    version: int
+    control_port: int
+    mac: bytes
+    experiment: str
+    firmware: str
+
+
+def _fixed_ascii(value: str) -> bytes:
+    return value.encode("ascii")[:16].ljust(16, b"\0")
+
+
+def encode_beacon_response(response: BeaconResponse) -> bytes:
+    return _BEACON_RESPONSE.pack(
+        MAGIC,
+        2,
+        response.version,
+        response.control_port,
+        response.mac,
+        _fixed_ascii(response.experiment),
+        _fixed_ascii(response.firmware),
+    )
+
+
+def decode_beacon_response(buf: bytes) -> BeaconResponse:
+    if len(buf) != BEACON_RESPONSE_LEN:
+        raise ProtocolError("bad beacon response length")
+    magic, kind, version, port, mac, experiment, firmware = _BEACON_RESPONSE.unpack(buf)
+    if magic != MAGIC or kind != 2:
+        raise ProtocolError("bad beacon response magic/type")
+    try:
+        experiment_text = experiment.rstrip(b"\0").decode("ascii")
+        firmware_text = firmware.rstrip(b"\0").decode("ascii")
+    except UnicodeDecodeError:
+        raise ProtocolError("non-ASCII beacon identity") from None
+    return BeaconResponse(version, port, mac, experiment_text, firmware_text)
 
 
 def crc16(data: bytes) -> int:
