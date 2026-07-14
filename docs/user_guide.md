@@ -4,7 +4,8 @@ HELIC-DAQ is a real-time control and data acquisition platform for laboratory
 control, signal generation and instrumentation. `cbc-rig` targets
 control-based continuation using an AD7609 ADC and AD5064 DAC. `sig-gen`
 uses the same W5500-EVB-Pico2 and DAC as an arbitrary/function generator with
-optional optoNCDT laser logging, but requires no ADC board.
+optional optoNCDT laser logging, but requires no ADC board. `pwm-rig` replaces
+the DAC with a filtered 10-bit PWM output on GP10.
 
 ## What it does
 
@@ -37,6 +38,7 @@ header, plus `cargo install probe-rs-tools`):
 cd firmware
 cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
 cargo run --release -p fw-sig-gen # ADC-free signal generator
+cargo run --release -p fw-pwm-rig # PWM output on GP10
 ```
 
 The log shows a boot banner, the network address, and a once-a-second
@@ -52,13 +54,14 @@ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf 
 picotool load helic-daq.uf2 && picotool reboot
 ```
 
-Substitute `fw-sig-gen` in the build and output filename to flash the
-ADC-free experiment.
+Substitute `fw-sig-gen` or `fw-pwm-rig` in the build and output filename to
+flash another experiment.
 
 ## Connecting to it
 
 The experiments use static addresses by default: `192.168.1.235/24` for
-`cbc-rig` and `192.168.1.236/24` for `sig-gen`.
+`cbc-rig`, `192.168.1.236/24` for `sig-gen`, and `192.168.1.237/24` for
+`pwm-rig`.
 Connect it to your machine directly or via a switch, give your machine an
 address on the same subnet (e.g. `192.168.1.10/24`), and check:
 
@@ -148,6 +151,13 @@ free-running mode for a table slower than the master.
 The uploaded table is staged in chunks and switched atomically at a sample
 boundary. Its contribution is available as the discovered `table` stream
 source and is added to controller output plus Fourier forcing.
+
+In `pwm-rig`, GP10 carries a 0–3.3 V duty-cycle representation with a
+roughly 146 kHz carrier and 10-bit resolution. An external RC or active
+low-pass filter is required; HELIC-DAQ does not smooth the carrier in
+software. Negative commands clamp to 0 V unless an external level-shifting
+output stage is added. Increasing PWM resolution lowers carrier frequency in
+direct proportion because `carrier × duty_steps = 150 MHz`.
 
 The `target_coeffs` series is the reference the controller tracks; the
 `forcing_coeffs` series is added directly to the output. With the default

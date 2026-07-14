@@ -766,6 +766,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fw-pwm-rig"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.1.1",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-net",
+ "embassy-rp",
+ "embassy-time",
+ "fixed",
+ "heapless",
+ "helic-core",
+ "helic-drivers",
+ "helic-fw-common",
+ "helic-proto",
+ "panic-probe",
+ "static_cell",
+]
+
+[[package]]
 name = "fw-sig-gen"
 version = "0.1.0"
 dependencies = [

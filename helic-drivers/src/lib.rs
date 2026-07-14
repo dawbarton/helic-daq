@@ -7,6 +7,7 @@
 pub mod ad5064;
 pub mod ad7609;
 pub mod optoncdt;
+pub mod pwm_out;
 
 /// A simultaneous-sampling analog input device with `N` channels.
 ///
