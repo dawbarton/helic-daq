@@ -1,9 +1,9 @@
 # HELIC-DAQ
 
-A real-time control and data acquisition platform for laboratory control,
-signal generation and instrumentation, built on the RP2350
-(W5500-EVB-Pico2) and the Rust Embassy framework. Its first experiment is
-control-based continuation (CBC), succeeding the BeagleBone Black-based
+Hackable Experimental Laboratory Instrumentation and Control - a real-time
+control and data acquisition platform for laboratory control, signal generation
+and instrumentation, built on the RP2350 (W5500-EVB-Pico2 / Pico 2W) and the
+Rust Embassy framework. It is the successor to the BeagleBone Black-based
 [rtc](https://github.com/dawbarton/rtc).
 
 - **User guide** (flashing, connecting, CLI/Python usage): [docs/user_guide.md](docs/user_guide.md)
