@@ -375,3 +375,8 @@ Still unverified on hardware:
    edge. Then rotate slowly and confirm monotone `encoder` data at 8 kHz,
    `encoder_errors == 0`, no overruns, and correct `rig_encoder_zero`
    subtraction. None of this path has yet been exercised on hardware.
+4. **Pico 2W Wi-Fi experiment**: after setting test credentials, verify PIO1
+   CYW43439 bring-up, join retry, DHCP, `helic-daq find`, TCP control, a light
+   UDP capture and the radio-controlled heartbeat LED. Confirm the 8 kHz RT
+   tick remains stable while Wi-Fi is active. The backend and `sig-gen-w`
+   currently have compile-time verification only.

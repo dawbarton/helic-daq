@@ -11,9 +11,13 @@ license = "MIT"
 helic-core = { path = "../helic-core" }
 helic-drivers = { version = "0.1.0", path = "../helic-drivers" }
 helic-proto = { path = "../helic-proto" }
-helic-fw-common = { path = "common" }
+helic-fw-common = { path = "common", default-features = false }
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
+cyw43 = { version = "=0.7.0", features = ["defmt"] }
+cyw43-firmware = "=0.1.0"
+cyw43-pio = { version = "=0.10.0", features = ["defmt"] }
+cyw43-setup = "=0.1.1"
 defmt = "1.1.1"
 defmt-rtt = "1.3.0"
 embassy-embedded-hal = "0.6.0"

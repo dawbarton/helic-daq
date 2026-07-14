@@ -6,7 +6,8 @@ control-based continuation using an AD7609 ADC and AD5064 DAC. `sig-gen`
 uses the same W5500-EVB-Pico2 and DAC as an arbitrary/function generator with
 optional optoNCDT laser logging, but requires no ADC board. `pwm-rig` replaces
 the DAC with a filtered 10-bit PWM output on GP10. `encoder-rig` extends the
-CBC instrument with an SSI absolute encoder input.
+CBC instrument with an SSI absolute encoder input. `sig-gen-w` runs the
+signal generator on a Raspberry Pi Pico 2W over Wi-Fi.
 
 ## What it does
 
@@ -41,6 +42,7 @@ cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
 cargo run --release -p fw-sig-gen # ADC-free signal generator
 cargo run --release -p fw-pwm-rig # PWM output on GP10
 cargo run --release -p fw-encoder-rig # CBC rig plus SSI encoder
+cargo run --release -p fw-sig-gen-w # Pico 2W Wi-Fi signal generator
 ```
 
 The log shows a boot banner, the network address, and a once-a-second
@@ -83,6 +85,14 @@ the network instead. The sample rate, laser measuring range and controller
 are selected there too. Discovery uses local UDP broadcasts; on Wi-Fi, disable
 access-point client isolation if `find` sees nothing but direct connections
 still work.
+
+For `sig-gen-w`, set `WIFI_SSID` and `WIFI_PASSWORD` in its `config.rs`
+before flashing. Credentials are compiled into the image and the device joins
+as a station, retrying until the access point is available. DHCP is the
+default and `helic-daq find` reports the assigned address. The Pico 2W LED is
+driven through the CYW43439, not GP25. Use wired Ethernet for sustained
+full-rate multi-source streaming; Wi-Fi is intended for control, signal
+generation and lighter captures.
 
 The encoder build reports position in revolutions as the discovered `encoder`
 source. Set `rig_encoder_zero` to subtract a host-selected datum. Its 13-bit

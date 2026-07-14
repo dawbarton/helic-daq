@@ -9,7 +9,7 @@ license.workspace = true
 helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
-helic-fw-common.workspace = true
+helic-fw-common = { workspace = true, features = ["net-wiznet"] }
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
 defmt.workspace = true

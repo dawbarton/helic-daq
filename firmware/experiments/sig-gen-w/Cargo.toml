@@ -1,6 +1,6 @@
 [package]
-name = "fw-pwm-rig"
-description = "HELIC-DAQ firmware with filtered PWM analogue output"
+name = "fw-sig-gen-w"
+description = "HELIC-DAQ firmware for wireless signal generation and laser logging"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,16 +9,17 @@ license.workspace = true
 helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
-helic-fw-common = { workspace = true, features = ["net-wiznet"] }
+helic-fw-common = { workspace = true, default-features = false, features = ["net-cyw43"] }
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
+cyw43.workspace = true
 defmt.workspace = true
 defmt-rtt.workspace = true
 embassy-executor.workspace = true
 embassy-net.workspace = true
 embassy-rp.workspace = true
 embassy-time.workspace = true
-fixed.workspace = true
+embedded-hal-bus.workspace = true
 heapless.workspace = true
 panic-probe.workspace = true
 static_cell.workspace = true

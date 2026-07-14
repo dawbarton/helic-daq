@@ -12,10 +12,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "aligned"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee4508988c62edf04abd8d92897fca0c2995d907ce1dfeaf369dac3716a40685"
+dependencies = [
+ "as-slice",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
+name = "as-slice"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "516b6b4f0e40d50dcda9365d53964ec74560ad4284da2e7fc97122cd83174516"
+dependencies = [
+ "stable_deref_trait",
+]
 
 [[package]]
 name = "ascii-canvas"
@@ -87,6 +105,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "bt-hci"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "211713d2e9fb4793ce4360a712c0764264aff6be48932ccf02ca2a331c0436a9"
+dependencies = [
+ "btuuid",
+ "defmt 1.1.1",
+ "embassy-sync",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "futures-intrusive",
+ "heapless",
+]
+
+[[package]]
+name = "btuuid"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f48f1e9b0aad0a4f05d17bdeae0fa20ff798e272a03a6940ca27ad9c5a6ae7"
+dependencies = [
+ "defmt 0.3.100",
 ]
 
 [[package]]
@@ -218,6 +260,56 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "cyw43"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "033e856bf6f38c96fee3e3f398cceff0ca2c2fae5db255bcd23495216c7047da"
+dependencies = [
+ "aligned",
+ "bt-hci",
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.1.1",
+ "embassy-futures",
+ "embassy-net-driver-channel",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-io-async 0.7.0",
+ "futures",
+ "heapless",
+]
+
+[[package]]
+name = "cyw43-firmware"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1f6670bcc22685ab25c8262b9bfdcdbbb12e12605569fc4bcf8b01aa5dc55c2"
+
+[[package]]
+name = "cyw43-pio"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "768b74f36be804f7b1020938e711d91c0ab5a847cf620d3756245ae7e641e1e2"
+dependencies = [
+ "cyw43",
+ "defmt 1.1.1",
+ "embassy-rp",
+ "fixed",
+]
+
+[[package]]
+name = "cyw43-setup"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46fa79051d5658db91082a95976a9561d27bd9636c9f69cd8781cae750f74df9"
+dependencies = [
+ "aligned",
+ "cyw43-firmware",
 ]
 
 [[package]]
@@ -625,6 +717,9 @@ name = "embedded-io"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
+dependencies = [
+ "defmt 1.1.1",
+]
 
 [[package]]
 name = "embedded-io-async"
@@ -641,6 +736,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2564b9f813c544241430e147d8bc454815ef9ac998878d30cc3055449f7fd4c0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-io 0.7.1",
 ]
 
@@ -724,16 +820,86 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
+name = "futures"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
+name = "futures-channel"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
 
 [[package]]
+name = "futures-intrusive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
+dependencies = [
+ "futures-core",
+ "lock_api",
+]
+
+[[package]]
+name = "futures-io"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cecba35d7ad927e23624b22ad55235f2239cfa44fd10428eecbeba6d6a717718"
+
+[[package]]
+name = "futures-macro"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c39754e157331b013978ec91992bde1ac089843443c49cbc7f46150b0fad0893"
+
+[[package]]
+name = "futures-task"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
+
+[[package]]
+name = "futures-util"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
+dependencies = [
+ "futures-core",
+ "futures-macro",
+ "futures-sink",
+ "futures-task",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "fw-cbc-rig"
@@ -840,6 +1006,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "fw-sig-gen-w"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "cyw43",
+ "defmt 1.1.1",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-net",
+ "embassy-rp",
+ "embassy-time",
+ "embedded-hal-bus",
+ "heapless",
+ "helic-core",
+ "helic-drivers",
+ "helic-fw-common",
+ "helic-proto",
+ "panic-probe",
+ "static_cell",
+]
+
+[[package]]
 name = "generator"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -919,6 +1108,10 @@ dependencies = [
 name = "helic-fw-common"
 version = "0.1.0"
 dependencies = [
+ "cyw43",
+ "cyw43-firmware",
+ "cyw43-pio",
+ "cyw43-setup",
  "defmt 1.1.1",
  "embassy-executor",
  "embassy-net",

@@ -17,6 +17,7 @@ Two Cargo workspaces plus a Python package:
 | `firmware/common/` | Experiment-independent firmware support | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/sig-gen/` | ADC-free DAC signal generator and laser logger | `thumbv8m.main-none-eabihf` only |
+| `firmware/experiments/sig-gen-w/` | Pico 2W Wi-Fi variant of the ADC-free signal generator | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/pwm-rig/` | Signal generator using filtered PWM rather than a DAC | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/encoder-rig/` | CBC rig with an RMB20 SSI encoder on PIO0 SM0 | `thumbv8m.main-none-eabihf` only |
 | `host/` | Python package `helic_daq` + `helic-daq` CLI | host |
@@ -32,6 +33,12 @@ the default `net-wiznet` feature. TCP, UDP streaming and discovery consume
 only `embassy_net::Stack`, so experiment crates select transport without
 changing protocol tasks.
 
+`common::net::cyw43` is selected only by `sig-gen-w`. It owns PIO1 SM0,
+DMA0 and the Pico 2W fixed radio pins GP23/24/25/29, joins in station mode,
+disables power saving to avoid latency spikes, then supplies the same stack
+contract. `cyw43`, `cyw43-pio` and the embedded firmware/NVRAM wrapper are
+exact-version pinned; upgrade them as one hardware-verified unit.
+
 ## Firmware architecture
 
 ```
@@ -43,7 +50,7 @@ core 1 (real-time)                       core 0 (everything else)
 │  apply queued commands      │  SPSC    │ laser UART task → atomic      │
 │  generators (target+forcing │          │ status task (1 Hz defmt)      │
 │  + waveform table)          │          │                               │
-│  controller → DAC (AD5064)  │ records  │ embassy-net + W5500 (SPI0)    │
+│  controller → rig output    │ records  │ embassy-net + net backend     │
 │  diagnostics atomics        │─────────►│ heartbeat LED                 │
 └─────────────────────────────┘  SPSC    └───────────────────────────────┘
 ```
@@ -107,9 +114,9 @@ compiler-enforced).
 
 ### Networking (core 0)
 
-`embassy-net-wiznet` drives the W5500 in MACRAW mode over async SPI0;
-`embassy-net` (smoltcp) provides the IP stack with the static address from
-`config.rs`. Two server tasks:
+`embassy-net` provides the common IP stack over either the W5500 MACRAW
+driver or the CYW43439 driver. `config.rs` selects static addressing or DHCP.
+Three transport-independent server tasks:
 
 - `helic_fw_common::comms::tcp::control_run` — accepts one client, reads
   CRC-checked frames, dispatches to `ParamStore`, replies. Framing errors drop the
@@ -120,6 +127,8 @@ compiler-enforced).
   `helic_fw_common::comms::STREAM`, a critical-section mutex shared by the two
   tasks. `StreamStart` bumps a generation counter, which
   re-arms the streamer (sequence reset, finite-capture countdown).
+- `helic_fw_common::comms::beacon::beacon_task` — answers UDP discovery
+  requests with protocol version, experiment identity, control port and MAC.
 
 ### The parameter registry (`params.rs`)
 

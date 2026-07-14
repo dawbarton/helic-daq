@@ -1,18 +1,20 @@
 //! Transport-independent IPv4 configuration and stack allocation.
 
+#[cfg(feature = "net-cyw43")]
+pub mod cyw43;
 #[cfg(feature = "net-wiznet")]
 pub mod wiznet;
 
-#[cfg(feature = "net-wiznet")]
+#[cfg(any(feature = "net-cyw43", feature = "net-wiznet"))]
 use embassy_net::driver::Driver;
-#[cfg(feature = "net-wiznet")]
+#[cfg(any(feature = "net-cyw43", feature = "net-wiznet"))]
 use embassy_net::{Ipv4Address, Ipv4Cidr, Stack, StackResources};
-#[cfg(feature = "net-wiznet")]
+#[cfg(any(feature = "net-cyw43", feature = "net-wiznet"))]
 use heapless::Vec;
-#[cfg(feature = "net-wiznet")]
+#[cfg(any(feature = "net-cyw43", feature = "net-wiznet"))]
 use static_cell::StaticCell;
 
-#[cfg(feature = "net-wiznet")]
+#[cfg(any(feature = "net-cyw43", feature = "net-wiznet"))]
 static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
 
 #[derive(Clone, Copy)]
@@ -21,7 +23,7 @@ pub enum NetConfig {
     Dhcp,
 }
 
-#[cfg(feature = "net-wiznet")]
+#[cfg(any(feature = "net-cyw43", feature = "net-wiznet"))]
 pub(crate) fn new<D: Driver>(
     device: D,
     config: NetConfig,

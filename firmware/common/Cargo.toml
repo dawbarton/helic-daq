@@ -7,12 +7,17 @@ license.workspace = true
 
 [features]
 default = ["net-wiznet"]
+net-cyw43 = ["dep:cyw43", "dep:cyw43-firmware", "dep:cyw43-pio", "dep:cyw43-setup"]
 net-wiznet = ["dep:embassy-net-wiznet", "dep:embedded-hal-bus"]
 
 [dependencies]
 helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
+cyw43 = { workspace = true, optional = true }
+cyw43-firmware = { workspace = true, optional = true }
+cyw43-pio = { workspace = true, optional = true }
+cyw43-setup = { workspace = true, optional = true }
 defmt.workspace = true
 embassy-executor.workspace = true
 embassy-net.workspace = true
