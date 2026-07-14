@@ -14,8 +14,8 @@ interface discovers their parameters and stream sources.
 
 ## Documentation
 
-- [User guide](docs/user_guide.md): experiments, flashing, networking and
-  CLI/Python use.
+- [User guide](docs/user_guide.md): experiments, flashing, networking and host
+  interfaces.
 - [Developer guide](docs/developer_guide.md): architecture, design principles,
   extension points and testing.
 - [Wire protocol](docs/protocol.md): authoritative protocol v2 specification.
@@ -52,6 +52,7 @@ See [notes.md](notes.md) for the precise hardware-verification boundary.
 | `firmware/common/` | Experiment-independent RP2350 firmware support |
 | `firmware/experiments/` | One binary, pin map and compile-time configuration per experiment |
 | `host-python/` | Python package `helic_daq`, simulator and `helic-daq` CLI |
+| `host-julia/` | Julia package `HelicDAQ` with a Tables.jl capture interface |
 
 ## Build and test
 
@@ -59,10 +60,12 @@ See [notes.md](notes.md) for the precise hardware-verification boundary.
 cargo test
 cd firmware && cargo build --release --workspace
 cd ../host-python && PYTHONPATH=.:tests python3 -m unittest discover -s tests
+cd ../host-julia && julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 ```
 
 CI also gates both Rust workspaces with formatting and clippy warnings as
-errors. See the developer guide for the complete local check set.
+errors, and tests both host-language packages. See the developer guide for the
+complete local check set.
 
 ## Flash and connect
 
@@ -82,6 +85,7 @@ inspect one:
 pip install -e host-python
 helic-daq find
 helic-daq --host 192.168.1.235 status
+julia --project=host-julia -e 'using Pkg; Pkg.instantiate()'
 ```
 
 The [user guide](docs/user_guide.md) covers BOOTSEL/UF2 flashing, all firmware

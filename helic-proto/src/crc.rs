@@ -1,6 +1,7 @@
 //! CRC-16/CCITT-FALSE: polynomial 0x1021, initial value 0xFFFF, no
 //! reflection, no final XOR. Chosen because it is trivial to implement
-//! identically in Python (`crc16` below is mirrored in `helic_daq/protocol.py`).
+//! identically in both host codecs (`helic_daq/protocol.py` and
+//! `host-julia/src/protocol.jl`).
 
 pub fn crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;

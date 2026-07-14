@@ -124,6 +124,14 @@ Install the Python package from the repository root:
 pip install -e host-python # add `[plot]` for plotting
 ```
 
+For Julia, develop the package into the current environment, or use its project
+directly:
+
+```julia
+using Pkg
+Pkg.develop(path="host-julia")
+```
+
 To exercise the host tools without hardware, start the protocol-v2 simulator
 in one terminal and connect to it from another:
 
@@ -176,6 +184,29 @@ data = dev.capture(["adc0", "out"], seconds=2.0)
 print(data["adc0"].mean(), data["dropped"])
 ```
 
+Julia:
+
+```julia
+using HelicDAQ, Tables
+
+open(Device, "192.168.1.235") do dev
+    @show status(dev)
+    dev[:freq] = 10f0
+
+    coeffs = zeros(Float32, 33)
+    coeffs[18] = 1f0                    # b₁ with one-based indexing
+    dev[:forcing_coeffs] = coeffs
+
+    data = capture(dev, [:adc0, :out]; seconds=2)
+    columns = Tables.columntable(data)
+    @show columns.adc0[1:5] data.dropped data.lost_packets
+end
+```
+
+`Capture` implements Tables.jl with `index` followed by the requested sources.
+The cumulative device-side drop count and UDP packet loss remain metadata on
+the capture rather than being repeated in each row.
+
 ### Arbitrary waveform tables
 
 Upload 2–4096 finite samples from Python or a NumPy `.npy` file:
@@ -183,6 +214,12 @@ Upload 2–4096 finite samples from Python or a NumPy `.npy` file:
 ```python
 wave = [0.0, 1.0, 0.0, -1.0]
 dev.upload_table(wave, duration=0.2, gain=1.5, mode="loop")
+```
+
+In Julia, the corresponding call is:
+
+```julia
+upload_table!(dev, Float32[0, 1, 0, -1]; duration=0.2, gain=1.5, mode=:loop)
 ```
 
 Free-running `loop` and `one-shot` modes use `table_freq`, set directly with

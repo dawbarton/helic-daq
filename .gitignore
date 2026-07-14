@@ -3,3 +3,4 @@ target/
 __pycache__/
 *.egg-info/
 .venv/
+/host-julia/Manifest.toml

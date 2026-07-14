@@ -68,7 +68,7 @@ wire protocol and no compatibility layer.
 
 ## Repository layout
 
-Two Cargo workspaces plus a Python package:
+Two Cargo workspaces plus Python and Julia packages:
 
 | Path | What | Builds for |
 |---|---|---|
@@ -82,10 +82,11 @@ Two Cargo workspaces plus a Python package:
 | `firmware/experiments/pwm-rig/` | Signal generator using filtered PWM rather than a DAC | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |
 | `host-python/` | Python package `helic_daq` + `helic-daq` CLI | host |
+| `host-julia/` | Julia package `HelicDAQ` + Tables.jl capture interface | host |
 
 The split exists so that **everything with logic in it can be unit-tested on
 the host** (`cargo test` at the root plus `python3 -m unittest` in
-`host-python/`).
+`host-python/` and `Pkg.test()` in `host-julia/`).
 The firmware crates are deliberately thin: pin wiring, task plumbing and
 glue.
 
@@ -246,9 +247,9 @@ common registry. Logic must remain in a host-testable crate: an experiment
 that grows algorithms rather than pin glue is the signal to move code out.
 
 Verify with the root host tests, a release build and clippy of the complete
-firmware workspace, and the Python suite. Then flash the single new package
-and check its pins, tick rate, `loop_time_max`, overruns, discovery, source
-table and output fail-safe behaviour on hardware.
+firmware workspace, and both host-language suites. Then flash the single new
+package and check its pins, tick rate, `loop_time_max`, overruns, discovery,
+source table and output fail-safe behaviour on hardware.
 
 ### Writing a controller
 
@@ -371,12 +372,14 @@ cargo clippy --release --workspace -- -D warnings
 cargo build --release --workspace
 cd ../host-python
 PYTHONPATH=.:tests python3 -m unittest discover -s tests
+cd ../host-julia
+julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 ```
 
 CI (GitHub Actions) runs fmt + clippy `-D warnings` + tests for the host
-crates, the firmware cross-build, and the Python suite. The Rust and
-Python protocol implementations share known-answer vectors from
-[protocol.md](protocol.md), so codec drift fails tests on both sides.
+crates, the firmware cross-build, and both host-language suites. The Rust,
+Python and Julia protocol implementations share known-answer vectors from
+[protocol.md](protocol.md), so codec drift fails every implementation's tests.
 
 Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses probe-rs
 (`--chip RP235x`) and streams defmt logs over RTT; `DEFMT_LOG` is set in

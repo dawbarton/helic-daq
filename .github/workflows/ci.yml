@@ -36,6 +36,19 @@ jobs:
       - run: pip install numpy
       - run: PYTHONPATH=.:tests python -m unittest discover -s tests -v
 
+  julia:
+    name: Host package (HelicDAQ.jl)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: host-julia
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: julia-actions/setup-julia@5c9647d97b78a5debe5164e9eec09d653d29bd71 # v2.6.1
+        with:
+          version: "1.10"
+      - run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+
   firmware:
     name: Firmware (thumbv8m.main-none-eabihf)
     runs-on: ubuntu-latest
