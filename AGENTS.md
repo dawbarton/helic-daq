@@ -20,7 +20,7 @@ swappable at compile time for different physical experiments.
 Two coordinated transitions are underway. Read
 `docs/multi_experiment_plan.md` **before** changing firmware, protocol,
 or host code — it is the authoritative spec for this work, and its
-decisions table (D1–D10) is settled: don't re-open those choices.
+decisions table (D1–D11) is settled: don't re-open those choices.
 
 - **Multi-experiment restructure**, following the plan's ten phases
   (phase 1, splitting the firmware workspace into `firmware/common` +
@@ -67,7 +67,13 @@ Don't re-derive this from the code — read the docs first:
 
 ## Hardware target
 
-- W5500-EVB-Pico2: RP2350, on-board Wiznet W5500 (Ethernet).
+- RP2350 boards generally; network transport is a per-experiment
+  choice behind `embassy_net::Stack` (plan D11/§6.7):
+  - W5500-EVB-Pico2 (on-board Wiznet W5500, wired Ethernet) — the
+    primary target.
+  - Raspberry Pi Pico 2W (CYW43439 Wi-Fi, station mode, DHCP) —
+    planned via the `sig-gen-w` experiment; note its LED is on the
+    CYW43, not GP25, and full-rate streaming needs wired Ethernet.
 - AD7609: 8-channel, 18-bit true-bipolar differential ADC, ±10 V/±20 V,
   SPI readout, MCU-timed CONVST, BUSY handshake. Range/oversampling
   set via logic-level GPIO (a future AD7606B would set these over SPI
@@ -102,17 +108,19 @@ Don't re-derive this from the code — read the docs first:
   probably in the wrong crate; if an experiment crate is growing
   logic, it belongs in `common` or a shared crate.
 - **No allocation, no `f64` in the real-time path.** The RT loop
-  (`firmware/experiments/cbc-rig/src/rt_loop.rs`, core 1) runs at up to 8 kHz with a
+  (`firmware/common/src/rt_loop.rs`, core 1) runs at up to 8 kHz with a
   125 µs budget; the Cortex-M33 FPU is single-precision only, so `f64`
   silently gets software-emulated and will blow the budget. Use
   `heapless` containers, not `alloc`.
 - **Compile-time swappable controller.** The active `Controller` is a
-  type alias in `firmware/experiments/cbc-rig/src/config.rs`, not a runtime dispatch —
-  this is a deliberate design goal (different CBC experiments need
-  different control laws with zero runtime overhead). New controllers
-  implement `helic_core::controller::Controller`; `param_names`/
-  `set_param` make their gains host-visible automatically, no
-  protocol changes needed.
+  type alias in each experiment's `config.rs` (e.g.
+  `firmware/experiments/cbc-rig/src/config.rs`), not a runtime
+  dispatch — a deliberate design goal (different physical experiments
+  need different control laws with zero runtime overhead). New
+  controllers implement `helic_core::controller::Controller`;
+  `param_names`/`set_param` make their gains host-visible
+  automatically, no protocol changes needed — and per the plan (D8),
+  rigs and controller telemetry follow the same pattern.
 - **Cross-core communication is lock-free, always.** Core 0 (host
   comms) and core 1 (RT loop) talk only via `heapless::spsc` queues
   and `AtomicU32`/similar statics — never a blocking mutex across
@@ -123,8 +131,9 @@ Don't re-derive this from the code — read the docs first:
 - **The wire protocol is discoverable, not hard-coded.** Parameters
   are a name-indexed registry (`firmware/common/src/params.rs`) the host
   reads at connect (`docs/protocol.md`) — adding a parameter is a
-  firmware-only change. Don't hard-code parameter indices on the host
-  side.
+  firmware-only change. Protocol v2 extends the same principle to
+  stream sources (a per-experiment name+unit table, plan §6). Don't
+  hard-code parameter or source indices on the host side.
 - **Doc comments explain why, not what.** Default to no comments;
   when you add one, it's because of a non-obvious constraint (a
   datasheet timing requirement, a hardware quirk, a reason a simpler

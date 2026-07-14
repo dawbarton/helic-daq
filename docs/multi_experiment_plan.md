@@ -60,6 +60,7 @@ checking first.
 | D8 | Rig parameters + controller telemetry | Rigs expose host-settable parameters exactly like controllers do; controllers declare telemetry stream sources (e.g. the control error). |
 | D9 | Identity & network conveniences | `experiment` name parameter, git hash in the firmware string, UDP discovery beacon (`helic-daq find`), optional DHCP selected in `config.rs`. |
 | D10 | Host simulator | The Python test fake is promoted to a runnable `helic_daq.sim` speaking full protocol v2 over localhost. |
+| D11 | Network transport | Per-experiment choice behind `embassy_net::Stack`: common provides feature-gated bring-up backends — `net-wiznet` (W5500, SPI, default) and `net-cyw43` (CYW43439, PIO-SPI) — selected by the experiment crate's cargo features (§6.7). Wi-Fi is **station-mode only** (SSID/PSK in `config.rs`, DHCP default); first Wi-Fi target is the Raspberry Pi Pico 2W via a `sig-gen-w` experiment. |
 
 ### Secondary design calls made in this plan
 
@@ -106,10 +107,13 @@ firmware/                 # cargo workspace (unchanged .cargo/config.toml)
     src/rt_loop.rs        # generic run_rt_loop<R: Rig>, queues, diagnostics
     src/table.rs          # waveform double-buffer + swap protocol (§6.4)
     src/params.rs         # ParamRegistry trait, base diagnostics params
-    src/comms/mod.rs      # STREAM state, W5500/net bring-up, DHCP/static
+    src/comms/mod.rs      # STREAM state (net bring-up moves to net/, §6.7)
     src/comms/tcp.rs      # control server over &mut dyn ParamRegistry
     src/comms/udp.rs      # stream task (concrete — Record is non-generic)
     src/comms/beacon.rs   # UDP discovery responder (§6.5)
+    src/net/mod.rs        # transport-generic stack bring-up, static/DHCP (§6.7)
+    src/net/wiznet.rs     # W5500 backend (feature net-wiznet, default)
+    src/net/cyw43.rs      # CYW43439 Wi-Fi backend (feature net-cyw43)
     src/laser.rs          # optoNCDT reader as a generic async fn
     src/ssi_pio.rs        # PIO SSI master (§7.3)
   experiments/
@@ -118,12 +122,13 @@ firmware/                 # cargo workspace (unchanged .cargo/config.toml)
       src/board.rs        # pin map (today's board.rs)
       src/config.rs       # SampleRate, controller alias, net config, sources
     sig-gen/              # D4: DAC out, laser in, NO ADC (PWM-wrap tick)
+    sig-gen-w/            # D11: sig-gen on a Pico 2W (CYW43439 Wi-Fi, DHCP)
     pwm-rig/              # D4: PWM output stage instead of the AD5064
     encoder-rig/          # D4/D5: cbc-rig + RMB20 SSI encoder input
 ```
 
-Crate names: `helic-fw-common`, `fw-cbc-rig`, `fw-sig-gen`, `fw-pwm-rig`,
-`fw-encoder-rig`. Each experiment crate should stay in the
+Crate names: `helic-fw-common`, `fw-cbc-rig`, `fw-sig-gen`,
+`fw-sig-gen-w`, `fw-pwm-rig`, `fw-encoder-rig`. Each experiment crate should stay in the
 ~300–600-line range; anything bigger belongs in `common` or a shared
 crate.
 
@@ -451,13 +456,22 @@ slot + `rig_encoder_zero` rig param.
 hardware, slow manual shaft rotation streams a monotone position and
 the value survives at 8 kHz with zero tick overruns.
 
-### Phase 9 — identity & network conveniences (D9, §6.5)
+### Phase 9 — identity & network (D9 + D11, §6.5, §6.7)
 
 Git hash in the firmware string (build.rs), UDP discovery beacon +
 `helic-daq find`, DHCP as a `config.rs` choice (default static).
+Then the network-transport abstraction: split net bring-up into
+`common::net` (transport-generic) + `net/wiznet.rs` (feature
+`net-wiznet`, default — behaviour unchanged), add the `net/cyw43.rs`
+Wi-Fi backend (feature `net-cyw43`), and the `sig-gen-w` experiment
+crate targeting the Pico 2W.
 **Accept:** `helic-daq find` lists a board with experiment name,
 firmware+hash, and address; a DHCP build acquires a lease and is still
-found by the beacon.
+found by the beacon; wired experiments rebuilt on the split are
+behaviourally unchanged; `sig-gen-w` on a Pico 2W joins a WPA2 network
+via DHCP, is found by `helic-daq find`, streams a 4-source capture at
+8 kHz (drop/seq-gap counters quantify Wi-Fi loss), and its
+CYW43-driven LED heartbeat blinks.
 
 ### Phase 10 — CI + docs
 
@@ -641,7 +655,10 @@ CLI: `helic-daq upload wave.npy --duration 2.0`.
   control_port u16, mac 6B, experiment c16, firmware c16`. Responder
   answers broadcasts; host `helic-daq find` broadcasts on all
   interfaces, collects for ~1 s, prints a table. Document in
-  protocol.md alongside the other two ports.
+  protocol.md alongside the other two ports. Works over Wi-Fi too,
+  with one caveat: an access point's "client isolation" setting blocks
+  broadcasts between clients — document the symptom (`find` sees
+  nothing but a direct connection works) in the user guide.
 - **DHCP**: `config.rs` selects
   `NetConfig::Static { addr, prefix, .. }` or `NetConfig::Dhcp`
   (embassy-net `dhcpv4` feature); default static, per-experiment
@@ -659,6 +676,52 @@ plausible). It honours SetBlock/Commit and plays uploaded tables. The
 existing unittest fake is **replaced by** the simulator (tests import
 it) so the two cannot drift. Beacon responder included so `find`
 works locally.
+
+### 6.7 Network transports (D11)
+
+Everything downstream of network bring-up — the TCP control server,
+UDP streamer, and beacon — already consumes only
+`embassy_net::Stack<'static>`, which is chip-agnostic. The transport
+abstraction is therefore a module split, not a redesign:
+
+- **`common::net` (transport-generic):** today's `comms::init` minus
+  the W5500 specifics — turns `NetConfig` (static or DHCP, §6.5) into
+  an `embassy_net::Config`, creates the stack over any embassy-net
+  `Driver`, and spawns `net_task`.
+- **`common::net::wiznet`** (cargo feature `net-wiznet`, **default**):
+  the W5500 half moved verbatim — `EthernetParts` (SPI + CS/INT/RST),
+  `ExclusiveDevice`, `embassy-net-wiznet` init, and the wiznet runner
+  task. Behaviour identical to today.
+- **`common::net::cyw43`** (cargo feature `net-cyw43`): CYW43439
+  bring-up via the `cyw43` + `cyw43-pio` crates on **PIO1** (leaves
+  PIO0 free for the SSI encoder; the RP2350 has three PIO blocks).
+  The chip sits on fixed pins (PWR = GP23, CS = GP25, DIO = GP24,
+  CLK = GP29). Firmware blobs (`43439A0.bin`, `43439A0_clm.bin`,
+  ~250 KB total) are embedded with `include_bytes!` — pin the blob
+  revision to the `cyw43` crate version (R13). Station mode only:
+  join WPA2 with SSID/PSK from the experiment's `config.rs`
+  (compile-time, consistent with the rest of the network config;
+  flash-stored credentials are out of scope, §10), retrying the join
+  in a loop until associated. Set
+  `PowerManagementMode::None` — the default power-save trades
+  100 ms-class latency spikes for µA, the wrong trade for a streaming
+  instrument. DHCP is the natural default for Wi-Fi experiments.
+
+Feature-gating keeps the cyw43 dependency tree and blobs out of wired
+builds entirely. The two backends never coexist in one binary; each
+experiment crate enables exactly one.
+
+Two board-level consequences:
+
+- **The heartbeat LED task moves into each experiment's `main.rs`.**
+  On the Pico 2W the LED hangs off the CYW43's GPIO 0 (driven via
+  `cyw43::Control::gpio_set`), not GP25, so common's
+  `blink(Output<'static>)` task cannot express it. It's an eight-line
+  task; per-experiment ownership costs nothing and removes the last
+  board assumption from `common`.
+- **Pin map:** on a Pico 2W every pin the W5500 occupied (GP16–21,
+  SPI0) is free, while GP23/24/25/29 become unavailable — handled
+  per-experiment in `board.rs` as usual, no structural change.
 
 ## 7. New drivers
 
@@ -744,6 +807,7 @@ a scope (add the checklist to notes.md when bringing it up).
 |---|---|---|---|---|---|
 | `cbc-rig` | `BusyEdgeTick` (CONVST PWM as today) | adc0–7, laser | AD5064 | `rig_laser_range`, `rig_out_channel` | behaviourally = current firmware + table generator |
 | `sig-gen` | `PwmWrapTick` | laser | AD5064 | `rig_laser_range`, `rig_out_channel` | no AD7609 pins claimed; GP2–8/13 free; AWG duty |
+| `sig-gen-w` | `PwmWrapTick` | laser | AD5064 | `rig_laser_range`, `rig_out_channel` | Pico 2W, `net-cyw43`, DHCP; wireless AWG + logger |
 | `pwm-rig` | `PwmWrapTick` | laser | `PwmOut` (slice ≠ tick slice) | `rig_laser_range` | RC filter external |
 | `encoder-rig` | `BusyEdgeTick` | adc0–7, laser, encoder | AD5064 | + `rig_encoder_zero` | PIO0 SM0 for SSI; 2 pins from the free set |
 
@@ -792,6 +856,15 @@ Typical sessions (4–8 sources) are 128–256 KB/s — comfortable.
 Everything else on core 0 (TCP request/response, beacon, laser UART
 at 921.6 kbaud) is noise by comparison.
 
+**Wi-Fi (D11) changes the streaming picture.** The worst case
+(768 KB/s ≈ 6.1 Mbit/s) likely exceeds the CYW43439's practical UDP
+throughput; typical 4–8-source sessions (1–2 Mbit/s) are feasible but
+come with jitter and occasional loss, which the protocol already
+tolerates by design (seq gaps + drop counters quantify it, nothing
+stalls). Wired W5500 remains the recommendation for full-rate capture;
+Wi-Fi rigs should lean on decimation. Control traffic and parameter
+access are unaffected — they are tiny.
+
 **Memory:** new structures total ~60 KB (26 KB record ring, 32 KB
 table double-buffer, staging/shadows) on top of existing stacks and
 network buffers — under 25 % of the 520 KB SRAM. Flash: each
@@ -819,12 +892,17 @@ convergence.
 | R9 | RAM: record ring ~26 KB + 2×16 KB table buffers + existing buffers. | ~60 KB total against 520 KB; check the map file in phase 5 anyway. |
 | R10 | Git hash via build.rs breaks in environments without git (CI tarballs, vendored builds). | Fall back to `"unknown"`; never fail the build over it. |
 | R11 | Full-rate streaming (24 sources × 8 kHz ≈ 768 KB/s) is the system's tightest data path (W5500 SPI throughput + core-0 CPU for smoltcp/UDP). | Should fit with ≥ 3× margin (§9.1), but measure on hardware in phase 3: stream all sources at 8 kHz, watch `records_dropped` and packet seq gaps. Decimation is the built-in escape valve. |
+| R12 | CYW43439 real-world UDP throughput and latency are unmeasured; worst-case streaming likely exceeds it (§9.1). | Measure in phase 9 with the same method as R11 (sweep source count, watch drop/seq-gap counters); decimation is the escape valve, and wired W5500 remains available for full-rate rigs. |
+| R13 | cyw43 firmware-blob/crate version pairing and flash cost (~250 KB of blobs). | Pin the blob revision to the `cyw43` crate version (embassy documents the pairing); flash budget is fine per R5 — verify the Pico 2W's fitted flash part (4 MB nominal) in phase 9. |
 
 ## 10. Explicitly out of scope
 
-- Flash-stored configuration (IP, MAC, sample rate) — DHCP + the
-  discovery beacon (§6.5) cover the multi-board pain; a flash config
-  block remains a future milestone.
+- Flash-stored configuration (IP, MAC, sample rate, Wi-Fi
+  credentials) — DHCP + the discovery beacon (§6.5) cover the
+  multi-board pain; a flash config block remains a future milestone.
+- Wi-Fi AP mode (the board hosting its own network for portable/field
+  rigs) — station mode only (D11); revisit if a rig materialises with
+  no lab network in reach.
 - Per-experiment harmonic counts (fixed at 16 in common).
 - Quadrature (incremental) encoder support — SSI absolute only (D5).
 - Multi-output control: the loop has one control output; a second DAC
