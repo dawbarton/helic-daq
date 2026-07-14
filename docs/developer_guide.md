@@ -16,6 +16,7 @@ Two Cargo workspaces plus a Python package:
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `firmware/common/` | Experiment-independent firmware support | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
+| `firmware/experiments/sig-gen/` | ADC-free DAC signal generator and laser logger | `thumbv8m.main-none-eabihf` only |
 | `host/` | Python package `helic_daq` + `helic-daq` CLI | host |
 
 The split exists so that **everything with logic in it is unit-tested on

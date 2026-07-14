@@ -1,10 +1,10 @@
 # HELIC-DAQ user guide
 
 HELIC-DAQ is a real-time control and data acquisition platform for laboratory
-control, signal generation and instrumentation. The current `cbc-rig`
-experiment targets control-based continuation (CBC), using a W5500-EVB-Pico2
-(RP2350), an AD7609 8-channel 18-bit ADC, an AD5064 4-channel 16-bit DAC, and
-an optional Micro-Epsilon optoNCDT 1420 laser displacement sensor.
+control, signal generation and instrumentation. `cbc-rig` targets
+control-based continuation using an AD7609 ADC and AD5064 DAC. `sig-gen`
+uses the same W5500-EVB-Pico2 and DAC as an arbitrary/function generator with
+optional optoNCDT laser logging, but requires no ADC board.
 
 ## What it does
 
@@ -36,6 +36,7 @@ header, plus `cargo install probe-rs-tools`):
 ```sh
 cd firmware
 cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
+cargo run --release -p fw-sig-gen # ADC-free signal generator
 ```
 
 The log shows a boot banner, the network address, and a once-a-second
@@ -51,9 +52,13 @@ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf 
 picotool load helic-daq.uf2 && picotool reboot
 ```
 
+Substitute `fw-sig-gen` in the build and output filename to flash the
+ADC-free experiment.
+
 ## Connecting to it
 
-The device uses a **static IP address**, `192.168.1.235/24` by default.
+The experiments use static addresses by default: `192.168.1.235/24` for
+`cbc-rig` and `192.168.1.236/24` for `sig-gen`.
 Connect it to your machine directly or via a switch, give your machine an
 address on the same subnet (e.g. `192.168.1.10/24`), and check:
 
@@ -61,9 +66,9 @@ address on the same subnet (e.g. `192.168.1.10/24`), and check:
 ping 192.168.1.235
 ```
 
-To use a different address, edit `IP_ADDR` in `firmware/experiments/cbc-rig/src/config.rs` and
-reflash. (Same for the sample rate, laser measuring range, and controller —
-see the table below.)
+To use a different address, edit `IP_ADDR` in the selected experiment's
+`config.rs` and reflash. The sample rate, laser measuring range and
+controller are selected there too.
 
 Install the Python package from the repository root:
 
