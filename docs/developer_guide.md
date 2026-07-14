@@ -80,7 +80,7 @@ Two Cargo workspaces plus a Python package:
 | `firmware/experiments/sig-gen/` | ADC-free DAC signal generator and laser logger | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/sig-gen-w/` | Pico 2W Wi-Fi variant of the ADC-free signal generator | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/pwm-rig/` | Signal generator using filtered PWM rather than a DAC | `thumbv8m.main-none-eabihf` only |
-| `firmware/experiments/encoder-rig/` | CBC rig with an RMB20 SSI encoder on PIO0 SM0 | `thumbv8m.main-none-eabihf` only |
+| `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |
 | `host/` | Python package `helic_daq` + `helic-daq` CLI | host |
 
 The split exists so that **everything with logic in it can be unit-tested on
@@ -108,8 +108,8 @@ wrapper. Keep this pattern when sharing a task across experiments.
 
 ## Firmware architecture
 
-The CBC/encoder acquisition path is shown; ADC-free rigs replace CONVST/BUSY
-with a PWM-wrap tick and omit the ADC read.
+The CBC acquisition path is shown; ADC-free rigs replace CONVST/BUSY with a
+PWM-wrap tick and omit the ADC read.
 
 ```
 core 1 (real-time)                       core 0 (everything else)
@@ -167,13 +167,14 @@ Core 0 never touches loop state. Four mechanisms keep communication bounded:
 - **Records** (core 1 → 0): 256-deep `heapless::spsc` ring. The RT loop
   never blocks on it; overflow drops the record and increments
   `records_dropped`.
-- **Scalars**: `AtomicU32` statics in `rt_loop.rs` (diagnostics written by
-  core 1, laser value written by core 0's UART task and read by the loop).
+- **Scalars**: `AtomicU32` statics expose diagnostics and latest sensor values
+  without sharing live loop state between cores.
 
-In `encoder-rig`, PIO0 SM0 clocks SSI independently of the CPU. Each tick
-pulls the previous frame without waiting, retains the last good decoded
-position, then starts the next frame. This fixes encoder latency at one sample
-and keeps peripheral timing outside the real-time budget.
+In `whirl-rig`, PIO0 SM0 drives a shared SSI clock and samples the contiguous
+pitch and yaw pins with one `in pins, 2` instruction. Each 2 kHz tick consumes
+the previous pair and starts the next, fixing both channels at the same sample
+instant with one-sample latency. PIO0 SM1 measures rising-edge intervals from
+the optical revolution pulse independently of core load.
 
 The analogue SPI bus (SPI1: ADC + DAC chip selects) belongs to core 1
 exclusively. `board.rs` hands the unassembled `AnalogParts` to core 1,
@@ -313,7 +314,8 @@ mode, then record:
 ```sh
 helic-daq get loop_time_last loop_time_max overruns tick_timeouts records_dropped
 helic-daq sources
-helic-daq capture --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,encoder,target,forcing,table,out --seconds 30
+helic-daq capture --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,target,forcing,table,out --seconds 30
+helic-daq --host 192.168.1.238 capture --sources pitch,yaw,rev_period,rpm,rev_pulse,rpm_valid,target,forcing,table,out --seconds 30
 ```
 
 At 8 kHz, require `loop_time_max < 125`, zero overruns/tick timeouts on a
@@ -386,7 +388,7 @@ Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses prob
   RT loop, ADC read, DAC write, DAC→ADC loopback (DC + AC), signal generator, all
   four sample-rate presets, parameter round-trip, and closed-loop PID. The only
   path not yet exercised there is the **laser UART with a real optoNCDT
-  sensor**. The PWM, SSI encoder and Pico 2W/CYW43 paths have compile-time
+  sensor**. The PWM, whirl-rig PIO and Pico 2W/CYW43 paths have compile-time
   and host-test verification only. See [../notes.md](../notes.md).
 - Arbitrary table upload and playback are implemented and host-tested, but
   still require scope verification on hardware, including glitch-free

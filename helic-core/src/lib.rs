@@ -13,6 +13,7 @@ pub mod generator;
 pub mod lut;
 pub mod phase;
 pub mod pid;
+pub mod rpm;
 pub mod table;
 
 pub use controller::{Controller, PassThrough, PidController};

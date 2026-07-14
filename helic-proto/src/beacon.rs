@@ -89,7 +89,7 @@ mod tests {
     fn response_round_trips_and_truncates_strings() {
         let response = BeaconResponse::new(
             [0x02, 0x48, 0x4c, 0, 0, 1],
-            "encoder-rig",
+            "whirl-rig",
             "helic-daq 0.1.0 abc123",
         );
         let mut encoded = [0; RESPONSE_LEN];

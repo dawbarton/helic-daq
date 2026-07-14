@@ -931,35 +931,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fw-encoder-rig"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 1.1.1",
- "defmt-rtt",
- "embassy-embedded-hal",
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-rp",
- "embassy-sync",
- "embassy-time",
- "embedded-hal 1.0.0",
- "embedded-hal-bus",
- "embedded-io-async 0.7.0",
- "fixed",
- "heapless",
- "helic-core",
- "helic-drivers",
- "helic-fw-common",
- "helic-proto",
- "panic-probe",
- "rand_core 0.10.1",
- "static_cell",
-]
-
-[[package]]
 name = "fw-pwm-rig"
 version = "0.1.0"
 dependencies = [
@@ -1017,6 +988,27 @@ dependencies = [
  "embassy-rp",
  "embassy-time",
  "embedded-hal-bus",
+ "heapless",
+ "helic-core",
+ "helic-drivers",
+ "helic-fw-common",
+ "helic-proto",
+ "panic-probe",
+ "static_cell",
+]
+
+[[package]]
+name = "fw-whirl-rig"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.1.1",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-net",
+ "embassy-rp",
+ "embassy-time",
  "heapless",
  "helic-core",
  "helic-drivers",

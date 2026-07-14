@@ -49,20 +49,23 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
 
 ## Hardware constraints worth preserving
 
-- The current CBC and encoder builds configure all AD5064 channels as
-  unipolar for the interim analogue board. `DAC_POLARITY` in each `board.rs`
-  must match the fitted output stages before hardware use.
+- The current CBC build configures all AD5064 channels as unipolar for the
+  interim analogue board. `DAC_POLARITY` in `cbc-rig/board.rs` must match the
+  fitted output stages before hardware use.
 - The optoNCDT UART input needs an idle-high line. The current rig uses an
   external 10 kΩ pull-up on GP1; without it, a disconnected sensor can cause
   a UART interrupt storm.
-- The RMB20 SSI format constants are provisional until checked against the
-  ordered encoder variant. The ADC-free signal generator, PWM, SSI, Pico 2W
-  and arbitrary-waveform paths are not yet hardware-verified; consult
-  `notes.md` before relying on them.
+- The whirl rig uses two RMB20SC12BC96 encoders: 12-bit natural binary SSI at
+  1 MHz with a shared clock. Its dual-SSI, optical-period, ADC-free signal
+  generator, PWM, Pico 2W and arbitrary-waveform paths are not yet
+  hardware-verified; consult `notes.md` before relying on them.
 
 ## Working conventions
 
 - Use British English in prose and avoid parenthetical em dashes.
+- Give every new source or configuration file a concise file-level comment
+  describing its purpose, using the repository's module-documentation style
+  where the language supports it.
 - Prefer no comments. Add comments for non-obvious timing, safety or hardware
   constraints, not to restate code.
 - Keep commits to one logical unit. Use the established `<Area>: <what and

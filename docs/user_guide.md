@@ -6,19 +6,22 @@ control-based continuation using an AD7609 ADC and AD5064 DAC. Wired
 experiments support the W5500-EVB-Pico2 and W6100-EVB-Pico2. `sig-gen` uses
 the same board and DAC as an arbitrary/function generator with optional
 optoNCDT laser logging, but requires no ADC board. `pwm-rig` replaces
-the DAC with a filtered 10-bit PWM output on GP10. `encoder-rig` extends the
-CBC instrument with an SSI absolute encoder input. `sig-gen-w` runs the
+the DAC with a filtered 10-bit PWM output on GP10. `whirl-rig` samples two
+RMB20 SSI encoders and an optical revolution pulse. `sig-gen-w` runs the
 signal generator on a Raspberry Pi Pico 2W over Wi-Fi.
 
 ## What it does
 
-- In `cbc-rig` and `encoder-rig`, samples all 8 analogue inputs
-  simultaneously at **1, 2, 4 or 8 kHz** (compile-time preset), with
-  hardware-timed conversion starts.
-- Runs a **real-time control loop** every sample: measurements → controller
-  → analogue output, with total in-to-out latency under one sample period.
-  The default builds select open-loop pass-through; a PID controller is
-  provided and others can be added in firmware.
+- In `cbc-rig`, samples all 8 analogue inputs simultaneously at **1, 2, 4 or
+  8 kHz** (compile-time preset), with hardware-timed conversion starts.
+- In `whirl-rig`, samples pitch and yaw simultaneously at **2 kHz** using one
+  PIO state machine and estimates rotor speed from a hardware-timed optical
+  pulse period.
+- Runs a **real-time control loop** every sample: measurements → controller →
+  actuation where output hardware is fitted. The default builds select
+  open-loop pass-through; a PID controller is provided and others can be
+  added in firmware. `whirl-rig` retains these calculations for future output
+  hardware but currently has no actuation.
 - Generates a **periodic reference/forcing signal** as a Fourier series
   (16 harmonics by default) with µHz-resolution frequency control and
   glitch-free, phase-continuous updates, which are central to CBC.
@@ -42,7 +45,7 @@ cd firmware
 cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
 cargo run --release -p fw-sig-gen # ADC-free signal generator
 cargo run --release -p fw-pwm-rig # PWM output on GP10
-cargo run --release -p fw-encoder-rig # CBC rig plus SSI encoder
+cargo run --release -p fw-whirl-rig # Dual SSI encoders and revolution pulse
 cargo run --release -p fw-sig-gen-w # Pico 2W Wi-Fi signal generator
 ```
 
@@ -83,7 +86,7 @@ helic-daq find
 
 The wired experiments use static addresses by default: `192.168.1.235/24` for
 `cbc-rig`, `192.168.1.236/24` for `sig-gen`, and `192.168.1.237/24` for
-`pwm-rig`. `encoder-rig` uses `192.168.1.238/24`.
+`pwm-rig`. `whirl-rig` uses `192.168.1.238/24`.
 Connect it to your machine directly or via a switch and give your machine an
 address on the same subnet, for example `192.168.1.10/24`. After installing
 the host package below, check the TCP control service:
@@ -107,14 +110,13 @@ driven through the CYW43439, not GP25. Use wired Ethernet for sustained
 full-rate multi-source streaming; Wi-Fi is intended for control, signal
 generation and lighter captures.
 
-The encoder build reports position in revolutions as the discovered `encoder`
-source. Set `rig_encoder_zero` to subtract a host-selected datum. Its 13-bit
-Gray format and 500 kHz clock are provisional constants in
-`encoder-rig/src/config.rs`; verify them against the ordered RMB20 variant
-before connecting hardware. `encoder_errors` counts rejected all-low/all-high
-frames and transport overruns. Both ADC-based experiments expose `adc_errors`;
-on a read failure they retain the last valid sample rather than injecting
-zeros into the controller.
+The whirl build reports wrapped pitch and yaw in revolutions. Both
+RMB20SC12BC96 encoders use 12-bit natural-binary SSI at 1 MHz and share one
+clock, so PIO samples both data inputs on the same instruction. The optical
+input exposes `rev_period`, EWMA `rpm`, `rev_pulse` and `rpm_valid`. The
+estimate uses a 250 ms time constant and becomes invalid after 100 ms without
+an accepted pulse. `ssi_errors`, `pulse_count`, `pulse_glitches` and
+`pulse_errors` provide transport diagnostics.
 
 Install the Python package from the repository root:
 
@@ -213,7 +215,9 @@ pass-through controller the output is simply `target + forcing`.
 | Analogue in 0–7 | AD7609 inputs, ±10 V (or ±20 V, compile-time) |
 | Analogue out 0–3 | Per-channel polarity, set in `board.rs` (`DAC_POLARITY`): unipolar 0–4.096 V or bipolar ±4.096 V |
 | Laser | optoNCDT 1420 via RS422→TTL at 921.6 kBaud, 8 kHz output rate |
-| Encoder (`encoder-rig`) | RMB20 SSI clock GP22, data GP26, each via the appropriate TTL↔RS422 converter |
+| SSI clock (`whirl-rig`) | GP22, fanned out to both TTL→RS422 clock transmitters |
+| Pitch/yaw (`whirl-rig`) | RS422→TTL data on GP26/GP27 respectively |
+| Revolution pulse (`whirl-rig`) | Active-high 3.3 V input on GP28 |
 
 Output-channel polarity must match your analogue board's output stages. The
 target design is two bipolar + two unipolar; the current build is **all four

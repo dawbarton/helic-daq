@@ -4,8 +4,6 @@
 pub enum SsiError {
     InvalidFormat,
     InvalidWord,
-    DisconnectedLow,
-    DisconnectedHigh,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,12 +25,6 @@ impl SsiFormat {
         if raw & !mask != 0 {
             return Err(SsiError::InvalidWord);
         }
-        if raw == 0 {
-            return Err(SsiError::DisconnectedLow);
-        }
-        if raw == mask {
-            return Err(SsiError::DisconnectedHigh);
-        }
         if !self.gray {
             return Ok(raw);
         }
@@ -44,6 +36,23 @@ impl SsiFormat {
         }
         Ok(binary & mask)
     }
+}
+
+pub fn deinterleave_pair(raw: u32, bits: u8) -> Result<[u32; 2], SsiError> {
+    if !(1..=16).contains(&bits) {
+        return Err(SsiError::InvalidFormat);
+    }
+    let used = u32::from(bits) * 2;
+    if used < 32 && raw >> used != 0 {
+        return Err(SsiError::InvalidWord);
+    }
+    let mut words = [0; 2];
+    for bit in 0..bits {
+        let shift = u32::from(bit) * 2;
+        words[0] |= ((raw >> shift) & 1) << bit;
+        words[1] |= ((raw >> (shift + 1)) & 1) << bit;
+    }
+    Ok(words)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,14 +95,33 @@ mod tests {
     }
 
     #[test]
-    fn disconnected_signatures_are_rejected() {
+    fn binary_endpoints_are_valid_positions() {
         let format = SsiFormat {
             bits: 12,
-            gray: true,
+            gray: false,
         };
-        assert_eq!(format.decode(0), Err(SsiError::DisconnectedLow));
-        assert_eq!(format.decode(0x0fff), Err(SsiError::DisconnectedHigh));
+        assert_eq!(format.decode(0), Ok(0));
+        assert_eq!(format.decode(0x0fff), Ok(0x0fff));
         assert_eq!(format.decode(0x1000), Err(SsiError::InvalidWord));
+    }
+
+    #[test]
+    fn interleaved_pair_round_trips_all_12_bit_positions() {
+        for first in 0..4096u32 {
+            let second = 4095 - first;
+            let mut raw = 0;
+            for bit in (0..12).rev() {
+                raw = (raw << 2) | (((second >> bit) & 1) << 1) | ((first >> bit) & 1);
+            }
+            assert_eq!(deinterleave_pair(raw, 12), Ok([first, second]));
+        }
+    }
+
+    #[test]
+    fn interleaved_pair_rejects_invalid_shapes() {
+        assert_eq!(deinterleave_pair(0, 0), Err(SsiError::InvalidFormat));
+        assert_eq!(deinterleave_pair(0, 17), Err(SsiError::InvalidFormat));
+        assert_eq!(deinterleave_pair(1 << 24, 12), Err(SsiError::InvalidWord));
     }
 
     #[test]

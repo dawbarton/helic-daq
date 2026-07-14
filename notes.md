@@ -23,15 +23,15 @@ rtc analogue cape:
   external pull-up.
 
 The default firmware was returned to `PassThrough` after PID testing. The
-current analogue cape is all-unipolar, and the CBC and encoder `DAC_POLARITY`
-arrays intentionally match it.
+current analogue cape is all-unipolar, and the CBC `DAC_POLARITY` array
+intentionally matches it.
 
 ## Not yet verified on hardware
 
 - An optoNCDT 1420 producing real binary measurements. Only disconnected-line
   behaviour has been checked.
 - Arbitrary table playback, atomic re-commit and long phase-locked operation.
-- `fw-sig-gen`, `fw-pwm-rig`, `fw-encoder-rig` and `fw-sig-gen-w`. They build
+- `fw-sig-gen`, `fw-pwm-rig`, `fw-whirl-rig` and `fw-sig-gen-w`. They build
   with the firmware workspace and their portable logic has host tests, but
   none has been exercised as a complete physical experiment.
 - W6100 Ethernet on every wired experiment. The W6100 variants cross-build,
@@ -46,10 +46,25 @@ arrays intentionally match it.
   stream is active with `Busy`, and non-finite parameter writes with
   `BadValue`. Both are covered by software tests.
 
-For the RMB20, confirm the ordered part's bit count, Gray/binary encoding,
-maximum clock and monoflop time before replacing the provisional 13-bit,
-500 kHz constants. For the Pico 2W, verify PIO1 radio bring-up, DHCP,
-discovery, a light capture and real-time tick stability while Wi-Fi is active.
+The `fw-whirl-rig` constants match RMB20SC12BC96: 12-bit natural binary,
+4096 positions per revolution, 1 MHz SSI below the 4 MHz limit, and more than
+20.5 µs idle-high time between frames. Confirm the complete dual-converter
+wiring, bit ordering and PIO period calibration on hardware. For the Pico 2W,
+verify PIO1 radio bring-up, DHCP, discovery, a light capture and real-time tick
+stability while Wi-Fi is active.
+
+### Whirl rig
+
+- The two 5 V RMB20 encoders share the GP22 clock through separate
+  TTL-to-RS422 transmitters. Their 3.3 V-safe receiver outputs connect pitch
+  to GP26 and yaw to GP27.
+- PIO samples both SSI inputs simultaneously at 1 MHz. Counts 0 and 4095 are
+  valid positions and cannot be used as disconnected signatures.
+- GP28 receives an active-high 3.3 V optical pulse approximately 100 µs wide.
+  PIO measures rising-edge periods with a nominal 1 µs count and a fixed
+  program-overhead correction that still requires logic-analyser validation.
+- The intended range is approximately 2000–6000 RPM. Periods below 5 ms are
+  rejected as glitches; RPM becomes stale after 100 ms without a valid period.
 
 ## Bring-up constraints and known hardware faults
 
@@ -117,7 +132,8 @@ evidence:
 
 1. optoNCDT binary receive with the fitted pull-up;
 2. arbitrary table playback and atomic recommit on a scope;
-3. RMB20 format confirmation and SSI clock/data capture;
+3. whirl-rig shared-clock SSI, simultaneous pitch/yaw capture and optical
+   period calibration;
 4. Pico 2W association, discovery and decimated streaming;
 5. all-source W5500 streaming while watching `records_dropped`, UDP sequence
    gaps, `loop_time_max`, `overruns` and `tick_timeouts`.
