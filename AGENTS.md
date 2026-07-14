@@ -62,14 +62,14 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
 
 ## Working conventions
 
-- Use British English in prose and avoid parenthetical em dashes.
+- Use British English in prose with Oxford commas.
 - Give every new source or configuration file a concise file-level comment
   describing its purpose, using the repository's module-documentation style
   where the language supports it.
-- Prefer no comments. Add comments for non-obvious timing, safety or hardware
-  constraints, not to restate code.
+- Add comments for non-obvious timing, safety, or hardware constraints, not
+  to restate code.
 - Keep commits to one logical unit. Use the established `<Area>: <what and
-  why>` style and explain rationale in the body.
+  why>` style and explain rationale in the body. Commit as you go.
 - Preserve unrelated working-tree changes.
 
 Before declaring a change complete, run the checks relevant to it. The full
