@@ -45,15 +45,15 @@ classdef StreamReceiver < handle
         end
 
         function delete(obj)
-            %DELETE Release the UDP socket.
-            if ~isempty(obj.Socket)
+            %DELETE Release the UDP socket; injected transports stay caller-owned.
+            if obj.NativeSocket && ~isempty(obj.Socket)
                 try
                     delete(obj.Socket);
                 catch
                     % The socket may already have been deleted explicitly.
                 end
-                obj.Socket = [];
             end
+            obj.Socket = [];
         end
 
         function [header, values] = receive(obj)
@@ -66,7 +66,7 @@ classdef StreamReceiver < handle
                             'No HELIC-DAQ stream packet arrived within %.3g seconds.', ...
                             obj.Timeout);
                     end
-                    pause(min(0.001, obj.Timeout / 20));
+                    pause(min(0.005, obj.Timeout / 20));
                 end
                 datagram = read(obj.Socket, 1, 'uint8');
                 packet = reshape(uint8(datagram.Data), 1, []);

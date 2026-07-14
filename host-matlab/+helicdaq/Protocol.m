@@ -202,9 +202,12 @@ classdef Protocol
             end
             [value, ~] = helicdaq.Protocol.unpackLE(bytes, ...
                 helicdaq.Protocol.typeName(typeCode), count, 1);
-            if count == 1
-                value = value(1);
-            end
+        end
+
+        function sizeBytes = parameterSize(typeCode, count)
+            %PARAMETERSIZE Return the encoded byte length of a parameter value.
+            sizeBytes = double(count) * ...
+                helicdaq.Protocol.typeSize(helicdaq.Protocol.typeName(typeCode));
         end
 
         function response = decodeBeaconResponse(payload)

@@ -175,9 +175,9 @@ classdef FakeTransport < handle
             if obj.Definitions.Name(double(index) + 1) ~= "table"
                 error('FakeTransport:Parameter', 'Commit target is not table.');
             end
-            [length, ~] = helicdaq.Protocol.unpackLE(payload, 'uint32', 1, offset);
+            [tableLength, ~] = helicdaq.Protocol.unpackLE(payload, 'uint32', 1, offset);
             obj.Values{5} = obj.TableStaging;
-            obj.Values{6} = helicdaq.Protocol.packParameter('H', 1, uint16(length));
+            obj.Values{6} = helicdaq.Protocol.packParameter('H', 1, uint16(tableLength));
         end
 
         function streamSetup(obj, payload)

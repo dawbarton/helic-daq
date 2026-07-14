@@ -6,7 +6,8 @@ parser = inputParser;
 parser.addParameter('Timeout', 1, ...
     @(value) isscalar(value) && isfinite(value) && value > 0);
 parser.addParameter('Port', helicdaq.Protocol.DISCOVERY_PORT, ...
-    @(value) isscalar(value) && value >= 1 && value <= 65535);
+    @(value) isscalar(value) && isfinite(value) && ...
+    fix(value) == value && value >= 1 && value <= 65535);
 parser.addParameter('Addresses', string.empty(1, 0), ...
     @(value) ischar(value) || isstring(value) || iscellstr(value));
 parser.addParameter('Transport', [], @(value) true);
@@ -20,13 +21,14 @@ if isempty(parser.Results.Transport)
     socket = udpport('datagram', 'IPV4', 'Timeout', parser.Results.Timeout);
     socket.EnableBroadcast = true;
     nativeSocket = true;
+    % Injected transports stay caller-owned; only release our own socket.
+    cleanup = onCleanup(@() delete(socket));
 else
     % The transport hook permits deterministic discovery tests.
     socket = parser.Results.Transport;
     socket.Timeout = parser.Results.Timeout;
     nativeSocket = false;
 end
-cleanup = onCleanup(@() delete(socket));
 for address = addresses
     try
         if nativeSocket

@@ -21,7 +21,8 @@ classdef Device < handle
             parser = inputParser;
             parser.addRequired('host', @(value) ischar(value) || isstring(value));
             parser.addParameter('Port', helicdaq.Protocol.CONTROL_PORT, ...
-                @(value) isscalar(value) && value >= 1 && value <= 65535);
+                @(value) isscalar(value) && isfinite(value) && ...
+                fix(value) == value && value >= 1 && value <= 65535);
             parser.addParameter('Timeout', 5, ...
                 @(value) isscalar(value) && isfinite(value) && value > 0);
             parser.addParameter('Transport', [], @(value) true);
@@ -287,6 +288,10 @@ classdef Device < handle
 
             values = reshape(single(values), 1, []);
             definition = obj.parameter('table');
+            if ~definition.Writable
+                error('helicdaq:ReadOnly', ...
+                    'Parameter ''%s'' is read-only.', definition.Name);
+            end
             if numel(values) < 2 || numel(values) > definition.Count
                 error('helicdaq:TableLength', ...
                     'Table length must be between 2 and %d.', definition.Count);
@@ -347,8 +352,8 @@ classdef Device < handle
                 obj.request(helicdaq.Protocol.GET_PARAMS, uint8([])));
             sizes = zeros(height(parameters), 1);
             for row = 1:height(parameters)
-                sizes(row) = obj.parameterSize(parameters.TypeCode(row), ...
-                    parameters.Count(row));
+                sizes(row) = helicdaq.Protocol.parameterSize( ...
+                    parameters.TypeCode(row), parameters.Count(row));
             end
             parameters.Size = sizes;
             obj.Parameters = parameters;
@@ -407,13 +412,17 @@ classdef Device < handle
         end
 
         function bytes = readExact(obj, count)
+            % A partial read leaves the byte stream desynchronised, so fail
+            % closed rather than misparse every later response.
             try
                 bytes = reshape(uint8(read(obj.Client, count, 'uint8')), 1, []);
             catch exception
+                obj.close();
                 error('helicdaq:TransportError', ...
                     'Failed to read %d bytes: %s', count, exception.message);
             end
             if numel(bytes) ~= count
+                obj.close();
                 error('helicdaq:TransportError', ...
                     'Connection closed after %d of %d bytes.', numel(bytes), count);
             end
@@ -443,24 +452,4 @@ classdef Device < handle
         end
     end
 
-    methods (Static, Access = private)
-        function sizeBytes = parameterSize(typeCode, count)
-            if char(typeCode) == 'c'
-                elementSize = 1;
-            else
-                switch char(typeCode)
-                    case {'B', 'b'}
-                        elementSize = 1;
-                    case {'H', 'h'}
-                        elementSize = 2;
-                    case {'I', 'i', 'f'}
-                        elementSize = 4;
-                    otherwise
-                        error('helicdaq:ProtocolError', ...
-                            'Invalid parameter type code ''%s''.', char(typeCode));
-                end
-            end
-            sizeBytes = double(count) * elementSize;
-        end
-    end
 end
