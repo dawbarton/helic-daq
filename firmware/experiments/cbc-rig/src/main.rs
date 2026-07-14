@@ -44,6 +44,7 @@ pub(crate) static LASER_VALUE: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 pub(crate) static LASER_RANGE_MM: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
+pub(crate) static ADC_ERRORS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 fn get_laser(out: &mut [u8]) {
     out.copy_from_slice(
@@ -53,15 +54,34 @@ fn get_laser(out: &mut [u8]) {
     );
 }
 
-const EXTRA_PARAMS: &[ExtraParam] = &[ExtraParam {
-    def: ParamDef {
-        name: "laser",
-        ty: ParamType::F32,
-        count: 1,
-        writable: false,
+fn get_adc_errors(out: &mut [u8]) {
+    out.copy_from_slice(
+        &ADC_ERRORS
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .to_le_bytes(),
+    );
+}
+
+const EXTRA_PARAMS: &[ExtraParam] = &[
+    ExtraParam {
+        def: ParamDef {
+            name: "laser",
+            ty: ParamType::F32,
+            count: 1,
+            writable: false,
+        },
+        get: get_laser,
     },
-    get: get_laser,
-}];
+    ExtraParam {
+        def: ParamDef {
+            name: "adc_errors",
+            ty: ParamType::U32,
+            count: 1,
+            writable: false,
+        },
+        get: get_adc_errors,
+    },
+];
 
 /// RP2350 boot image definition, required in flash for the boot ROM.
 #[unsafe(link_section = ".start_block")]
@@ -95,10 +115,22 @@ fn main() -> ! {
 
     let (cmd_tx, cmd_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (rec_tx, rec_rx) = RECORD_QUEUE.init(Queue::new()).split();
+    let controller = config::make_controller();
+    let store = Store::new(
+        cmd_tx,
+        config::SAMPLE_RATE,
+        config::EXPERIMENT,
+        EXTRA_PARAMS,
+        &controller,
+    );
 
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let executor1 = EXECUTOR1.init(Executor::new());
-        executor1.run(|spawner| spawner.spawn(unwrap!(rt_loop::rt_loop(b.analog, cmd_rx, rec_tx))));
+        executor1.run(|spawner| {
+            spawner.spawn(unwrap!(rt_loop::rt_loop(
+                b.analog, controller, cmd_rx, rec_tx
+            )))
+        });
     });
 
     // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without it
@@ -108,17 +140,7 @@ fn main() -> ! {
     // `rx.read().await`. See docs/developer_guide.md known gaps.
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
-        spawner.spawn(unwrap!(core0_main(
-            spawner,
-            b.eth,
-            Store::new(
-                cmd_tx,
-                config::SAMPLE_RATE,
-                config::EXPERIMENT,
-                EXTRA_PARAMS,
-            ),
-            rec_rx
-        )));
+        spawner.spawn(unwrap!(core0_main(spawner, b.eth, store, rec_rx)));
         spawner.spawn(unwrap!(blink(b.led)));
         spawner.spawn(unwrap!(laser_task(b.laser)));
         spawner.spawn(unwrap!(status_task()));

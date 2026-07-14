@@ -389,3 +389,8 @@ flash, including its embedded CYW43439 blobs, and 125 KB RAM. These are well
 inside the 2 MB flash / 520 KB SRAM design envelope. This is a linker-output
 check only; it does not replace the timing, throughput or RF measurements in
 §5.
+
+After the protocol-hardening review increased control payloads to 1024 bytes,
+the same audit reports 130–144 KB flash and 130 KB RAM for wired experiments;
+`fw-sig-gen-w` is 404 KB flash and 124 KB RAM. The additional buffers remain
+immaterial to the hardware budgets.

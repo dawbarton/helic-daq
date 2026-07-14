@@ -2,7 +2,7 @@
 
 import unittest
 
-from helic_daq import Device, DeviceError
+from helic_daq import Device, DeviceError, protocol
 
 from helic_daq.sim import Simulator
 
@@ -37,9 +37,23 @@ class TestDevice(unittest.TestCase):
         fs, ticks = self.dev.get("sample_freq", "ticks")
         self.assertEqual((fs, ticks), (8000.0, 0))
 
+    def test_oversize_get_is_rejected_locally(self):
+        with self.assertRaisesRegex(DeviceError, str(protocol.MAX_PAYLOAD)):
+            self.dev.get("table")
+
     def test_set_and_read_back(self):
         self.dev.set("freq", 17.5)
         self.assertEqual(self.dev.get("freq"), 17.5)
+
+    def test_invalid_rig_values_are_rejected_without_changing_shadow(self):
+        for name, value, initial in [
+            ("rig_laser_range", 0.0, 50.0),
+            ("rig_out_channel", 7.0, 0.0),
+            ("rig_out_channel", 1.5, 0.0),
+        ]:
+            with self.assertRaises(DeviceError):
+                self.dev.set(name, value)
+            self.assertEqual(self.dev.get(name), initial)
 
     def test_array_round_trip(self):
         coeffs = [0.0] * 33

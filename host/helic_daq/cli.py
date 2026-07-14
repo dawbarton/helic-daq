@@ -23,13 +23,17 @@ def cmd_list(args) -> None:
     with _connect(args) as dev:
         print(f"{'idx':>3}  {'name':<16} {'type':<6} {'rw':<3} value")
         for p in dev.params:
-            value = dev.get(p.index)
-            if isinstance(value, list) and len(value) > 4:
-                shown = f"[{value[0]:g}, {value[1]:g}, ... x{len(value)}]"
-            elif isinstance(value, float):
-                shown = f"{value:g}"
+            if p.size > protocol.MAX_PAYLOAD:
+                shown = "<block parameter>"
             else:
-                shown = str(value)
+                value = dev.get(p.index)
+                shown = value
+            if isinstance(shown, list) and len(shown) > 4:
+                shown = f"[{shown[0]:g}, {shown[1]:g}, ... x{len(shown)}]"
+            elif isinstance(shown, float):
+                shown = f"{shown:g}"
+            else:
+                shown = str(shown)
             ty = f"{p.type_code}x{p.count}" if p.count > 1 else p.type_code
             print(f"{p.index:>3}  {p.name:<16} {ty:<6} {'rw' if p.writable else 'ro':<3} {shown}")
 

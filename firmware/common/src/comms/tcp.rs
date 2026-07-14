@@ -188,14 +188,10 @@ fn handle<C: Controller, R: Rig>(
                 if s.enabled {
                     return Err(ErrorCode::Busy);
                 }
-                if s.sources.len() < n {
-                    s.sources.clear();
-                }
+                s.sources.clear();
                 s.sources
-                    .resize_default(n)
+                    .extend_from_slice(sources)
                     .map_err(|_| ErrorCode::BadValue)?;
-                s.sources[..n].copy_from_slice(sources);
-                s.sources.truncate(n);
                 s.decimation = decimation;
                 s.count = count;
                 Ok(())

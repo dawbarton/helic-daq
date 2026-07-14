@@ -502,7 +502,8 @@ Notes:
 
 - `GetParams` merges v1's GetParNames/GetParInfo (one connect
   round-trip, no names/info skew). ~20 params × ~16 B fits MAX_PAYLOAD
-  (512) comfortably; keep names ≤ 15 bytes.
+  (1024) comfortably; keep names ≤ 15 bytes. Firmware limits active
+  discovery tables to 75% of the payload, preserving growth headroom.
 - `GetSources`: source id = position in the list. Ids `0..n_inputs`
   are the experiment's inputs, then controller telemetry, then always
   `target`, `forcing`, `table`, `out` (all unit "V"). Names ≤ 15
@@ -595,7 +596,7 @@ one-shot), `table_mult` (u32 ≥ 1, locked modes), `table_phase` (f32 in
 non-zero to arm/start a one-shot), `table_len` (u16 ro).
 
 **Transport — SetBlock/Commit** (this is what v1 reserved types 5/6
-for; a 1024-point table is 4 KB against a 512 B payload, so staged
+for; a 1024-point table is 4 KB against a 1024 B payload, so staged
 chunks + atomic activation, keeping frames small and the swap
 tear-free):
 
@@ -623,8 +624,8 @@ argument must appear as a comment on the module; it is the one new
 piece of unsafe-adjacent cross-core code in the plan (§9 R8).
 
 **Host convenience**: `Device.upload_table(values, duration=None,
-freq=None, gain=1.0, mode="loop")` — chunks SetBlock frames (~124
-floats each; a 1024-point upload is 9 frames), commits, sets
+freq=None, gain=1.0, mode="loop")` — chunks SetBlock frames (254
+floats each; a 1024-point upload is 5 frames), commits, sets
 `table_freq` from `duration` if given, polls Busy with a short retry.
 CLI: `helic-daq upload wave.npy --duration 2.0`.
 

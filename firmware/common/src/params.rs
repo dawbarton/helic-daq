@@ -215,6 +215,23 @@ const IDX_TABLE_TRIGGER: usize = 21;
 /// Maximum number of controller parameters supported.
 pub const MAX_CTRL_PARAMS: usize = 8;
 pub const MAX_RIG_PARAMS: usize = 8;
+pub const MAX_EXTRA_PARAMS: usize = 8;
+const DISCOVERY_HEADROOM: usize = helic_proto::MAX_PAYLOAD * 3 / 4;
+
+const fn encoded_defs_len(defs: &[ParamDef]) -> usize {
+    let mut total = 0;
+    let mut i = 0;
+    while i < defs.len() {
+        total += defs[i].name.len() + 5;
+        i += 1;
+    }
+    total
+}
+
+const MAX_REGISTRY_ENCODED_LEN: usize = encoded_defs_len(BASE_PARAMS)
+    + (MAX_EXTRA_PARAMS + MAX_RIG_PARAMS + MAX_CTRL_PARAMS)
+        * (helic_proto::payload::MAX_NAME_LEN + 5);
+const _: () = assert!(MAX_REGISTRY_ENCODED_LEN <= helic_proto::MAX_PAYLOAD);
 
 #[derive(Clone, Copy)]
 enum ShadowUpdate {
@@ -257,6 +274,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         sample_rate: SampleRate,
         experiment: &'static str,
         extras: &'static [ExtraParam],
+        controller: &C,
     ) -> Self {
         assert!(
             Self::rig_names().len() <= MAX_RIG_PARAMS,
@@ -266,14 +284,31 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             Self::ctrl_names().len() <= MAX_CTRL_PARAMS,
             "controller exposes more parameters than ParamStore can shadow"
         );
+        assert!(
+            extras.iter().all(|extra| !extra.def.writable),
+            "ExtraParam does not provide a setter and must be read-only"
+        );
+        assert!(
+            extras.len() <= MAX_EXTRA_PARAMS,
+            "experiment exposes more extra parameters than supported"
+        );
         let mut rig_params = [0.0; MAX_RIG_PARAMS];
+        let mut ctrl_params = [0.0; MAX_CTRL_PARAMS];
         let defaults = R::param_defaults();
         assert!(
             defaults.is_empty() || defaults.len() == Self::rig_names().len(),
             "rig parameter defaults must be empty or match param_names"
         );
         rig_params[..defaults.len()].copy_from_slice(defaults);
-        Self {
+        for (id, value) in ctrl_params[..Self::ctrl_names().len()]
+            .iter_mut()
+            .enumerate()
+        {
+            *value = controller
+                .param_value(id as u16)
+                .expect("controllers exposing parameters must report their initial values");
+        }
+        let store = Self {
             commands,
             sample_rate,
             experiment,
@@ -287,9 +322,12 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             table_mult: 1,
             table_phase: 0.0,
             rig_params,
-            ctrl_params: [0.0; MAX_CTRL_PARAMS],
+            ctrl_params,
             types: PhantomData,
-        }
+        };
+        store.validate_registry();
+        crate::rig::validate_sources::<R>();
+        store
     }
 
     fn ctrl_names() -> &'static [&'static str] {
@@ -302,6 +340,29 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
 
     pub fn count(&self) -> usize {
         BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() + Self::ctrl_names().len()
+    }
+
+    fn validate_registry(&self) {
+        let mut encoded_len = 0;
+        for i in 0..self.count() {
+            let def = self.def(i).unwrap();
+            assert!(
+                def.name.len() <= helic_proto::payload::MAX_NAME_LEN && def.name.is_ascii(),
+                "parameter names must be ASCII and at most 15 bytes"
+            );
+            encoded_len += def.name.len() + 5;
+            for j in 0..i {
+                assert_ne!(
+                    def.name,
+                    self.def(j).unwrap().name,
+                    "parameter names must be unique"
+                );
+            }
+        }
+        assert!(
+            encoded_len <= DISCOVERY_HEADROOM,
+            "parameter registry exceeds its discovery headroom"
+        );
     }
 
     /// Definition of parameter `index` (base or controller).
@@ -373,6 +434,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             IDX_TARGET => serialize_coeffs(&self.target, out),
             IDX_FORCING => serialize_coeffs(&self.forcing, out),
             IDX_CTRL_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
+            IDX_TABLE => return Err(ErrorCode::BadLength),
             IDX_TABLE_LEN => out.copy_from_slice(&table::active_len().to_le_bytes()),
             IDX_TABLE_FREQ => out.copy_from_slice(&self.table_freq_hz.to_le_bytes()),
             IDX_TABLE_GAIN => out.copy_from_slice(&self.table_gain.to_le_bytes()),
@@ -496,29 +558,33 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 }
                 (RtCommand::TriggerTable, ShadowUpdate::None)
             }
-            i if i < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() => {
+            i if (BASE_PARAMS.len() + self.extras.len()
+                ..BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len())
+                .contains(&i) =>
+            {
                 let id = (i - BASE_PARAMS.len() - self.extras.len()) as u16;
                 let value = f32::from_le_bytes(data.try_into().unwrap());
-                if !value.is_finite() {
-                    return Err(ErrorCode::BadValue);
-                }
+                let value = R::normalise_param(id, value).ok_or(ErrorCode::BadValue)?;
                 (
                     RtCommand::SetRigParam(id, value),
                     ShadowUpdate::RigParam(id as usize, value),
                 )
             }
-            i => {
+            i if (BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len()
+                ..self.count())
+                .contains(&i) =>
+            {
                 let id =
                     (i - BASE_PARAMS.len() - self.extras.len() - Self::rig_names().len()) as u16;
                 let value = f32::from_le_bytes(data.try_into().unwrap());
-                if !value.is_finite() {
-                    return Err(ErrorCode::BadValue);
-                }
+                let value =
+                    C::normalise_param(id, value, R::INPUTS.len()).ok_or(ErrorCode::BadValue)?;
                 (
                     RtCommand::SetCtrlParam(id, value),
                     ShadowUpdate::CtrlParam(id as usize, value),
                 )
             }
+            _ => return Err(ErrorCode::BadIndex),
         };
         self.commands.enqueue(cmd).map_err(|_| ErrorCode::Busy)?;
         match shadow {

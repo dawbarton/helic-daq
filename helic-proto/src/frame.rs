@@ -17,7 +17,7 @@ pub const HEADER_LEN: usize = 6;
 /// Bytes after the payload.
 pub const TRAILER_LEN: usize = 2;
 /// Maximum payload length either side will accept.
-pub const MAX_PAYLOAD: usize = 512;
+pub const MAX_PAYLOAD: usize = 1024;
 /// Largest complete frame.
 pub const MAX_FRAME: usize = HEADER_LEN + MAX_PAYLOAD + TRAILER_LEN;
 

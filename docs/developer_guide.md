@@ -163,7 +163,8 @@ and task wrappers:
    and source names must fit their protocol limits.
 4. Implement `Rig` for the assembled hardware. `INPUTS` and `measure` must
    use the same order; choose a `TickSource`, implement `actuate`, and expose
-   rig controls through `param_names`, `param_defaults` and `set_param`.
+   rig controls through `param_names`, `param_defaults`, `normalise_param`
+   and `set_param`.
 5. In `main.rs`, define atomic-backed `ExtraParam`s for read-only sensor and
    diagnostic values, bind only the interrupts the board owns, and wrap the
    common TCP, stream, beacon, laser and RT runners as needed.
@@ -194,6 +195,10 @@ impl Controller for MyController {
     }
     fn reset(&mut self) { /* clear integrators/filters */ }
     fn param_names() -> &'static [&'static str] { &["ctrl_gain"] }
+    fn param_value(&self, id: u16) -> Option<f32> { /* report construction value */ }
+    fn normalise_param(id: u16, value: f32, input_count: usize) -> Option<f32> {
+        /* reject or canonicalise before acknowledgement */
+    }
     fn set_param(&mut self, id: u16, value: f32) { /* id indexes param_names */ }
     const TELEMETRY: &'static [(&'static str, &'static str)] = &[("error", "V")];
     fn telemetry(&self, out: &mut [f32]) { /* fill after tick */ }
@@ -209,7 +214,11 @@ pub fn make_controller() -> ActiveController { ... }
 
 `param_names` entries appear automatically in the registry (and therefore
 in `helic-daq list`) as writable f32 parameters; writes arrive via
-`set_param` at a sample boundary. The firmware currently supports up to
+`set_param` at a sample boundary. `param_value` must report the values used
+by `make_controller`; the exact instance used to seed the host shadow is then
+moved to core 1. `normalise_param` runs before a write is acknowledged, so
+the returned value must be exactly what `set_param` applies. The firmware
+currently supports up to
 eight controller parameters and fails at boot if the active controller exposes
 more, so an over-large controller configuration is caught before an
 experiment. Everything in `helic-core` is available:

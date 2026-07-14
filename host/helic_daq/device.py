@@ -160,6 +160,12 @@ class Device:
         return a list, fetched in one round trip.
         """
         params = [self._param(n) for n in names]
+        size = sum(p.size for p in params)
+        if size > protocol.MAX_PAYLOAD:
+            raise DeviceError(
+                f"requested values need {size} bytes; control responses are limited "
+                f"to {protocol.MAX_PAYLOAD} bytes"
+            )
         payload = b"".join(struct.pack("<H", p.index) for p in params)
         data = self._request(MsgType.GET_PAR, payload)
         values, off = [], 0
@@ -214,7 +220,7 @@ class Device:
             raise ValueError("phase must be in [0, 1)")
 
         raw = struct.pack(f"<{len(values)}f", *values)
-        chunk_bytes = 124 * 4
+        chunk_bytes = (protocol.MAX_PAYLOAD - 6) // 4 * 4
         for byte_offset in range(0, len(raw), chunk_bytes):
             payload = protocol.encode_set_block(
                 table.index, byte_offset // 4, raw[byte_offset : byte_offset + chunk_bytes]

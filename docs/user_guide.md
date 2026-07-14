@@ -100,7 +100,9 @@ source. Set `rig_encoder_zero` to subtract a host-selected datum. Its 13-bit
 Gray format and 500 kHz clock are provisional constants in
 `encoder-rig/src/config.rs`; verify them against the ordered RMB20 variant
 before connecting hardware. `encoder_errors` counts rejected all-low/all-high
-frames and transport overruns.
+frames and transport overruns. Both ADC-based experiments expose `adc_errors`;
+on a read failure they retain the last valid sample rather than injecting
+zeros into the controller.
 
 Install the Python package from the repository root:
 

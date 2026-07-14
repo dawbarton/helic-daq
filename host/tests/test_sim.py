@@ -112,6 +112,25 @@ class TestSimulator(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("captured 16 records", output.getvalue())
 
+    def test_cli_list_skips_block_parameter_and_continues(self):
+        self.dev.close()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = cli.main(
+                [
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.sim.port),
+                    "list",
+                ]
+            )
+        shown = output.getvalue()
+        self.assertEqual(result, 0)
+        self.assertIn("table", shown)
+        self.assertIn("<block parameter>", shown)
+        self.assertIn("rig_out_channel", shown)
+
     def test_cli_upload(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "wave.npy"
@@ -134,6 +153,17 @@ class TestSimulator(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(self.dev.get("table_len"), 4)
         self.assertAlmostEqual(self.dev.get("table_freq"), 5.0)
+
+    def test_bad_frame_drops_only_that_connection(self):
+        self.dev.close()
+        with socket.create_connection(("127.0.0.1", self.sim.port)) as bad:
+            frame = bytearray(protocol.encode_frame(MsgType.STATUS, 1))
+            frame[-1] ^= 0xFF
+            bad.sendall(frame)
+            bad.settimeout(1.0)
+            self.assertEqual(bad.recv(1), b"")
+        self.dev = Device("127.0.0.1", self.sim.port)
+        self.assertEqual(self.dev.get("experiment"), "cbc-rig")
 
 
 if __name__ == "__main__":

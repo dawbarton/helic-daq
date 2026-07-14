@@ -97,8 +97,12 @@ impl Rig for RtAnalog {
         &[DEFAULT_LASER_RANGE_MM]
     }
 
+    fn normalise_param(id: u16, value: f32) -> Option<f32> {
+        (id == 0 && value.is_finite() && value > 0.0).then_some(value)
+    }
+
     fn set_param(&mut self, id: u16, value: f32) {
-        if id == 0 && value > 0.0 {
+        if id == 0 {
             LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed);
         }
     }

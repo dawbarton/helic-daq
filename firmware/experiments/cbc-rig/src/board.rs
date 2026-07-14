@@ -41,7 +41,7 @@ use helic_fw_common::SampleRate;
 use static_cell::StaticCell;
 
 use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
-use crate::{LASER_RANGE_MM, LASER_VALUE};
+use crate::{ADC_ERRORS, LASER_RANGE_MM, LASER_VALUE};
 
 /// DAC reference voltage (ADR-series reference on the analog board).
 pub const DAC_VREF: f32 = 4.096;
@@ -115,6 +115,7 @@ pub struct RtAnalog {
     convst_pwm: Option<Pwm<'static>>,
     sample_rate: SampleRate,
     adc_scale: f32,
+    adc_last: [i32; 8],
     output_channel: usize,
 }
 
@@ -155,6 +156,7 @@ impl AnalogParts {
             convst_pwm: None,
             sample_rate,
             adc_scale: 0.0,
+            adc_last: [0; 8],
             output_channel: OUTPUT_CHANNEL,
         };
         (rig, tick)
@@ -196,8 +198,13 @@ impl Rig for RtAnalog {
     }
 
     fn measure(&mut self, values: &mut [f32]) {
-        let frame = self.adc.read_frame().unwrap_or_default();
-        for (value, raw) in values[..8].iter_mut().zip(frame) {
+        match self.adc.read_frame() {
+            Ok(frame) => self.adc_last = frame,
+            Err(_) => {
+                ADC_ERRORS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        for (value, raw) in values[..8].iter_mut().zip(self.adc_last) {
             *value = raw as f32 * self.adc_scale;
         }
         values[8] = f32::from_bits(LASER_VALUE.load(Ordering::Relaxed));
@@ -223,10 +230,24 @@ impl Rig for RtAnalog {
         &[DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL as f32]
     }
 
+    fn normalise_param(id: u16, value: f32) -> Option<f32> {
+        match id {
+            0 if value.is_finite() && value > 0.0 => Some(value),
+            1 if value.is_finite()
+                && value >= 0.0
+                && value < DAC_POLARITY.len() as f32
+                && value == value as usize as f32 =>
+            {
+                Some(value)
+            }
+            _ => None,
+        }
+    }
+
     fn set_param(&mut self, id: u16, value: f32) {
         match id {
-            0 if value > 0.0 => LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed),
-            1 => self.output_channel = (value as usize).min(3),
+            0 => LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed),
+            1 => self.output_channel = value as usize,
             _ => {}
         }
     }

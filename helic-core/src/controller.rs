@@ -27,6 +27,21 @@ pub trait Controller {
         &[]
     }
 
+    /// Current value of a host-settable parameter. Implementations exposing
+    /// names must return the values used to construct the controller.
+    fn param_value(&self, _id: u16) -> Option<f32> {
+        None
+    }
+
+    /// Validate and, where necessary, canonicalise a host parameter before
+    /// it is acknowledged and forwarded to the real-time loop.
+    fn normalise_param(id: u16, value: f32, _input_count: usize) -> Option<f32>
+    where
+        Self: Sized,
+    {
+        (Self::param_names().get(id as usize).is_some() && value.is_finite()).then_some(value)
+    }
+
     /// Set a controller parameter by id (index into `param_names`).
     /// Unknown ids are ignored.
     fn set_param(&mut self, _id: u16, _value: f32) {}
@@ -107,6 +122,31 @@ impl Controller for PidController {
         }
     }
 
+    fn param_value(&self, id: u16) -> Option<f32> {
+        match id {
+            0 => Some(self.pid.config.kp),
+            1 => Some(self.pid.config.ki),
+            2 => Some(self.pid.config.kd),
+            3 => Some(self.pid.config.tau_d),
+            4 => Some(self.feedback as f32),
+            _ => None,
+        }
+    }
+
+    fn normalise_param(id: u16, value: f32, input_count: usize) -> Option<f32> {
+        if !value.is_finite() {
+            return None;
+        }
+        match id {
+            0..=2 => Some(value),
+            3 if value >= 0.0 => Some(value),
+            4 if value >= 0.0 && value < input_count as f32 && value == value as usize as f32 => {
+                Some(value)
+            }
+            _ => None,
+        }
+    }
+
     const TELEMETRY: &'static [(&'static str, &'static str)] = &[("error", "V")];
 
     fn telemetry(&self, out: &mut [f32]) {
@@ -167,10 +207,40 @@ mod tests {
     }
 
     #[test]
-    fn feedback_parameter_truncates_to_slot_index() {
+    fn feedback_parameter_selects_slot_index() {
         let mut c = PidController::new(Pid::default(), 0);
-        c.set_param(4, 2.9);
+        c.set_param(4, 2.0);
         assert_eq!(c.feedback, 2);
         assert_eq!(PidController::param_names()[4], "ctrl_feedback");
+    }
+
+    #[test]
+    fn pid_reports_construction_parameters() {
+        let c = PidController::new(
+            Pid::new(PidConfig {
+                kp: 1.0,
+                ki: 2.0,
+                kd: 3.0,
+                tau_d: 4.0,
+                ..Default::default()
+            }),
+            1,
+        );
+        let values = [
+            c.param_value(0).unwrap(),
+            c.param_value(1).unwrap(),
+            c.param_value(2).unwrap(),
+            c.param_value(3).unwrap(),
+            c.param_value(4).unwrap(),
+        ];
+        assert_eq!(values, [1.0, 2.0, 3.0, 4.0, 1.0]);
+    }
+
+    #[test]
+    fn pid_rejects_noncanonical_feedback_and_negative_filter_time() {
+        assert_eq!(PidController::normalise_param(4, 1.0, 2), Some(1.0));
+        assert_eq!(PidController::normalise_param(4, 1.5, 2), None);
+        assert_eq!(PidController::normalise_param(4, 2.0, 2), None);
+        assert_eq!(PidController::normalise_param(3, -0.1, 2), None);
     }
 }

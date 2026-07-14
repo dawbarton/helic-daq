@@ -91,26 +91,30 @@ fn main() -> ! {
     let board = board::Board::new(p);
     let (cmd_tx, cmd_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (rec_tx, rec_rx) = RECORD_QUEUE.init(Queue::new()).split();
+    let controller = config::make_controller();
+    let store = Store::new(
+        cmd_tx,
+        config::SAMPLE_RATE,
+        config::EXPERIMENT,
+        EXTRA_PARAMS,
+        &controller,
+    );
 
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let executor1 = EXECUTOR1.init(Executor::new());
-        executor1
-            .run(|spawner| spawner.spawn(unwrap!(rt_loop::rt_loop(board.analog, cmd_rx, rec_tx))));
+        executor1.run(|spawner| {
+            spawner.spawn(unwrap!(rt_loop::rt_loop(
+                board.analog,
+                controller,
+                cmd_rx,
+                rec_tx
+            )))
+        });
     });
 
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
-        spawner.spawn(unwrap!(core0_main(
-            spawner,
-            board.eth,
-            Store::new(
-                cmd_tx,
-                config::SAMPLE_RATE,
-                config::EXPERIMENT,
-                EXTRA_PARAMS,
-            ),
-            rec_rx,
-        )));
+        spawner.spawn(unwrap!(core0_main(spawner, board.eth, store, rec_rx,)));
         spawner.spawn(unwrap!(blink(board.led)));
         // Hold a disconnected optoNCDT RX line high with an external 10k
         // pull-up to 3V3, avoiding a UART break-interrupt storm.

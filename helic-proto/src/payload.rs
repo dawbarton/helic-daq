@@ -2,8 +2,12 @@
 
 use crate::ParamType;
 
+pub const MAX_NAME_LEN: usize = 15;
+pub const MAX_UNIT_LEN: usize = 7;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PayloadError {
+    InvalidText,
     TooLong,
     Truncated,
 }
@@ -15,6 +19,9 @@ pub fn encode_param(
     count: u16,
     writable: bool,
 ) -> Result<usize, PayloadError> {
+    if name.len() > MAX_NAME_LEN || !name.is_ascii() {
+        return Err(PayloadError::InvalidText);
+    }
     let n = name.len() + 5;
     if out.len() < n {
         return Err(PayloadError::TooLong);
@@ -28,6 +35,13 @@ pub fn encode_param(
 }
 
 pub fn encode_source(out: &mut [u8], name: &str, unit: &str) -> Result<usize, PayloadError> {
+    if name.len() > MAX_NAME_LEN
+        || unit.len() > MAX_UNIT_LEN
+        || !name.is_ascii()
+        || !unit.is_ascii()
+    {
+        return Err(PayloadError::InvalidText);
+    }
     let n = name.len() + unit.len() + 2;
     if out.len() < n {
         return Err(PayloadError::TooLong);
@@ -72,6 +86,23 @@ mod tests {
         assert_eq!(&buf[..n], b"freq\0f\x01\x00\x01");
         let n = encode_source(&mut buf, "adc0", "V").unwrap();
         assert_eq!(&buf[..n], b"adc0\0V\0");
+    }
+
+    #[test]
+    fn discovery_text_limits_are_enforced() {
+        let mut buf = [0u8; 32];
+        assert_eq!(
+            encode_param(&mut buf, "sixteen_byte_name", ParamType::F32, 1, true),
+            Err(PayloadError::InvalidText)
+        );
+        assert_eq!(
+            encode_source(&mut buf, "adc0", "abcdefgh"),
+            Err(PayloadError::InvalidText)
+        );
+        assert_eq!(
+            encode_source(&mut buf, "µm", "mm"),
+            Err(PayloadError::InvalidText)
+        );
     }
 
     #[test]

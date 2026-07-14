@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 
 from . import protocol
-from .protocol import MsgType, StreamHeader
+from .protocol import MsgType, ProtocolError, StreamHeader
 
 
 @dataclass
@@ -64,6 +64,7 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("table_phase", "f", 1, True, 0.0),
         SimParam("table_trigger", "I", 1, True, 0),
         SimParam("laser", "f", 1, False, 25.0),
+        SimParam("adc_errors", "I", 1, False, 0),
         SimParam("rig_laser_range", "f", 1, True, 50.0),
         SimParam("rig_out_channel", "f", 1, True, 0.0),
     ]
@@ -193,9 +194,15 @@ class Simulator:
                 if len(buf) < total:
                     break
                 frame, buf = buf[:total], buf[total:]
-                msg_type, seq, payload = protocol.decode_frame(frame)
+                try:
+                    msg_type, seq, payload = protocol.decode_frame(frame)
+                except ProtocolError:
+                    return
                 response_type, response = self._handle(msg_type, payload, peer)
-                connection.sendall(protocol.encode_frame(response_type, seq, response))
+                try:
+                    connection.sendall(protocol.encode_frame(response_type, seq, response))
+                except OSError:
+                    return
 
     @staticmethod
     def _error(code: int, msg_type: int) -> tuple[int, bytes]:
@@ -264,6 +271,12 @@ class Simulator:
             if param.name == "table_mult" and value < 1:
                 return self._error(6, msg_type)
             if param.name == "table_phase" and not 0.0 <= value < 1.0:
+                return self._error(6, msg_type)
+            if param.name == "rig_laser_range" and value <= 0.0:
+                return self._error(6, msg_type)
+            if param.name == "rig_out_channel" and (
+                value < 0.0 or value >= 4.0 or not value.is_integer()
+            ):
                 return self._error(6, msg_type)
             param.value = value
             if param.name == "table_trigger" and value:

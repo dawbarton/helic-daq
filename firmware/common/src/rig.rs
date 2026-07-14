@@ -19,6 +19,10 @@ use crate::rt_loop::TICK_TIMEOUTS;
 use crate::SampleRate;
 
 pub const MAX_SOURCES: usize = 24;
+const DISCOVERY_HEADROOM: usize = helic_proto::MAX_PAYLOAD * 3 / 4;
+const MAX_SOURCE_REGISTRY_ENCODED_LEN: usize =
+    MAX_SOURCES * (helic_proto::payload::MAX_NAME_LEN + helic_proto::payload::MAX_UNIT_LEN + 2);
+const _: () = assert!(MAX_SOURCE_REGISTRY_ENCODED_LEN <= DISCOVERY_HEADROOM);
 pub const GENERATED_SOURCES: &[(&str, &str)] = &[
     ("target", "V"),
     ("forcing", "V"),
@@ -41,6 +45,36 @@ pub fn source<R: Rig>(index: usize) -> Option<(&'static str, &'static str)> {
     GENERATED_SOURCES
         .get(index - R::Ctrl::TELEMETRY.len())
         .copied()
+}
+
+pub fn validate_sources<R: Rig>() {
+    assert!(
+        source_count::<R>() <= MAX_SOURCES,
+        "experiment exposes more stream sources than supported"
+    );
+    let mut encoded_len = 0;
+    for i in 0..source_count::<R>() {
+        let (name, unit) = source::<R>(i).unwrap();
+        assert!(
+            name.len() <= helic_proto::payload::MAX_NAME_LEN
+                && unit.len() <= helic_proto::payload::MAX_UNIT_LEN
+                && name.is_ascii()
+                && unit.is_ascii(),
+            "source names/units exceed protocol text limits"
+        );
+        encoded_len += name.len() + unit.len() + 2;
+        for j in 0..i {
+            assert_ne!(
+                name,
+                source::<R>(j).unwrap().0,
+                "source names must be unique"
+            );
+        }
+    }
+    assert!(
+        encoded_len <= DISCOVERY_HEADROOM,
+        "source registry exceeds its discovery headroom"
+    );
 }
 
 #[allow(async_fn_in_trait)]
@@ -158,6 +192,13 @@ pub trait Rig {
         Self: Sized,
     {
         &[]
+    }
+
+    fn normalise_param(id: u16, value: f32) -> Option<f32>
+    where
+        Self: Sized,
+    {
+        (Self::param_names().get(id as usize).is_some() && value.is_finite()).then_some(value)
     }
 
     fn set_param(&mut self, _id: u16, _value: f32) {}

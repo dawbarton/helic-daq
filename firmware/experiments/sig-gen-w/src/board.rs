@@ -116,10 +116,24 @@ impl Rig for RtAnalog {
         &[DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL as f32]
     }
 
+    fn normalise_param(id: u16, value: f32) -> Option<f32> {
+        match id {
+            0 if value.is_finite() && value > 0.0 => Some(value),
+            1 if value.is_finite()
+                && value >= 0.0
+                && value < DAC_POLARITY.len() as f32
+                && value == value as usize as f32 =>
+            {
+                Some(value)
+            }
+            _ => None,
+        }
+    }
+
     fn set_param(&mut self, id: u16, value: f32) {
         match id {
-            0 if value > 0.0 => LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed),
-            1 => self.output_channel = (value as usize).min(3),
+            0 => LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed),
+            1 => self.output_channel = value as usize,
             _ => {}
         }
     }

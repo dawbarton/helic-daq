@@ -24,7 +24,7 @@ one response. Closing the connection stops any active stream.
 | 0 | 2 | magic = `0x4C48`, little-endian ASCII `HL` |
 | 2 | 1 | message type |
 | 3 | 1 | sequence number, chosen by the host and echoed |
-| 4 | 2 | payload length, at most 512 bytes |
+| 4 | 2 | payload length, at most 1024 bytes |
 | 6 | len | payload |
 | 6+len | 2 | CRC-16/CCITT-FALSE over message type through payload |
 
@@ -73,7 +73,9 @@ Error codes are: 1 bad frame, 2 unknown type, 3 bad index, 4 bad length,
 
 GetParams returns each complete definition in registry order, so names and
 metadata cannot become misaligned. Hosts must discover by name and must not
-cache indices across connections.
+cache indices across connections. Parameter and source names are ASCII and at
+most 15 bytes; source units are ASCII and at most 7 bytes. Firmware reserves
+25% of the control payload as discovery headroom.
 
 The v2 base registry is:
 
@@ -103,7 +105,7 @@ The v2 base registry is:
 | table_trigger | I | rw | write non-zero to arm/start a one-shot |
 
 Experiment read-only values, rig parameters and controller parameters follow
-the base registry. For `cbc-rig`, these include `laser`,
+the base registry. For `cbc-rig`, these include `laser`, `adc_errors`,
 `rig_laser_range` and `rig_out_channel`. Controller names depend on the
 compile-time selected controller.
 
