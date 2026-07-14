@@ -12,12 +12,13 @@ Two Cargo workspaces plus a Python package:
 | Path | What | Builds for |
 |---|---|---|
 | `helic-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
-| `helic-drivers/` | AD7609, AD5064, optoNCDT drivers over `embedded-hal` 1.0 traits | host + firmware |
+| `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `firmware/common/` | Experiment-independent firmware support | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/sig-gen/` | ADC-free DAC signal generator and laser logger | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/pwm-rig/` | Signal generator using filtered PWM rather than a DAC | `thumbv8m.main-none-eabihf` only |
+| `firmware/experiments/encoder-rig/` | CBC rig with an RMB20 SSI encoder on PIO0 SM0 | `thumbv8m.main-none-eabihf` only |
 | `host/` | Python package `helic_daq` + `helic-daq` CLI | host |
 
 The split exists so that **everything with logic in it is unit-tested on
@@ -86,6 +87,11 @@ Core 0 never touches loop state. Three mechanisms, all lock-free:
   `records_dropped`.
 - **Scalars**: `AtomicU32` statics in `rt_loop.rs` (diagnostics written by
   core 1, laser value written by core 0's UART task and read by the loop).
+
+In `encoder-rig`, PIO0 SM0 clocks SSI independently of the CPU. Each tick
+pulls the previous frame without waiting, retains the last good decoded
+position, then starts the next frame. This fixes encoder latency at one sample
+and keeps peripheral timing outside the real-time budget.
 
 The analog SPI bus (SPI1: ADC + DAC chip selects) belongs to core 1
 exclusively. `board.rs` hands the unassembled `AnalogParts` to core 1,

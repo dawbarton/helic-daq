@@ -368,3 +368,10 @@ Still unverified on hardware:
    a fresh `StreamSetup`/`StreamStart` must work as before. While at it,
    confirm a NaN `SetPar` write (e.g. `forcing_coeffs`) returns error 6 and
    leaves the output unchanged.
+3. **SSI encoder experiment**: confirm the ordered RMB20 bit count, Gray/binary
+   option, maximum clock and monoflop time before changing the provisional
+   constants. With GP22 clock and GP26 data through the TTL↔RS422 converters,
+   scope the idle-high clock, 500 kHz phase, `bits + 1` pulses and DIN sample
+   edge. Then rotate slowly and confirm monotone `encoder` data at 8 kHz,
+   `encoder_errors == 0`, no overruns, and correct `rig_encoder_zero`
+   subtraction. None of this path has yet been exercised on hardware.

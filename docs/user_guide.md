@@ -5,7 +5,8 @@ control, signal generation and instrumentation. `cbc-rig` targets
 control-based continuation using an AD7609 ADC and AD5064 DAC. `sig-gen`
 uses the same W5500-EVB-Pico2 and DAC as an arbitrary/function generator with
 optional optoNCDT laser logging, but requires no ADC board. `pwm-rig` replaces
-the DAC with a filtered 10-bit PWM output on GP10.
+the DAC with a filtered 10-bit PWM output on GP10. `encoder-rig` extends the
+CBC instrument with an SSI absolute encoder input.
 
 ## What it does
 
@@ -39,6 +40,7 @@ cd firmware
 cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
 cargo run --release -p fw-sig-gen # ADC-free signal generator
 cargo run --release -p fw-pwm-rig # PWM output on GP10
+cargo run --release -p fw-encoder-rig # CBC rig plus SSI encoder
 ```
 
 The log shows a boot banner, the network address, and a once-a-second
@@ -54,14 +56,14 @@ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf 
 picotool load helic-daq.uf2 && picotool reboot
 ```
 
-Substitute `fw-sig-gen` or `fw-pwm-rig` in the build and output filename to
-flash another experiment.
+Substitute another `fw-*` experiment package in the build and output filename
+to flash it.
 
 ## Connecting to it
 
 The experiments use static addresses by default: `192.168.1.235/24` for
 `cbc-rig`, `192.168.1.236/24` for `sig-gen`, and `192.168.1.237/24` for
-`pwm-rig`.
+`pwm-rig`. `encoder-rig` uses `192.168.1.238/24`.
 Connect it to your machine directly or via a switch, give your machine an
 address on the same subnet (e.g. `192.168.1.10/24`), and check:
 
@@ -72,6 +74,13 @@ ping 192.168.1.235
 To use a different address, edit `IP_ADDR` in the selected experiment's
 `config.rs` and reflash. The sample rate, laser measuring range and
 controller are selected there too.
+
+The encoder build reports position in revolutions as the discovered `encoder`
+source. Set `rig_encoder_zero` to subtract a host-selected datum. Its 13-bit
+Gray format and 500 kHz clock are provisional constants in
+`encoder-rig/src/config.rs`; verify them against the ordered RMB20 variant
+before connecting hardware. `encoder_errors` counts rejected all-low/all-high
+frames and transport overruns.
 
 Install the Python package from the repository root:
 
@@ -170,6 +179,7 @@ pass-through controller the output is simply `target + forcing`.
 | Analogue in 0–7 | AD7609 inputs, ±10 V (or ±20 V, compile-time) |
 | Analogue out 0–3 | Per-channel polarity, set in `board.rs` (`DAC_POLARITY`): unipolar 0–4.096 V or bipolar ±4.096 V |
 | Laser | optoNCDT 1420 via RS422→TTL at 921.6 kBaud, 8 kHz output rate |
+| Encoder (`encoder-rig`) | RMB20 SSI clock GP22, data GP26, each via the appropriate TTL↔RS422 converter |
 
 Output-channel polarity must match your analog board's output stages. The
 target design is two bipolar + two unipolar; the current build is **all four

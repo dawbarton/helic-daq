@@ -30,6 +30,7 @@ embedded-io-async = "0.7.0"
 fixed = "1.31.0"
 heapless = "0.9.3"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+pio = "0.3.0"
 rand_core = "0.10.1"
 static_cell = "2.1.1"
 
