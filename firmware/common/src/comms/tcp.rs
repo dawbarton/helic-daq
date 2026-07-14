@@ -12,7 +12,7 @@ use helic_proto::payload;
 use helic_proto::{ErrorCode, MAGIC, VERSION};
 
 use super::STREAM;
-use crate::params::{ParamRegistry, ParamStore};
+use crate::params::ParamStore;
 use crate::rig::{source, source_count, Rig, MAX_SOURCES};
 
 pub async fn control_run<C: Controller, R: Rig>(

@@ -18,6 +18,7 @@ dev = Device("192.168.1.235")
 print(dev.params)                 # discovered parameter list
 dev.par.freq = 10.0               # attribute-style access
 data = dev.capture(["adc0", "out"], seconds=2.0)
+dev.upload_table([0.0, 1.0, 0.0, -1.0], duration=0.2)
 ```
 
 For host-side development without hardware, run the protocol-v2 simulator:

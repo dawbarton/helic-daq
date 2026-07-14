@@ -13,13 +13,13 @@ pub mod generator;
 pub mod lut;
 pub mod phase;
 pub mod pid;
+pub mod table;
 
 pub use controller::{Controller, PassThrough, PidController};
 pub use filter::{BiquadCoeffs, SosFilter};
 pub use fourier::FourierEstimator;
-pub use generator::{
-    ArbMode, ArbState, ArbitraryGenerator, FourierCoeffs, GenSample, PeriodicGenerator,
-};
+pub use generator::{FourierCoeffs, GenSample, PeriodicGenerator};
 pub use lut::SinLut;
 pub use phase::PhaseAccumulator;
 pub use pid::{Pid, PidConfig};
+pub use table::{TableMode, TablePlayer, WaveTable, MAX_TABLE_LEN};

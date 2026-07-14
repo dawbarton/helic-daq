@@ -14,10 +14,12 @@ use core::sync::atomic::Ordering;
 use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
+use helic_core::table::{TableMode, MAX_TABLE_LEN};
 use helic_proto::{ErrorCode, ParamType};
 
 use crate::rig::Rig;
 use crate::rt_loop::{self, CommandProducer, RtCommand};
+use crate::table;
 use crate::{SampleRate, HARMONICS};
 
 /// Firmware identification string, padded/truncated to 16 chars on the wire.
@@ -141,12 +143,68 @@ pub const BASE_PARAMS: &[ParamDef] = &[
         count: 1,
         writable: true,
     },
+    ParamDef {
+        name: "table",
+        ty: ParamType::F32,
+        count: MAX_TABLE_LEN as u16,
+        writable: true,
+    },
+    ParamDef {
+        name: "table_len",
+        ty: ParamType::U16,
+        count: 1,
+        writable: false,
+    },
+    ParamDef {
+        name: "table_freq",
+        ty: ParamType::F32,
+        count: 1,
+        writable: true,
+    },
+    ParamDef {
+        name: "table_gain",
+        ty: ParamType::F32,
+        count: 1,
+        writable: true,
+    },
+    ParamDef {
+        name: "table_mode",
+        ty: ParamType::U32,
+        count: 1,
+        writable: true,
+    },
+    ParamDef {
+        name: "table_mult",
+        ty: ParamType::U32,
+        count: 1,
+        writable: true,
+    },
+    ParamDef {
+        name: "table_phase",
+        ty: ParamType::F32,
+        count: 1,
+        writable: true,
+    },
+    ParamDef {
+        name: "table_trigger",
+        ty: ParamType::U32,
+        count: 1,
+        writable: true,
+    },
 ];
 
 const IDX_FREQ: usize = 10;
 const IDX_TARGET: usize = 11;
 const IDX_FORCING: usize = 12;
 const IDX_CTRL_RESET: usize = 13;
+const IDX_TABLE: usize = 14;
+const IDX_TABLE_LEN: usize = 15;
+const IDX_TABLE_FREQ: usize = 16;
+const IDX_TABLE_GAIN: usize = 17;
+const IDX_TABLE_MODE: usize = 18;
+const IDX_TABLE_MULT: usize = 19;
+const IDX_TABLE_PHASE: usize = 20;
+const IDX_TABLE_TRIGGER: usize = 21;
 
 /// Maximum number of controller parameters supported.
 pub const MAX_CTRL_PARAMS: usize = 8;
@@ -158,6 +216,11 @@ enum ShadowUpdate {
     Freq(f32),
     Target(FourierCoeffs<HARMONICS>),
     Forcing(FourierCoeffs<HARMONICS>),
+    TableFreq(f32),
+    TableGain(f32),
+    TableMode(u32),
+    TableMult(u32),
+    TablePhase(f32),
     RigParam(usize, f32),
     CtrlParam(usize, f32),
 }
@@ -172,6 +235,11 @@ pub struct ParamStore<C: Controller, R: Rig> {
     freq_hz: f32,
     target: FourierCoeffs<HARMONICS>,
     forcing: FourierCoeffs<HARMONICS>,
+    table_freq_hz: f32,
+    table_gain: f32,
+    table_mode: u32,
+    table_mult: u32,
+    table_phase: f32,
     rig_params: [f32; MAX_RIG_PARAMS],
     ctrl_params: [f32; MAX_CTRL_PARAMS],
     types: PhantomData<(C, R)>,
@@ -207,6 +275,11 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             freq_hz: 0.0,
             target: FourierCoeffs::zero(),
             forcing: FourierCoeffs::zero(),
+            table_freq_hz: 0.0,
+            table_gain: 1.0,
+            table_mode: 0,
+            table_mult: 1,
+            table_phase: 0.0,
             rig_params,
             ctrl_params: [0.0; MAX_CTRL_PARAMS],
             types: PhantomData,
@@ -294,6 +367,13 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             IDX_TARGET => serialize_coeffs(&self.target, out),
             IDX_FORCING => serialize_coeffs(&self.forcing, out),
             IDX_CTRL_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
+            IDX_TABLE_LEN => out.copy_from_slice(&table::active_len().to_le_bytes()),
+            IDX_TABLE_FREQ => out.copy_from_slice(&self.table_freq_hz.to_le_bytes()),
+            IDX_TABLE_GAIN => out.copy_from_slice(&self.table_gain.to_le_bytes()),
+            IDX_TABLE_MODE => out.copy_from_slice(&self.table_mode.to_le_bytes()),
+            IDX_TABLE_MULT => out.copy_from_slice(&self.table_mult.to_le_bytes()),
+            IDX_TABLE_PHASE => out.copy_from_slice(&self.table_phase.to_le_bytes()),
+            IDX_TABLE_TRIGGER => out.copy_from_slice(&0u32.to_le_bytes()),
             i if i < BASE_PARAMS.len() + self.extras.len() => {
                 (self.extras[i - BASE_PARAMS.len()].get)(out)
             }
@@ -354,6 +434,62 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 }
                 (RtCommand::ResetController, ShadowUpdate::None)
             }
+            IDX_TABLE => return Err(ErrorCode::BadLength),
+            IDX_TABLE_FREQ => {
+                let freq = f32::from_le_bytes(data.try_into().unwrap());
+                if !(0.0..self.sample_rate.hz() / 2.0).contains(&freq) {
+                    return Err(ErrorCode::BadValue);
+                }
+                (
+                    RtCommand::SetTableIncrement(PhaseAccumulator::increment_for(
+                        freq as f64,
+                        self.sample_rate.hz() as f64,
+                    )),
+                    ShadowUpdate::TableFreq(freq),
+                )
+            }
+            IDX_TABLE_GAIN => {
+                let gain = f32::from_le_bytes(data.try_into().unwrap());
+                if !gain.is_finite() {
+                    return Err(ErrorCode::BadValue);
+                }
+                (RtCommand::SetTableGain(gain), ShadowUpdate::TableGain(gain))
+            }
+            IDX_TABLE_MODE => {
+                let mode = u32::from_le_bytes(data.try_into().unwrap());
+                let mode_value = TableMode::from_u32(mode).ok_or(ErrorCode::BadValue)?;
+                (
+                    RtCommand::SetTableMode(mode_value),
+                    ShadowUpdate::TableMode(mode),
+                )
+            }
+            IDX_TABLE_MULT => {
+                let multiplier = u32::from_le_bytes(data.try_into().unwrap());
+                if multiplier == 0 {
+                    return Err(ErrorCode::BadValue);
+                }
+                (
+                    RtCommand::SetTableMultiplier(multiplier),
+                    ShadowUpdate::TableMult(multiplier),
+                )
+            }
+            IDX_TABLE_PHASE => {
+                let phase = f32::from_le_bytes(data.try_into().unwrap());
+                if !(0.0..1.0).contains(&phase) {
+                    return Err(ErrorCode::BadValue);
+                }
+                let offset = (phase as f64 * 4294967296.0) as u32;
+                (
+                    RtCommand::SetTablePhase(offset),
+                    ShadowUpdate::TablePhase(phase),
+                )
+            }
+            IDX_TABLE_TRIGGER => {
+                if u32::from_le_bytes(data.try_into().unwrap()) == 0 {
+                    return Ok(());
+                }
+                (RtCommand::TriggerTable, ShadowUpdate::None)
+            }
             i if i < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() => {
                 let id = (i - BASE_PARAMS.len() - self.extras.len()) as u16;
                 let value = f32::from_le_bytes(data.try_into().unwrap());
@@ -384,8 +520,32 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             ShadowUpdate::Freq(freq) => self.freq_hz = freq,
             ShadowUpdate::Target(coeffs) => self.target = coeffs,
             ShadowUpdate::Forcing(coeffs) => self.forcing = coeffs,
+            ShadowUpdate::TableFreq(freq) => self.table_freq_hz = freq,
+            ShadowUpdate::TableGain(gain) => self.table_gain = gain,
+            ShadowUpdate::TableMode(mode) => self.table_mode = mode,
+            ShadowUpdate::TableMult(multiplier) => self.table_mult = multiplier,
+            ShadowUpdate::TablePhase(phase) => self.table_phase = phase,
             ShadowUpdate::RigParam(id, value) => self.rig_params[id] = value,
             ShadowUpdate::CtrlParam(id, value) => self.ctrl_params[id] = value,
+        }
+        Ok(())
+    }
+
+    pub fn set_block(&mut self, index: usize, offset: u32, data: &[u8]) -> Result<(), ErrorCode> {
+        if index != IDX_TABLE {
+            return Err(ErrorCode::BadIndex);
+        }
+        table::set_block(offset, data)
+    }
+
+    pub fn commit(&mut self, index: usize, len: u32) -> Result<(), ErrorCode> {
+        if index != IDX_TABLE {
+            return Err(ErrorCode::BadIndex);
+        }
+        let buffer = table::begin_commit(len)?;
+        if self.commands.enqueue(RtCommand::UseTable(buffer)).is_err() {
+            table::cancel_commit();
+            return Err(ErrorCode::Busy);
         }
         Ok(())
     }
@@ -410,6 +570,14 @@ impl<C: Controller, R: Rig> ParamRegistry for ParamStore<C, R> {
 
     fn set(&mut self, index: usize, data: &[u8]) -> Result<(), ErrorCode> {
         ParamStore::set(self, index, data)
+    }
+
+    fn set_block(&mut self, index: usize, offset: u32, data: &[u8]) -> Result<(), ErrorCode> {
+        ParamStore::set_block(self, index, offset, data)
+    }
+
+    fn commit(&mut self, index: usize, len: u32) -> Result<(), ErrorCode> {
+        ParamStore::commit(self, index, len)
     }
 
     fn sample_rate(&self) -> SampleRate {

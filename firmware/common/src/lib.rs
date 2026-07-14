@@ -5,6 +5,7 @@ pub mod laser;
 pub mod params;
 pub mod rig;
 pub mod rt_loop;
+pub mod table;
 
 /// Number of harmonics in the periodic target and forcing generators.
 pub const HARMONICS: usize = 16;

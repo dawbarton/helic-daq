@@ -55,8 +55,10 @@ ASCII and at most 15 bytes.
 
 `SetPar` rejects non-finite f32 values. `SetBlock` stages a slice of a long
 array starting at an element offset; `Commit` atomically activates the first
-`len` staged elements. Their codecs are part of v2, while the table-backed
-firmware implementation is introduced in phase 5.
+`len` staged elements at an RT sample boundary. For `table`, offsets count
+f32 elements, block data must be a multiple of four bytes, and commits accept
+2–4096 finite values. A pending swap returns busy so core 0 never writes a
+buffer still visible to core 1.
 
 `StreamSetup` requires `decimation ≥ 1`, at least one source, and every source
 id to be less than `n_sources`. `count = 0` streams continuously. Reconfiguring
@@ -91,6 +93,14 @@ The v2 base registry is:
 | target_coeffs | f×33 | rw | target Fourier coefficients |
 | forcing_coeffs | f×33 | rw | forcing Fourier coefficients |
 | ctrl_reset | I | rw | write non-zero to reset the controller |
+| table | f×4096 | block | staged arbitrary-waveform storage; GetPar is too large |
+| table_len | H | ro | active table length |
+| table_freq | f | rw | free-running table playback frequency, Hz |
+| table_gain | f | rw | table contribution gain |
+| table_mode | I | rw | 0 off, 1 loop, 2 one-shot, 3 locked loop, 4 locked one-shot |
+| table_mult | I | rw | locked integer frequency multiplier, at least 1 |
+| table_phase | f | rw | locked phase offset in turns, in [0,1) |
+| table_trigger | I | rw | write non-zero to arm/start a one-shot |
 
 Experiment read-only values, rig parameters and controller parameters follow
 the base registry. For `cbc-rig`, these include `laser`,

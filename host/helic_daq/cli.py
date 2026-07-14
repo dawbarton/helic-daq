@@ -125,6 +125,23 @@ def cmd_stream(args) -> None:
         plt.show()
 
 
+def cmd_upload(args) -> None:
+    import numpy as np
+
+    values = np.load(args.path)
+    with _connect(args) as dev:
+        dev.upload_table(
+            values.ravel(),
+            duration=args.duration,
+            freq=args.freq,
+            gain=args.gain,
+            mode=args.mode,
+            mult=args.mult,
+            phase=args.phase,
+        )
+    print(f"uploaded {values.size} table samples in {args.mode} mode")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="helic-daq", description=__doc__)
     parser.add_argument(
@@ -170,6 +187,21 @@ def main(argv=None) -> int:
     p.add_argument("--output", "-o", help="save to .npz file")
     p.add_argument("--plot", action="store_true", help="plot with matplotlib")
     p.set_defaults(fn=cmd_stream)
+
+    p = sub.add_parser("upload", help="upload a .npy arbitrary waveform")
+    p.add_argument("path")
+    timing = p.add_mutually_exclusive_group()
+    timing.add_argument("--duration", type=float, help="free-running period in seconds")
+    timing.add_argument("--freq", type=float, help="free-running playback frequency in Hz")
+    p.add_argument("--gain", type=float, default=1.0)
+    p.add_argument(
+        "--mode",
+        choices=["off", "loop", "one-shot", "locked", "locked-one-shot"],
+        default="loop",
+    )
+    p.add_argument("--mult", type=int, default=1, help="locked frequency multiplier")
+    p.add_argument("--phase", type=float, default=0.0, help="locked phase offset in turns")
+    p.set_defaults(fn=cmd_upload)
 
     args = parser.parse_args(argv)
     try:

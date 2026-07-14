@@ -59,7 +59,9 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("table_len", "H", 1, False, 0),
         SimParam("table_freq", "f", 1, True, 0.0),
         SimParam("table_gain", "f", 1, True, 1.0),
-        SimParam("table_mode", "B", 1, True, 0),
+        SimParam("table_mode", "I", 1, True, 0),
+        SimParam("table_mult", "I", 1, True, 1),
+        SimParam("table_phase", "f", 1, True, 0.0),
         SimParam("table_trigger", "I", 1, True, 0),
         SimParam("laser", "f", 1, False, 25.0),
         SimParam("rig_laser_range", "f", 1, True, 50.0),
@@ -96,6 +98,7 @@ class Simulator:
         self.stream_setup = None
         self.stream_target = None
         self.table: list[float] = []
+        self._table_trigger_time: float | None = None
         self._staging = [0.0] * 4096
         self._by_name = {param.name: param for param in self.params}
         self._started = time.monotonic()
@@ -255,7 +258,22 @@ class Simulator:
                 return self._error(6, msg_type)
             if param.name == "freq" and not 0.0 <= value < self._by_name["sample_freq"].value / 2:
                 return self._error(6, msg_type)
+            if param.name == "table_freq" and not 0.0 <= value < self._by_name["sample_freq"].value / 2:
+                return self._error(6, msg_type)
+            if param.name == "table_gain" and not math.isfinite(value):
+                return self._error(6, msg_type)
+            if param.name == "table_mode" and value not in range(5):
+                return self._error(6, msg_type)
+            if param.name == "table_mult" and value < 1:
+                return self._error(6, msg_type)
+            if param.name == "table_phase" and not 0.0 <= value < 1.0:
+                return self._error(6, msg_type)
             param.value = value
+            if param.name == "table_trigger" and value:
+                self._table_trigger_time = (
+                    self._by_name["ticks"].value / self._by_name["sample_freq"].value
+                )
+                param.value = 0
             return msg_type, b""
         if msg_type == MsgType.SET_BLOCK:
             if len(payload) < 6:
@@ -333,7 +351,30 @@ class Simulator:
     def _table_value(self, t: float) -> float:
         if len(self.table) < 2:
             return 0.0
-        phase = (t * self._by_name["table_freq"].value) % 1.0
+        mode = self._by_name["table_mode"].value
+        if mode == 0:
+            return 0.0
+        if mode in (1, 2):
+            frequency = self._by_name["table_freq"].value
+            origin = self._table_trigger_time if mode == 2 else 0.0
+            if origin is None:
+                return 0.0
+            elapsed = t - origin
+            if mode == 2 and not 0.0 <= elapsed * frequency < 1.0:
+                return 0.0
+            phase = (elapsed * frequency) % 1.0
+        else:
+            frequency = self._by_name["freq"].value
+            multiplier = self._by_name["table_mult"].value
+            phase = (
+                t * frequency * multiplier + self._by_name["table_phase"].value
+            ) % 1.0
+            if mode == 4:
+                if self._table_trigger_time is None or frequency == 0.0:
+                    return 0.0
+                start = math.ceil(self._table_trigger_time * frequency) / frequency
+                if not start <= t < start + 1.0 / (frequency * multiplier):
+                    return 0.0
         position = phase * len(self.table)
         index = int(position)
         fraction = position - index

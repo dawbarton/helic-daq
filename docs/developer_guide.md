@@ -32,7 +32,8 @@ core 1 (real-time)                       core 0 (everything else)
 │  PWM slice 4 → CONVST       │ commands │   ParamStore (registry+shadow)│
 │  BUSY↓ → SPI read (AD7609)  │◄─────────│ UDP streamer (:2351)          │
 │  apply queued commands      │  SPSC    │ laser UART task → atomic      │
-│  generators (target+forcing)│          │ status task (1 Hz defmt)      │
+│  generators (target+forcing │          │ status task (1 Hz defmt)      │
+│  + waveform table)          │          │                               │
 │  controller → DAC (AD5064)  │ records  │ embassy-net + W5500 (SPI0)    │
 │  diagnostics atomics        │─────────►│ heartbeat LED                 │
 └─────────────────────────────┘  SPSC    └───────────────────────────────┘
@@ -55,7 +56,7 @@ edge (conversion complete), then runs
    **forcing** Fourier series against the same phase (all harmonics of
    both stay locked forever — wrapping-multiply phases, see
    `docs/periodic_signal_generator.md`);
-4. `controller.tick(inputs, target, dt) + forcing` → rig actuation;
+4. `controller.tick(inputs, target, dt) + forcing + table` → rig actuation;
 5. a `Record` pushed into the stream ring; diagnostics updated.
 
 A 2-period timeout on the BUSY wait keeps the loop alive (at reduced rate)
@@ -73,6 +74,11 @@ Core 0 never touches loop state. Three mechanisms, all lock-free:
   Array-valued parameters (coefficient sets) travel **by value** — the
   enqueue/dequeue is the double-buffer swap, so a tick can never observe a
   half-written array.
+- **Waveform tables** (core 0 → 1): two fixed 4096-sample buffers. Core 0
+  writes only the inactive buffer; `Commit` queues its id and core 1 switches
+  at a sample boundary. Further writes remain busy until core 1 publishes the
+  new active id, so neither core can access one buffer mutably and immutably
+  at the same time.
 - **Records** (core 1 → 0): 256-deep `heapless::spsc` ring. The RT loop
   never blocks on it; overflow drops the record and increments
   `records_dropped`.
@@ -177,8 +183,8 @@ Experiment inputs are declared by `Rig::INPUTS`; write their values in the
 same order from `Rig::measure`. Controller-internal signals are declared by
 `Controller::TELEMETRY` and filled by `telemetry`. The common loop appends
 `target`, `forcing`, `table` and `out`, so neither rigs nor controllers manage
-numeric slots. Protocol-v2 source discovery will expose this assembled table
-to the host in phase 3.
+numeric slots. Protocol-v2 source discovery exposes this assembled table to
+the host at every connection.
 
 ## Hardware bring-up notes
 
@@ -220,9 +226,9 @@ Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses prob
   four sample-rate presets, parameter round-trip, and closed-loop PID. The only
   path not yet exercised is the **laser UART with a real optoNCDT sensor**
   (needs the physical sensor). See `notes.md` §4.3/§5.
-- `SetBlock`/`Commit` are reserved in the protocol but unimplemented; they
-  are the path for uploading arbitrary-signal tables (the
-  `ArbitraryGenerator` in helic-core is ready but not wired into the loop).
+- Arbitrary table upload and playback are implemented and host-tested, but
+  still require scope verification on hardware, including glitch-free
+  re-commit and long phase-locked runs.
 - USB serial as a second transport, flash-persisted configuration, laser
   TX (sensor configuration from firmware), and per-period Fourier
   statistics are planned extensions — see implementation_plan.md §8/§10.

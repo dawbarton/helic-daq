@@ -9,9 +9,11 @@ use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
 use helic_core::phase::PhaseAccumulator;
+use helic_core::table::{TableMode, TablePlayer};
 use static_cell::StaticCell;
 
 use crate::rig::{source_count, Rig, TickSource, MAX_SOURCES};
+use crate::table;
 use crate::{SampleRate, HARMONICS};
 
 #[derive(Clone, Copy, Debug)]
@@ -19,6 +21,13 @@ pub enum RtCommand {
     SetIncrement(u32),
     SetTargetCoeffs(FourierCoeffs<HARMONICS>),
     SetForcingCoeffs(FourierCoeffs<HARMONICS>),
+    SetTableIncrement(u32),
+    SetTableGain(f32),
+    SetTableMode(TableMode),
+    SetTableMultiplier(u32),
+    SetTablePhase(u32),
+    TriggerTable,
+    UseTable(u8),
     ResetController,
     SetCtrlParam(u16, f32),
     SetRigParam(u16, f32),
@@ -67,6 +76,8 @@ pub async fn run_rt_loop<R: Rig>(
     let mut phase = PhaseAccumulator::new();
     let mut target_coeffs = FourierCoeffs::<HARMONICS>::zero();
     let mut forcing_coeffs = FourierCoeffs::<HARMONICS>::zero();
+    let mut table_player = TablePlayer::new();
+    let mut active_table = table::active();
     let dt = sample_rate.dt();
     let mut index = 0u32;
     let mut last_tick: Option<Instant> = None;
@@ -97,6 +108,15 @@ pub async fn run_rt_loop<R: Rig>(
                 RtCommand::SetIncrement(increment) => phase.set_increment(increment),
                 RtCommand::SetTargetCoeffs(coeffs) => target_coeffs = coeffs,
                 RtCommand::SetForcingCoeffs(coeffs) => forcing_coeffs = coeffs,
+                RtCommand::SetTableIncrement(increment) => table_player.set_increment(increment),
+                RtCommand::SetTableGain(gain) => table_player.set_gain(gain),
+                RtCommand::SetTableMode(mode) => table_player.set_mode(mode),
+                RtCommand::SetTableMultiplier(multiplier) => {
+                    table_player.set_multiplier(multiplier)
+                }
+                RtCommand::SetTablePhase(offset) => table_player.set_phase_offset(offset),
+                RtCommand::TriggerTable => table_player.trigger(),
+                RtCommand::UseTable(buffer) => active_table = table::activate(buffer),
                 RtCommand::ResetController => controller.reset(),
                 RtCommand::SetCtrlParam(id, value) => controller.set_param(id, value),
                 RtCommand::SetRigParam(id, value) => rig.set_param(id, value),
@@ -105,19 +125,19 @@ pub async fn run_rt_loop<R: Rig>(
 
         let mut values = [0.0; MAX_SOURCES];
         rig.measure(&mut values[..n_inputs]);
-        let (theta, _period_start) = phase.step();
+        let (theta, period_start) = phase.step();
         let target = target_coeffs.evaluate(lut, theta);
         let forcing = forcing_coeffs.evaluate(lut, theta);
         let controller_out = controller.tick(&values[..n_inputs], target, dt);
-        let table = 0.0;
-        let out = controller_out + forcing + table;
+        let table_out = table_player.step(active_table, theta, period_start);
+        let out = controller_out + forcing + table_out;
         rig.actuate(out);
 
         controller.telemetry(&mut values[n_inputs..n_inputs + n_telemetry]);
         let generated = n_inputs + n_telemetry;
         values[generated] = target;
         values[generated + 1] = forcing;
-        values[generated + 2] = table;
+        values[generated + 2] = table_out;
         values[generated + 3] = out;
 
         if records

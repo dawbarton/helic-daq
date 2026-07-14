@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import socket
 import struct
+import math
+import time
 from dataclasses import dataclass
 
 from . import protocol
@@ -13,6 +15,10 @@ from .stream import StreamReceiver
 
 class DeviceError(Exception):
     """Error reported by the device or the transport."""
+
+    def __init__(self, message: str, code: int | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass
@@ -119,7 +125,7 @@ class Device:
         if r_type == MsgType.ERROR:
             code = r_payload[0] if r_payload else 0
             raise DeviceError(
-                f"device error: {protocol.ERROR_NAMES.get(code, f'code {code}')}"
+                f"device error: {protocol.ERROR_NAMES.get(code, f'code {code}')}", code
             )
         if r_type != msg_type:
             raise DeviceError(f"response type mismatch ({r_type} != {msg_type})")
@@ -169,6 +175,74 @@ class Device:
             raise DeviceError(f"parameter {p.name!r} is read-only")
         raw = self._pack_value(p, value)
         self._request(MsgType.SET_PAR, struct.pack("<H", p.index) + raw)
+
+    def upload_table(
+        self,
+        values,
+        duration: float | None = None,
+        freq: float | None = None,
+        gain: float = 1.0,
+        mode: str = "loop",
+        mult: int = 1,
+        phase: float = 0.0,
+    ) -> None:
+        """Upload and atomically activate a waveform table.
+
+        Free-running modes use ``freq`` or ``1 / duration``. Locked modes
+        use an exact integer multiple of the master Fourier phase.
+        """
+        values = [float(value) for value in values]
+        table = self._param("table")
+        if not 2 <= len(values) <= table.count:
+            raise ValueError(f"table length must be between 2 and {table.count}")
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("table values must be finite")
+        if duration is not None and freq is not None:
+            raise ValueError("specify at most one of duration / freq")
+        if duration is not None:
+            if duration <= 0:
+                raise ValueError("duration must be positive")
+            freq = 1.0 / duration
+        modes = {"off": 0, "loop": 1, "one-shot": 2, "locked": 3, "locked-one-shot": 4}
+        try:
+            mode_value = modes[mode]
+        except KeyError:
+            raise ValueError(f"unknown table mode {mode!r}; choose from {list(modes)}") from None
+        if mult < 1:
+            raise ValueError("mult must be at least 1")
+        if not 0.0 <= phase < 1.0:
+            raise ValueError("phase must be in [0, 1)")
+
+        raw = struct.pack(f"<{len(values)}f", *values)
+        chunk_bytes = 124 * 4
+        for byte_offset in range(0, len(raw), chunk_bytes):
+            payload = protocol.encode_set_block(
+                table.index, byte_offset // 4, raw[byte_offset : byte_offset + chunk_bytes]
+            )
+            self._request_with_busy_retry(MsgType.SET_BLOCK, payload)
+        self._request_with_busy_retry(
+            MsgType.COMMIT, protocol.encode_commit(table.index, len(values))
+        )
+        if freq is not None:
+            self.set("table_freq", freq)
+        self.set("table_gain", gain)
+        self.set("table_mult", mult)
+        self.set("table_phase", phase)
+        self.set("table_mode", mode_value)
+        if mode_value in (2, 4):
+            self.set("table_trigger", 1)
+
+    def _request_with_busy_retry(
+        self, msg_type: int, payload: bytes, timeout: float = 1.0
+    ) -> bytes:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                return self._request(msg_type, payload)
+            except DeviceError as error:
+                if error.code != 7 or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.005)
 
     @staticmethod
     def _unpack_value(p: Parameter, raw: bytes):

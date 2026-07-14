@@ -97,6 +97,7 @@ helic-daq set ctrl_kp 0.8            # PID gain (when the PID build is flashed)
 helic-daq sources
 helic-daq capture --sources adc0,out --seconds 2 -o capture.npz
 helic-daq capture --sources adc0,target,out --seconds 1 --plot
+helic-daq upload wave.npy --duration 2.0
 helic-daq stop                       # zero the forcing and target
 ```
 
@@ -121,6 +122,27 @@ dev.par.forcing_coeffs = coeffs
 data = dev.capture(["adc0", "out"], seconds=2.0)
 print(data["adc0"].mean(), data["dropped"])
 ```
+
+### Arbitrary waveform tables
+
+Upload 2–4096 finite samples from Python or a NumPy `.npy` file:
+
+```python
+wave = [0.0, 1.0, 0.0, -1.0]
+dev.upload_table(wave, duration=0.2, gain=1.5, mode="loop")
+```
+
+Free-running `loop` and `one-shot` modes use `table_freq`, set directly with
+`freq=` or as `1 / duration`. `locked` and `locked-one-shot` derive their
+phase from the master Fourier accumulator using an exact positive integer
+`mult`; `phase` is an offset in turns. This gives zero relative drift. A
+locked one-shot begins at the next master-period boundary. Sub-harmonic lock
+is not offered because integer phase division would not wrap exactly; use a
+free-running mode for a table slower than the master.
+
+The uploaded table is staged in chunks and switched atomically at a sample
+boundary. Its contribution is available as the discovered `table` stream
+source and is added to controller output plus Fourier forcing.
 
 The `target_coeffs` series is the reference the controller tracks; the
 `forcing_coeffs` series is added directly to the output. With the default

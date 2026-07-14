@@ -4,7 +4,9 @@ import contextlib
 import io
 import socket
 import struct
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -39,9 +41,17 @@ class TestSimulator(unittest.TestCase):
         self.dev._request(MsgType.SET_BLOCK, protocol.encode_set_block(table.index, 0, raw))
         self.dev._request(MsgType.COMMIT, protocol.encode_commit(table.index, 2))
         self.assertEqual(self.sim.table, [1.0, 2.0])
+        self.dev.set("table_mode", 1)
         data = self.dev.capture(["table", "out"], samples=4, port=0)
         np.testing.assert_allclose(data["table"], 1.0)
         np.testing.assert_allclose(data["out"], 1.0)
+
+    def test_upload_table_helper(self):
+        self.dev.upload_table([0.0, 1.0, 0.0, -1.0], duration=0.1, gain=2.0)
+        self.assertEqual(self.sim.table, [0.0, 1.0, 0.0, -1.0])
+        self.assertEqual(self.dev.get("table_len"), 4)
+        self.assertAlmostEqual(self.dev.get("table_freq"), 10.0)
+        self.assertEqual(self.dev.get("table_mode"), 1)
 
     def test_beacon_response(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
@@ -74,6 +84,29 @@ class TestSimulator(unittest.TestCase):
             )
         self.assertEqual(result, 0)
         self.assertIn("captured 16 records", output.getvalue())
+
+    def test_cli_upload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "wave.npy"
+            np.save(path, [0.0, 1.0, 0.0, -1.0])
+            self.dev.close()
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = cli.main(
+                    [
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        str(self.sim.port),
+                        "upload",
+                        str(path),
+                        "--duration",
+                        "0.2",
+                    ]
+                )
+            self.dev = Device("127.0.0.1", self.sim.port)
+        self.assertEqual(result, 0)
+        self.assertEqual(self.dev.get("table_len"), 4)
+        self.assertAlmostEqual(self.dev.get("table_freq"), 5.0)
 
 
 if __name__ == "__main__":
