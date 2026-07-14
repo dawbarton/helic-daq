@@ -46,8 +46,6 @@ pub static CLOCK_JITTER_US: AtomicU32 = AtomicU32::new(0);
 pub static TICK_TIMEOUTS: AtomicU32 = AtomicU32::new(0);
 pub static RECORDS_DROPPED: AtomicU32 = AtomicU32::new(0);
 pub static TICKS: AtomicU32 = AtomicU32::new(0);
-pub static LASER_VALUE: AtomicU32 = AtomicU32::new(0);
-pub static LASER_RANGE_MM: AtomicU32 = AtomicU32::new(0);
 
 static SIN_LUT: StaticCell<SinLut> = StaticCell::new();
 
@@ -150,7 +148,7 @@ pub async fn status_run() -> ! {
     loop {
         ticker.next().await;
         info!(
-            "ticks {} | loop {}/{} us | jitter {} us | overruns {} | tick timeouts {} | dropped {} | laser {} mm",
+            "ticks {} | loop {}/{} us | jitter {} us | overruns {} | tick timeouts {} | dropped {}",
             TICKS.load(Ordering::Relaxed),
             LOOP_TIME_LAST_US.load(Ordering::Relaxed),
             LOOP_TIME_MAX_US.load(Ordering::Relaxed),
@@ -158,7 +156,6 @@ pub async fn status_run() -> ! {
             OVERRUNS.load(Ordering::Relaxed),
             TICK_TIMEOUTS.load(Ordering::Relaxed),
             RECORDS_DROPPED.load(Ordering::Relaxed),
-            f32::from_bits(LASER_VALUE.load(Ordering::Relaxed)),
         );
     }
 }

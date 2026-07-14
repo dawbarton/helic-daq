@@ -1,7 +1,7 @@
 //! Name-based parameter registry (design adopted from rtc, see
 //! `docs/implementation_plan.md` §5a).
 //!
-//! The host discovers parameters at connect (`GetParNames` / `GetParInfo`)
+//! The host discovers parameters at connect (`GetParams`)
 //! and addresses them by index thereafter. Reads are served from core-0
 //! state: diagnostics come from atomics the RT loop maintains, writable
 //! values from the shadow copies kept here. Writes update the shadow and
@@ -34,11 +34,37 @@ pub struct ParamDef {
     pub writable: bool,
 }
 
+#[derive(Clone, Copy)]
+pub struct ExtraParam {
+    pub def: ParamDef,
+    pub get: fn(&mut [u8]),
+}
+
+pub trait ParamRegistry {
+    fn count(&self) -> usize;
+    fn def(&self, index: usize) -> Option<ParamDef>;
+    fn get(&self, index: usize, out: &mut [u8]) -> Result<usize, ErrorCode>;
+    fn set(&mut self, index: usize, data: &[u8]) -> Result<(), ErrorCode>;
+    fn set_block(&mut self, _index: usize, _offset: u32, _data: &[u8]) -> Result<(), ErrorCode> {
+        Err(ErrorCode::UnknownType)
+    }
+    fn commit(&mut self, _index: usize, _len: u32) -> Result<(), ErrorCode> {
+        Err(ErrorCode::UnknownType)
+    }
+    fn sample_rate(&self) -> SampleRate;
+}
+
 /// The fixed (platform) part of the registry. Controller parameters are
 /// appended after these, so indices below must match `get`/`set`.
 pub const BASE_PARAMS: &[ParamDef] = &[
     ParamDef {
         name: "firmware",
+        ty: ParamType::Char,
+        count: 16,
+        writable: false,
+    },
+    ParamDef {
+        name: "experiment",
         ty: ParamType::Char,
         count: 16,
         writable: false,
@@ -92,12 +118,6 @@ pub const BASE_PARAMS: &[ParamDef] = &[
         writable: false,
     },
     ParamDef {
-        name: "laser",
-        ty: ParamType::F32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
         name: "freq",
         ty: ParamType::F32,
         count: 1,
@@ -147,6 +167,8 @@ enum ShadowUpdate {
 pub struct ParamStore<C: Controller, R: Rig> {
     commands: CommandProducer,
     sample_rate: SampleRate,
+    experiment: &'static str,
+    extras: &'static [ExtraParam],
     freq_hz: f32,
     target: FourierCoeffs<HARMONICS>,
     forcing: FourierCoeffs<HARMONICS>,
@@ -156,7 +178,12 @@ pub struct ParamStore<C: Controller, R: Rig> {
 }
 
 impl<C: Controller, R: Rig> ParamStore<C, R> {
-    pub fn new(commands: CommandProducer, sample_rate: SampleRate) -> Self {
+    pub fn new(
+        commands: CommandProducer,
+        sample_rate: SampleRate,
+        experiment: &'static str,
+        extras: &'static [ExtraParam],
+    ) -> Self {
         assert!(
             Self::rig_names().len() <= MAX_RIG_PARAMS,
             "rig exposes more parameters than ParamStore can shadow"
@@ -175,6 +202,8 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         Self {
             commands,
             sample_rate,
+            experiment,
+            extras,
             freq_hz: 0.0,
             target: FourierCoeffs::zero(),
             forcing: FourierCoeffs::zero(),
@@ -193,16 +222,18 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
     }
 
     pub fn count(&self) -> usize {
-        BASE_PARAMS.len() + Self::rig_names().len() + Self::ctrl_names().len()
+        BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() + Self::ctrl_names().len()
     }
 
     /// Definition of parameter `index` (base or controller).
     pub fn def(&self, index: usize) -> Option<ParamDef> {
         if index < BASE_PARAMS.len() {
             Some(BASE_PARAMS[index])
-        } else if index < BASE_PARAMS.len() + Self::rig_names().len() {
+        } else if index < BASE_PARAMS.len() + self.extras.len() {
+            Some(self.extras[index - BASE_PARAMS.len()].def)
+        } else if index < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() {
             Self::rig_names()
-                .get(index - BASE_PARAMS.len())
+                .get(index - BASE_PARAMS.len() - self.extras.len())
                 .map(|name| ParamDef {
                     name,
                     ty: ParamType::F32,
@@ -211,7 +242,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 })
         } else {
             Self::ctrl_names()
-                .get(index - BASE_PARAMS.len() - Self::rig_names().len())
+                .get(index - BASE_PARAMS.len() - self.extras.len() - Self::rig_names().len())
                 .map(|name| ParamDef {
                     name,
                     ty: ParamType::F32,
@@ -232,45 +263,48 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         let out = &mut out[..size];
         match index {
             0 => {
-                let bytes = FIRMWARE_VERSION.as_bytes();
-                for (i, o) in out.iter_mut().enumerate() {
-                    *o = bytes.get(i).copied().unwrap_or(0);
-                }
+                write_string(out, FIRMWARE_VERSION);
             }
-            1 => out.copy_from_slice(&self.sample_rate.hz().to_le_bytes()),
-            2 => out.copy_from_slice(&rt_loop::TICKS.load(Ordering::Relaxed).to_le_bytes()),
-            3 => out.copy_from_slice(
+            1 => write_string(out, self.experiment),
+            2 => out.copy_from_slice(&self.sample_rate.hz().to_le_bytes()),
+            3 => out.copy_from_slice(&rt_loop::TICKS.load(Ordering::Relaxed).to_le_bytes()),
+            4 => out.copy_from_slice(
                 &rt_loop::LOOP_TIME_LAST_US
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
-            4 => out.copy_from_slice(
+            5 => out.copy_from_slice(
                 &rt_loop::LOOP_TIME_MAX_US
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
-            5 => out.copy_from_slice(
+            6 => out.copy_from_slice(
                 &rt_loop::CLOCK_JITTER_US
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
-            6 => out.copy_from_slice(&rt_loop::OVERRUNS.load(Ordering::Relaxed).to_le_bytes()),
-            7 => out.copy_from_slice(&rt_loop::TICK_TIMEOUTS.load(Ordering::Relaxed).to_le_bytes()),
-            8 => out.copy_from_slice(
+            7 => out.copy_from_slice(&rt_loop::OVERRUNS.load(Ordering::Relaxed).to_le_bytes()),
+            8 => out.copy_from_slice(&rt_loop::TICK_TIMEOUTS.load(Ordering::Relaxed).to_le_bytes()),
+            9 => out.copy_from_slice(
                 &rt_loop::RECORDS_DROPPED
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
-            9 => out.copy_from_slice(&rt_loop::LASER_VALUE.load(Ordering::Relaxed).to_le_bytes()),
             IDX_FREQ => out.copy_from_slice(&self.freq_hz.to_le_bytes()),
             IDX_TARGET => serialize_coeffs(&self.target, out),
             IDX_FORCING => serialize_coeffs(&self.forcing, out),
             IDX_CTRL_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
-            i if i < BASE_PARAMS.len() + Self::rig_names().len() => {
-                out.copy_from_slice(&self.rig_params[i - BASE_PARAMS.len()].to_le_bytes())
+            i if i < BASE_PARAMS.len() + self.extras.len() => {
+                (self.extras[i - BASE_PARAMS.len()].get)(out)
             }
+            i if i < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() => out
+                .copy_from_slice(
+                    &self.rig_params[i - BASE_PARAMS.len() - self.extras.len()].to_le_bytes(),
+                ),
             i => out.copy_from_slice(
-                &self.ctrl_params[i - BASE_PARAMS.len() - Self::rig_names().len()].to_le_bytes(),
+                &self.ctrl_params
+                    [i - BASE_PARAMS.len() - self.extras.len() - Self::rig_names().len()]
+                .to_le_bytes(),
             ),
         }
         Ok(size)
@@ -320,8 +354,8 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 }
                 (RtCommand::ResetController, ShadowUpdate::None)
             }
-            i if i < BASE_PARAMS.len() + Self::rig_names().len() => {
-                let id = (i - BASE_PARAMS.len()) as u16;
+            i if i < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() => {
+                let id = (i - BASE_PARAMS.len() - self.extras.len()) as u16;
                 let value = f32::from_le_bytes(data.try_into().unwrap());
                 if !value.is_finite() {
                     return Err(ErrorCode::BadValue);
@@ -332,7 +366,8 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 )
             }
             i => {
-                let id = (i - BASE_PARAMS.len() - Self::rig_names().len()) as u16;
+                let id =
+                    (i - BASE_PARAMS.len() - self.extras.len() - Self::rig_names().len()) as u16;
                 let value = f32::from_le_bytes(data.try_into().unwrap());
                 if !value.is_finite() {
                     return Err(ErrorCode::BadValue);
@@ -357,6 +392,34 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
 
     pub const fn sample_rate(&self) -> SampleRate {
         self.sample_rate
+    }
+}
+
+impl<C: Controller, R: Rig> ParamRegistry for ParamStore<C, R> {
+    fn count(&self) -> usize {
+        ParamStore::count(self)
+    }
+
+    fn def(&self, index: usize) -> Option<ParamDef> {
+        ParamStore::def(self, index)
+    }
+
+    fn get(&self, index: usize, out: &mut [u8]) -> Result<usize, ErrorCode> {
+        ParamStore::get(self, index, out)
+    }
+
+    fn set(&mut self, index: usize, data: &[u8]) -> Result<(), ErrorCode> {
+        ParamStore::set(self, index, data)
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        ParamStore::sample_rate(self)
+    }
+}
+
+fn write_string(out: &mut [u8], value: &str) {
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = value.as_bytes().get(i).copied().unwrap_or(0);
     }
 }
 

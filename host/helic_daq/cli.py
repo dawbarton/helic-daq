@@ -1,6 +1,6 @@
 """Command-line interface: ``helic-daq <command>``.
 
-The device address comes from ``--host`` or the ``CBC_DAQ_HOST`` environment
+The device address comes from ``--host`` or the ``HELIC_DAQ_HOST`` environment
 variable (default 192.168.1.235).
 """
 
@@ -54,6 +54,13 @@ def cmd_status(args) -> None:
         for key, value in dev.status().items():
             print(f"{key}: {value}")
         print(f"firmware: {dev.get('firmware')}")
+
+
+def cmd_sources(args) -> None:
+    with _connect(args) as dev:
+        print(f"{'id':>3}  {'name':<16} unit")
+        for source in dev.sources:
+            print(f"{source.index:>3}  {source.name:<16} {source.unit}")
 
 
 def cmd_sine(args) -> None:
@@ -121,8 +128,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="helic-daq", description=__doc__)
     parser.add_argument(
         "--host",
-        default=os.environ.get("CBC_DAQ_HOST", "192.168.1.235"),
-        help="device IP address (default: $CBC_DAQ_HOST or 192.168.1.235)",
+        default=os.environ.get("HELIC_DAQ_HOST", "192.168.1.235"),
+        help="device IP address (default: $HELIC_DAQ_HOST or 192.168.1.235)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -138,6 +145,9 @@ def main(argv=None) -> int:
     p.set_defaults(fn=cmd_set)
 
     sub.add_parser("status", help="device status").set_defaults(fn=cmd_status)
+    sub.add_parser("sources", help="list discoverable stream sources").set_defaults(
+        fn=cmd_sources
+    )
 
     p = sub.add_parser("sine", help="output a sine wave (smoke test)")
     p.add_argument("freq", type=float, help="frequency in Hz")
@@ -147,7 +157,7 @@ def main(argv=None) -> int:
 
     sub.add_parser("stop", help="zero the forcing and target").set_defaults(fn=cmd_stop)
 
-    p = sub.add_parser("stream", help="capture streamed data")
+    p = sub.add_parser("capture", help="capture streamed data")
     p.add_argument("--sources", default="adc0,out", help="comma-separated (default adc0,out)")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--seconds", type=float)

@@ -8,7 +8,6 @@ use defmt::info;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{Duration, Ticker};
-use helic_proto::source;
 use helic_proto::stream::{StreamHeader, STREAM_HEADER_LEN};
 
 use super::STREAM;
@@ -22,12 +21,10 @@ const MAX_PACKET: usize = 1472;
 const FLUSH_MS: u64 = 5;
 
 fn record_value(r: &Record, src: u8) -> f32 {
-    match src {
-        0..=10 => r.values[src as usize],
-        // Protocol v1 has no table slot. During the phase-2 transition its
-        // OUT id maps to the final source in the discoverable record shape.
-        source::OUT => r.values[r.n.saturating_sub(1) as usize],
-        _ => 0.0,
+    if src < r.n {
+        r.values[src as usize]
+    } else {
+        0.0
     }
 }
 

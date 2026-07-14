@@ -22,6 +22,35 @@ class TestFrame(unittest.TestCase):
         frame = protocol.encode_frame(MsgType.STATUS, 1)
         self.assertEqual(frame, bytes([0x48, 0x4C, 0x0A, 0x01, 0x00, 0x00, 0x5B, 0xDB]))
 
+    def test_known_answer_discovery_requests(self):
+        self.assertEqual(
+            protocol.encode_frame(MsgType.GET_PARAMS, 1),
+            bytes.fromhex("48 4C 01 01 00 00 44 C5"),
+        )
+        self.assertEqual(
+            protocol.encode_frame(MsgType.GET_SOURCES, 1),
+            bytes.fromhex("48 4C 02 01 00 00 98 5E"),
+        )
+
+    def test_known_answer_v2_frames(self):
+        block = protocol.encode_set_block(12, 0x01020304, b"\xaa\xbb")
+        self.assertEqual(
+            protocol.encode_frame(MsgType.SET_BLOCK, 2, block),
+            bytes.fromhex("48 4C 05 02 08 00 0C 00 04 03 02 01 AA BB 39 A7"),
+        )
+        commit = protocol.encode_commit(12, 0x01020304)
+        self.assertEqual(
+            protocol.encode_frame(MsgType.COMMIT, 3, commit),
+            bytes.fromhex("48 4C 06 03 06 00 0C 00 04 03 02 01 08 D1"),
+        )
+        status = bytes.fromhex("02 11 00 0D 00 00 FA 45 10 A4 00 00")
+        self.assertEqual(
+            protocol.encode_frame(MsgType.STATUS, 1, status),
+            bytes.fromhex(
+                "48 4C 0A 01 0C 00 02 11 00 0D 00 00 FA 45 10 A4 00 00 03 09"
+            ),
+        )
+
     def test_round_trip(self):
         frame = protocol.encode_frame(MsgType.GET_PAR, 7, b"\x01\x00\x02\x00")
         msg_type, seq, payload = protocol.decode_frame(frame)
@@ -44,6 +73,30 @@ class TestFrame(unittest.TestCase):
     def test_oversize_payload_rejected(self):
         with self.assertRaises(ProtocolError):
             protocol.encode_frame(3, 0, bytes(protocol.MAX_PAYLOAD + 1))
+
+
+class TestPayload(unittest.TestCase):
+    def test_known_answer_discovery_entries(self):
+        params = protocol.decode_params(b"freq\0f\x01\x00\x01")
+        self.assertEqual(params, [("freq", "f", 1, True)])
+        sources = protocol.decode_sources(b"adc0\0V\0laser\0mm\0")
+        self.assertEqual(sources, [("adc0", "V"), ("laser", "mm")])
+
+    def test_known_answer_block_payloads(self):
+        self.assertEqual(
+            protocol.encode_set_block(12, 0x01020304, b"\xaa\xbb"),
+            b"\x0c\x00\x04\x03\x02\x01\xaa\xbb",
+        )
+        self.assertEqual(
+            protocol.encode_commit(12, 0x01020304),
+            b"\x0c\x00\x04\x03\x02\x01",
+        )
+
+    def test_malformed_discovery_rejected(self):
+        with self.assertRaises(ProtocolError):
+            protocol.decode_params(b"freq\0f")
+        with self.assertRaises(ProtocolError):
+            protocol.decode_sources(b"adc0\0V")
 
 
 class TestStreamHeader(unittest.TestCase):

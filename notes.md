@@ -293,7 +293,7 @@ the frequency setting, the 8 kHz clock, AC DAC output, and the whole UDP
 streamer/framing/decimation path.
 
 **macOS firewall / code-signing issue + workaround (this managed Mac):**
-- Symptom: `helic-daq stream` (and any `helic_daq` capture) **times out with zero
+- Symptom: `helic-daq capture` (and any `helic_daq` capture) **times out with zero
   packets**, while `helic-daq status`/`set`/`get` work fine.
 - Cause: the macOS Application Firewall is **enabled and MDM-locked** — it
   cannot be turned off or edited (`socketfilterfw` returns *"Firewall settings

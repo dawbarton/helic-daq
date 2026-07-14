@@ -26,17 +26,17 @@ pub const MAX_FRAME: usize = HEADER_LEN + MAX_PAYLOAD + TRAILER_LEN;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MsgType {
-    /// → (empty)  ← names of all parameters, each NUL-terminated.
-    GetParNames = 1,
-    /// → (empty)  ← per parameter: type u8, count u16, writable u8.
-    GetParInfo = 2,
+    /// → (empty)  ← repeated name NUL, type u8, count u16, writable u8.
+    GetParams = 1,
+    /// → (empty)  ← repeated name NUL, unit NUL.
+    GetSources = 2,
     /// → indices u16[]  ← raw values concatenated in request order.
     GetPar = 3,
     /// → index u16, raw value  ← (empty ack).
     SetPar = 4,
-    /// Reserved: staged block write for long arrays.
+    /// → index u16, offset u32, raw block data  ← (empty ack).
     SetBlock = 5,
-    /// Reserved: atomically activate a staged block.
+    /// → index u16, length u32  ← (empty ack).
     Commit = 6,
     /// → decimation u16, count u32, n u8, sources u8[n]  ← (empty ack).
     StreamSetup = 7,
@@ -44,7 +44,8 @@ pub enum MsgType {
     StreamStart = 8,
     /// → (empty)  ← (empty ack).
     StreamStop = 9,
-    /// → (empty)  ← version u8, n_params u16, sample rate f32, uptime_ms u32.
+    /// → (empty)  ← version u8, n_params u16, n_sources u8,
+    /// sample rate f32, uptime_ms u32.
     Status = 10,
     /// ← error code u8, offending request type u8.
     Error = 0xFF,
@@ -53,8 +54,8 @@ pub enum MsgType {
 impl MsgType {
     pub const fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
-            1 => Self::GetParNames,
-            2 => Self::GetParInfo,
+            1 => Self::GetParams,
+            2 => Self::GetSources,
             3 => Self::GetPar,
             4 => Self::SetPar,
             5 => Self::SetBlock,
@@ -140,6 +141,45 @@ mod tests {
         let mut buf = [0u8; 16];
         let n = encode(&mut buf, MsgType::Status as u8, 1, &[]).unwrap();
         assert_eq!(&buf[..n], &[0x48, 0x4C, 0x0A, 0x01, 0x00, 0x00, 0x5B, 0xDB]);
+    }
+
+    #[test]
+    fn known_answer_discovery_requests() {
+        let mut buf = [0u8; 16];
+        let n = encode(&mut buf, MsgType::GetParams as u8, 1, &[]).unwrap();
+        assert_eq!(&buf[..n], &[0x48, 0x4c, 0x01, 0x01, 0x00, 0x00, 0x44, 0xc5]);
+        let n = encode(&mut buf, MsgType::GetSources as u8, 1, &[]).unwrap();
+        assert_eq!(&buf[..n], &[0x48, 0x4c, 0x02, 0x01, 0x00, 0x00, 0x98, 0x5e]);
+    }
+
+    #[test]
+    fn known_answer_v2_frames() {
+        let mut buf = [0u8; 32];
+        let block = [0x0c, 0x00, 0x04, 0x03, 0x02, 0x01, 0xaa, 0xbb];
+        let n = encode(&mut buf, MsgType::SetBlock as u8, 2, &block).unwrap();
+        assert_eq!(
+            &buf[..n],
+            &[
+                0x48, 0x4c, 0x05, 0x02, 0x08, 0x00, 0x0c, 0x00, 0x04, 0x03, 0x02, 0x01, 0xaa, 0xbb,
+                0x39, 0xa7
+            ]
+        );
+        let n = encode(&mut buf, MsgType::Commit as u8, 3, &block[..6]).unwrap();
+        assert_eq!(
+            &buf[..n],
+            &[0x48, 0x4c, 0x06, 0x03, 0x06, 0x00, 0x0c, 0x00, 0x04, 0x03, 0x02, 0x01, 0x08, 0xd1]
+        );
+        let status = [
+            0x02, 0x11, 0x00, 0x0d, 0x00, 0x00, 0xfa, 0x45, 0x10, 0xa4, 0x00, 0x00,
+        ];
+        let n = encode(&mut buf, MsgType::Status as u8, 1, &status).unwrap();
+        assert_eq!(
+            &buf[..n],
+            &[
+                0x48, 0x4c, 0x0a, 0x01, 0x0c, 0x00, 0x02, 0x11, 0x00, 0x0d, 0x00, 0x00, 0xfa, 0x45,
+                0x10, 0xa4, 0x00, 0x00, 0x03, 0x09
+            ]
+        );
     }
 
     #[test]

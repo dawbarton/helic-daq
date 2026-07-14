@@ -73,7 +73,7 @@ pip install -e host        # pip install -e "host[plot]" for plotting
 
 ## Using it
 
-Command line (`--host <ip>` or `export CBC_DAQ_HOST=<ip>` if not the
+Command line (`--host <ip>` or `export HELIC_DAQ_HOST=<ip>` if not the
 default):
 
 ```sh
@@ -83,8 +83,9 @@ helic-daq sine 10 1.0                # output a 10 Hz, 1 V sine (smoke test)
 helic-daq get laser loop_time_max
 helic-daq set freq 17.5
 helic-daq set ctrl_kp 0.8            # PID gain (when the PID build is flashed)
-helic-daq stream --sources adc0,out --seconds 2 -o capture.npz
-helic-daq stream --sources adc0,target,out --seconds 1 --plot
+helic-daq sources
+helic-daq capture --sources adc0,out --seconds 2 -o capture.npz
+helic-daq capture --sources adc0,target,out --seconds 1 --plot
 helic-daq stop                       # zero the forcing and target
 ```
 
@@ -156,7 +157,7 @@ Edit `firmware/experiments/cbc-rig/src/config.rs` and reflash:
 If something looks wrong, the same numbers appear once a second in the
 debug-probe log, along with connection events.
 
-**If `stream` times out with no data** while `status`/`get`/`set` work, a
+**If `capture` times out with no data** while `status`/`get`/`set` work, a
 host firewall is almost certainly blocking inbound UDP on the stream port
 (2351) — control is outbound TCP and unaffected. Allow your client through the
 firewall, or receive on a host/binary the firewall permits. (On managed macOS

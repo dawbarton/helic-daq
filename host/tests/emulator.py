@@ -1,6 +1,6 @@
 """A minimal in-process HELIC-DAQ emulator for testing the host package.
 
-Speaks protocol v1 over a localhost TCP socket with a small parameter table
+Speaks protocol v2 over a localhost TCP socket with a small parameter table
 mirroring the firmware's registry shape. Not a simulator: parameter writes
 just update a table.
 """
@@ -31,6 +31,7 @@ class EmulatedParam:
 def default_params():
     return [
         EmulatedParam("firmware", "c", 16, False, b"helic-daq emu\0\0\0\0\0"),
+        EmulatedParam("experiment", "c", 16, False, b"cbc-rig\0\0\0\0\0\0\0\0\0"),
         EmulatedParam("sample_freq", "f", 1, False, (8000.0,)),
         EmulatedParam("ticks", "I", 1, False, (12345,)),
         EmulatedParam("freq", "f", 1, True, (0.0,)),
@@ -39,11 +40,23 @@ def default_params():
     ]
 
 
+def default_sources():
+    return [(f"adc{i}", "V") for i in range(8)] + [
+        ("laser", "mm"),
+        ("target", "V"),
+        ("forcing", "V"),
+        ("table", "V"),
+        ("out", "V"),
+    ]
+
+
 class Emulator:
     """Run with ``with Emulator() as emu: Device('127.0.0.1', emu.port)``."""
 
-    def __init__(self):
+    def __init__(self, version=protocol.VERSION):
         self.params = default_params()
+        self.sources = default_sources()
+        self.version = version
         self.stream_setup = None
         self.stream_target = None
         self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -97,12 +110,17 @@ class Emulator:
         return MsgType.ERROR, bytes([code, msg_type])
 
     def _handle(self, msg_type, payload):
-        if msg_type == MsgType.GET_PAR_NAMES:
-            return msg_type, b"".join(p.name.encode() + b"\0" for p in self.params)
-        if msg_type == MsgType.GET_PAR_INFO:
+        if msg_type == MsgType.GET_PARAMS:
             return msg_type, b"".join(
-                struct.pack("<cHB", p.type_code.encode(), p.count, p.writable)
+                p.name.encode()
+                + b"\0"
+                + struct.pack("<cHB", p.type_code.encode(), p.count, p.writable)
                 for p in self.params
+            )
+        if msg_type == MsgType.GET_SOURCES:
+            return msg_type, b"".join(
+                name.encode() + b"\0" + unit.encode() + b"\0"
+                for name, unit in self.sources
             )
         if msg_type == MsgType.GET_PAR:
             out = b""
@@ -139,5 +157,7 @@ class Emulator:
             self.stream_target = None
             return msg_type, b""
         if msg_type == MsgType.STATUS:
-            return msg_type, struct.pack("<BHfI", protocol.VERSION, len(self.params), 8000.0, 42_000)
+            return msg_type, struct.pack(
+                "<BHBfI", self.version, len(self.params), len(self.sources), 8000.0, 42_000
+            )
         return self._error(2, msg_type)

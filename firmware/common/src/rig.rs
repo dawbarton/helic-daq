@@ -26,7 +26,7 @@ pub const GENERATED_SOURCES: &[(&str, &str)] = &[
     ("out", "V"),
 ];
 
-pub fn source_count<R: Rig>() -> usize {
+pub const fn source_count<R: Rig>() -> usize {
     R::INPUTS.len() + R::Ctrl::TELEMETRY.len() + GENERATED_SOURCES.len()
 }
 

@@ -5,6 +5,8 @@
 use helic_core::controller::PassThrough;
 pub use helic_fw_common::SampleRate;
 
+pub const EXPERIMENT: &str = "cbc-rig";
+
 /// DAC channel driven by the control output (0 and 2 are bipolar).
 pub const OUTPUT_CHANNEL: usize = 0;
 

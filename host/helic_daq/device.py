@@ -28,6 +28,13 @@ class Parameter:
         return struct.calcsize(self.type_code) * self.count
 
 
+@dataclass(frozen=True)
+class Source:
+    index: int
+    name: str
+    unit: str
+
+
 class _ParamAccessor:
     """Attribute-style parameter access: ``dev.par.freq = 10.0``."""
 
@@ -60,7 +67,20 @@ class Device:
             self.host = host
             self.params: list[Parameter] = []
             self._by_name: dict[str, Parameter] = {}
+            self.sources: list[Source] = []
+            self._source_by_name: dict[str, Source] = {}
+            status_payload = self._request(MsgType.STATUS)
+            version = status_payload[0] if status_payload else None
+            if version != protocol.VERSION:
+                raise DeviceError(
+                    f"protocol version mismatch: device {version}, host {protocol.VERSION}"
+                )
+            if len(status_payload) != struct.calcsize("<BHBfI"):
+                raise ProtocolError("invalid Status payload length")
+            _, n_params, n_sources, _, _ = struct.unpack("<BHBfI", status_payload)
             self._discover()
+            if (len(self.params), len(self.sources)) != (n_params, n_sources):
+                raise ProtocolError("discovery table lengths do not match Status")
         except BaseException:
             self._sock.close()
             raise
@@ -108,17 +128,12 @@ class Device:
     # -- discovery ---------------------------------------------------------
 
     def _discover(self) -> None:
-        names = self._request(MsgType.GET_PAR_NAMES).split(b"\0")[:-1]
-        info = self._request(MsgType.GET_PAR_INFO)
-        if len(info) != 4 * len(names):
-            raise ProtocolError("GetParInfo length does not match GetParNames")
-        self.params = []
-        for i, name in enumerate(names):
-            type_code, count, writable = struct.unpack_from("<cHB", info, 4 * i)
-            self.params.append(
-                Parameter(i, name.decode(), type_code.decode(), count, bool(writable))
-            )
+        definitions = protocol.decode_params(self._request(MsgType.GET_PARAMS))
+        self.params = [Parameter(i, *definition) for i, definition in enumerate(definitions)]
         self._by_name = {p.name: p for p in self.params}
+        definitions = protocol.decode_sources(self._request(MsgType.GET_SOURCES))
+        self.sources = [Source(i, *definition) for i, definition in enumerate(definitions)]
+        self._source_by_name = {source.name: source for source in self.sources}
 
     def _param(self, name_or_index) -> Parameter:
         if isinstance(name_or_index, int):
@@ -175,12 +190,13 @@ class Device:
     # -- status and streaming ----------------------------------------------
 
     def status(self) -> dict:
-        version, n_params, fs, uptime_ms = struct.unpack(
-            "<BHfI", self._request(MsgType.STATUS)
+        version, n_params, n_sources, fs, uptime_ms = struct.unpack(
+            "<BHBfI", self._request(MsgType.STATUS)
         )
         return {
             "protocol_version": version,
             "n_params": n_params,
+            "n_sources": n_sources,
             "sample_rate": fs,
             "uptime_s": uptime_ms / 1000.0,
         }
@@ -192,15 +208,23 @@ class Device:
         ids, names = [], []
         for s in sources:
             if isinstance(s, str):
-                if s not in protocol.SOURCES:
-                    raise DeviceError(
-                        f"unknown source {s!r}; choose from {sorted(protocol.SOURCES)}"
+                if s not in self._source_by_name:
+                    choices = ", ".join(
+                        f"{source.name} [{source.unit}]" for source in self.sources
                     )
-                ids.append(protocol.SOURCES[s])
-                names.append(s)
+                    raise DeviceError(
+                        f"unknown source {s!r}; discovered sources: {choices}"
+                    )
+                source = self._source_by_name[s]
+                ids.append(source.index)
+                names.append(source.name)
             else:
-                ids.append(int(s))
-                names.append(protocol.SOURCE_NAMES.get(int(s), str(s)))
+                try:
+                    source = self.sources[int(s)]
+                except (IndexError, ValueError):
+                    raise DeviceError(f"unknown source index {s!r}") from None
+                ids.append(source.index)
+                names.append(source.name)
         payload = struct.pack("<HIB", decimation, count, len(ids)) + bytes(ids)
         self._request(MsgType.STREAM_SETUP, payload)
         return names

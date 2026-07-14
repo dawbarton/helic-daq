@@ -37,11 +37,11 @@ use helic_drivers::ad7609::{Ad7609, ConfigPins};
 use helic_drivers::AnalogIn;
 use helic_fw_common::comms::EthernetParts;
 use helic_fw_common::rig::{BusyEdgeTick, Rig};
-use helic_fw_common::rt_loop::{LASER_RANGE_MM, LASER_VALUE};
 use helic_fw_common::SampleRate;
 use static_cell::StaticCell;
 
 use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
+use crate::{LASER_RANGE_MM, LASER_VALUE};
 
 /// DAC reference voltage (ADR-series reference on the analog board).
 pub const DAC_VREF: f32 = 4.096;

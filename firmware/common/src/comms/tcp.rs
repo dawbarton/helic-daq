@@ -8,11 +8,12 @@ use embassy_time::{Duration, Instant};
 use embedded_io_async::{Read, Write};
 use helic_core::controller::Controller;
 use helic_proto::frame::{self, MsgType, HEADER_LEN, MAX_PAYLOAD, TRAILER_LEN};
-use helic_proto::{source, ErrorCode, MAGIC, VERSION};
+use helic_proto::payload;
+use helic_proto::{ErrorCode, MAGIC, VERSION};
 
-use super::{MAX_STREAM_SOURCES, STREAM};
-use crate::params::ParamStore;
-use crate::rig::Rig;
+use super::STREAM;
+use crate::params::{ParamRegistry, ParamStore};
+use crate::rig::{source, source_count, Rig, MAX_SOURCES};
 
 pub async fn control_run<C: Controller, R: Rig>(
     stack: Stack<'static>,
@@ -99,10 +100,10 @@ async fn serve<C: Controller, R: Rig>(socket: &mut TcpSocket<'_>, store: &mut Pa
     }
 }
 
-fn handle(
+fn handle<C: Controller, R: Rig>(
     ty: u8,
     payload: &[u8],
-    store: &mut ParamStore<impl Controller, impl Rig>,
+    store: &mut ParamStore<C, R>,
     socket: &TcpSocket<'_>,
     resp: &mut [u8; MAX_PAYLOAD],
 ) -> Result<usize, ErrorCode> {
@@ -110,27 +111,27 @@ fn handle(
         return Err(ErrorCode::UnknownType);
     };
     match msg {
-        MsgType::GetParNames => {
-            let mut off = 0;
-            for i in 0..store.count() {
-                let name = store.def(i).unwrap().name.as_bytes();
-                if off + name.len() + 1 > MAX_PAYLOAD {
-                    return Err(ErrorCode::BadLength);
-                }
-                resp[off..off + name.len()].copy_from_slice(name);
-                resp[off + name.len()] = 0;
-                off += name.len() + 1;
-            }
-            Ok(off)
-        }
-        MsgType::GetParInfo => {
+        MsgType::GetParams => {
             let mut off = 0;
             for i in 0..store.count() {
                 let def = store.def(i).unwrap();
-                resp[off] = def.ty as u8;
-                resp[off + 1..off + 3].copy_from_slice(&def.count.to_le_bytes());
-                resp[off + 3] = def.writable as u8;
-                off += 4;
+                off += payload::encode_param(
+                    &mut resp[off..],
+                    def.name,
+                    def.ty,
+                    def.count,
+                    def.writable,
+                )
+                .map_err(|_| ErrorCode::BadLength)?;
+            }
+            Ok(off)
+        }
+        MsgType::GetSources => {
+            let mut off = 0;
+            for i in 0..source_count::<R>() {
+                let (name, unit) = source::<R>(i).unwrap();
+                off += payload::encode_source(&mut resp[off..], name, unit)
+                    .map_err(|_| ErrorCode::BadLength)?;
             }
             Ok(off)
         }
@@ -153,7 +154,17 @@ fn handle(
             store.set(index, &payload[2..])?;
             Ok(0)
         }
-        MsgType::SetBlock | MsgType::Commit => Err(ErrorCode::UnknownType), // reserved
+        MsgType::SetBlock => {
+            let (index, offset, data) =
+                payload::decode_set_block(payload).map_err(|_| ErrorCode::BadLength)?;
+            store.set_block(index as usize, offset, data)?;
+            Ok(0)
+        }
+        MsgType::Commit => {
+            let (index, len) = payload::decode_commit(payload).map_err(|_| ErrorCode::BadLength)?;
+            store.commit(index as usize, len)?;
+            Ok(0)
+        }
         MsgType::StreamSetup => {
             // decimation u16, count u32, n u8, sources u8[n]
             if payload.len() < 7 {
@@ -162,11 +173,11 @@ fn handle(
             let decimation = u16::from_le_bytes([payload[0], payload[1]]);
             let count = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
             let n = payload[6] as usize;
-            if decimation == 0 || n == 0 || n > MAX_STREAM_SOURCES || payload.len() != 7 + n {
+            if decimation == 0 || n == 0 || n > MAX_SOURCES || payload.len() != 7 + n {
                 return Err(ErrorCode::BadValue);
             }
             let sources = &payload[7..7 + n];
-            if sources.iter().any(|&s| s >= source::COUNT) {
+            if sources.iter().any(|&s| s as usize >= source_count::<R>()) {
                 return Err(ErrorCode::BadValue);
             }
             STREAM.lock(|s| {
@@ -219,10 +230,11 @@ fn handle(
         MsgType::Status => {
             resp[0] = VERSION;
             resp[1..3].copy_from_slice(&(store.count() as u16).to_le_bytes());
-            resp[3..7].copy_from_slice(&store.sample_rate().hz().to_le_bytes());
+            resp[3] = source_count::<R>() as u8;
+            resp[4..8].copy_from_slice(&store.sample_rate().hz().to_le_bytes());
             let uptime_ms = Instant::now().as_millis() as u32;
-            resp[7..11].copy_from_slice(&uptime_ms.to_le_bytes());
-            Ok(11)
+            resp[8..12].copy_from_slice(&uptime_ms.to_le_bytes());
+            Ok(12)
         }
         MsgType::Error => Err(ErrorCode::UnknownType),
     }

@@ -9,6 +9,7 @@
 
 pub mod crc;
 pub mod frame;
+pub mod payload;
 pub mod stream;
 
 pub use crc::crc16;
@@ -20,7 +21,7 @@ pub use stream::StreamHeader;
 pub const MAGIC: u16 = 0x4C48;
 
 /// Protocol version, bumped on any incompatible wire change.
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 
 /// TCP port for parameter get/set and commands.
 pub const CONTROL_PORT: u16 = 2350;
@@ -40,23 +41,6 @@ pub enum ErrorCode {
     ReadOnly = 5,
     BadValue = 6,
     Busy = 7,
-}
-
-/// Fixed stream-source identifiers (see `docs/protocol.md`): what each value
-/// slot in a stream record refers to.
-pub mod source {
-    /// ADC channels 0..7 in volts are sources 0..7.
-    pub const ADC0: u8 = 0;
-    /// Latest laser distance, mm.
-    pub const LASER: u8 = 8;
-    /// Periodic generator target (controller reference), volts.
-    pub const TARGET: u8 = 9;
-    /// Feed-forward forcing, volts.
-    pub const FORCING: u8 = 10;
-    /// Value written to the output DAC channel, volts.
-    pub const OUT: u8 = 11;
-    /// Number of defined sources.
-    pub const COUNT: u8 = 12;
 }
 
 /// Type of a registered parameter, self-described to the host at connect.

@@ -11,7 +11,7 @@ import struct
 from dataclasses import dataclass
 
 MAGIC = 0x4C48  # little-endian ASCII "HL"
-VERSION = 1
+VERSION = 2
 CONTROL_PORT = 2350
 STREAM_PORT = 2351
 
@@ -22,12 +22,12 @@ MAX_PAYLOAD = 512
 
 # Control message types.
 class MsgType:
-    GET_PAR_NAMES = 1
-    GET_PAR_INFO = 2
+    GET_PARAMS = 1
+    GET_SOURCES = 2
     GET_PAR = 3
     SET_PAR = 4
-    SET_BLOCK = 5  # reserved
-    COMMIT = 6  # reserved
+    SET_BLOCK = 5
+    COMMIT = 6
     STREAM_SETUP = 7
     STREAM_START = 8
     STREAM_STOP = 9
@@ -44,12 +44,6 @@ ERROR_NAMES = {
     6: "bad value",
     7: "device busy",
 }
-
-# Stream source ids: adc0..adc7 are 0..7.
-SOURCES = {f"adc{i}": i for i in range(8)}
-SOURCES.update({"laser": 8, "target": 9, "forcing": 10, "out": 11})
-SOURCE_NAMES = {v: k for k, v in SOURCES.items()}
-
 
 class ProtocolError(Exception):
     """Malformed frame or packet."""
@@ -86,6 +80,57 @@ def decode_frame(buf: bytes) -> tuple[int, int, bytes]:
     if crc16(buf[2 : HEADER_LEN + length]) != crc_stored:
         raise ProtocolError("CRC mismatch")
     return msg_type, seq, buf[HEADER_LEN : HEADER_LEN + length]
+
+
+def _nul_string(payload: bytes, offset: int) -> tuple[str, int]:
+    try:
+        end = payload.index(0, offset)
+    except ValueError:
+        raise ProtocolError("unterminated discovery string") from None
+    try:
+        value = payload[offset:end].decode("ascii")
+    except UnicodeDecodeError:
+        raise ProtocolError("non-ASCII discovery string") from None
+    return value, end + 1
+
+
+def decode_params(payload: bytes) -> list[tuple[str, str, int, bool]]:
+    """Decode a GetParams response in registry order."""
+    params, offset = [], 0
+    while offset < len(payload):
+        name, offset = _nul_string(payload, offset)
+        if offset + 4 > len(payload):
+            raise ProtocolError("truncated parameter definition")
+        type_code, count, writable = struct.unpack_from("<cHB", payload, offset)
+        try:
+            type_code = type_code.decode("ascii")
+        except UnicodeDecodeError:
+            raise ProtocolError("invalid parameter type code") from None
+        if type_code not in "BbHhIifc":
+            raise ProtocolError(f"invalid parameter type code {type_code!r}")
+        if writable not in (0, 1):
+            raise ProtocolError("invalid writable flag")
+        params.append((name, type_code, count, bool(writable)))
+        offset += 4
+    return params
+
+
+def decode_sources(payload: bytes) -> list[tuple[str, str]]:
+    """Decode a GetSources response; list position is the source id."""
+    sources, offset = [], 0
+    while offset < len(payload):
+        name, offset = _nul_string(payload, offset)
+        unit, offset = _nul_string(payload, offset)
+        sources.append((name, unit))
+    return sources
+
+
+def encode_set_block(index: int, offset: int, data: bytes) -> bytes:
+    return struct.pack("<HI", index, offset) + data
+
+
+def encode_commit(index: int, length: int) -> bytes:
+    return struct.pack("<HI", index, length)
 
 
 # UDP stream packet header (20 bytes).

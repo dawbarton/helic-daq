@@ -21,8 +21,9 @@ use embassy_rp::uart;
 use embassy_time::Timer;
 use heapless::spsc::Queue;
 use helic_fw_common::comms::{self, EthernetParts, StaticNetConfig};
-use helic_fw_common::params::{self, ParamStore};
+use helic_fw_common::params::{self, ExtraParam, ParamDef, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
+use helic_proto::ParamType;
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -34,6 +35,31 @@ use board::{LaserParts, RtAnalog};
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 type Store = ParamStore<config::ActiveController, RtAnalog>;
+const _: () =
+    assert!(helic_fw_common::rig::source_count::<RtAnalog>() <= helic_fw_common::rig::MAX_SOURCES);
+
+pub(crate) static LASER_VALUE: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
+pub(crate) static LASER_RANGE_MM: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
+
+fn get_laser(out: &mut [u8]) {
+    out.copy_from_slice(
+        &LASER_VALUE
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .to_le_bytes(),
+    );
+}
+
+const EXTRA_PARAMS: &[ExtraParam] = &[ExtraParam {
+    def: ParamDef {
+        name: "laser",
+        ty: ParamType::F32,
+        count: 1,
+        writable: false,
+    },
+    get: get_laser,
+}];
 
 /// RP2350 boot image definition, required in flash for the boot ROM.
 #[unsafe(link_section = ".start_block")]
@@ -57,7 +83,7 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let p = embassy_rp::init(Default::default());
-    shared_rt::LASER_RANGE_MM.store(
+    LASER_RANGE_MM.store(
         config::LASER_RANGE_MM.to_bits(),
         core::sync::atomic::Ordering::Relaxed,
     );
@@ -83,7 +109,12 @@ fn main() -> ! {
         spawner.spawn(unwrap!(core0_main(
             spawner,
             b.eth,
-            Store::new(cmd_tx, config::SAMPLE_RATE),
+            Store::new(
+                cmd_tx,
+                config::SAMPLE_RATE,
+                config::EXPERIMENT,
+                EXTRA_PARAMS,
+            ),
             rec_rx
         )));
         spawner.spawn(unwrap!(blink(b.led)));
@@ -137,7 +168,7 @@ async fn laser_task(parts: LaserParts) -> ! {
     let mut uart_config = uart::Config::default();
     uart_config.baudrate = 921_600;
     let rx = uart::UartRx::new(parts.uart, parts.rx, Irqs, parts.rx_dma, uart_config);
-    helic_fw_common::laser::laser_run(rx, &shared_rt::LASER_RANGE_MM, &shared_rt::LASER_VALUE).await
+    helic_fw_common::laser::laser_run(rx, &LASER_RANGE_MM, &LASER_VALUE).await
 }
 
 /// Core 0: 1 Hz diagnostics over defmt.
