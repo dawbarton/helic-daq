@@ -1,5 +1,10 @@
 //! HELIC-DAQ filtered-PWM signal generator with laser logging.
+//!
+//! Its core/task layout matches `sig-gen`; only `board.rs` replaces the
+//! AD5064 with a PWM output. See `docs/user_guide.md` for electrical limits
+//! and `docs/developer_guide.md` for the shared firmware architecture.
 
+// The target has no operating-system standard library or conventional entry.
 #![no_std]
 #![no_main]
 
@@ -31,6 +36,7 @@ use board::{LaserParts, RtAnalog};
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 type Store = ParamStore<config::ActiveController, RtAnalog>;
+// Include rig inputs and controller telemetry in a compile-time capacity check.
 const _: () =
     assert!(helic_fw_common::rig::source_count::<RtAnalog>() <= helic_fw_common::rig::MAX_SOURCES);
 
@@ -39,6 +45,7 @@ pub(crate) static LASER_VALUE: core::sync::atomic::AtomicU32 =
 pub(crate) static LASER_RANGE_MM: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 
+// AtomicU32 carries the exact f32 bit pattern between cores without a lock.
 fn get_laser(out: &mut [u8]) {
     out.copy_from_slice(
         &LASER_VALUE
@@ -47,6 +54,7 @@ fn get_laser(out: &mut [u8]) {
     );
 }
 
+// Experiment-specific values extend the name-discovered common registry.
 const EXTRA_PARAMS: &[ExtraParam] = &[ExtraParam {
     def: ParamDef {
         name: "laser",
@@ -61,6 +69,7 @@ const EXTRA_PARAMS: &[ExtraParam] = &[ExtraParam {
 #[used]
 pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 
+// Bind only the interrupt handlers used by this experiment's peripherals.
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ => uart::InterruptHandler<UART0>;
     PWM_IRQ_WRAP_0 => helic_fw_common::rig::PwmWrapInterruptHandler;
@@ -69,6 +78,8 @@ bind_interrupts!(pub struct Irqs {
         embassy_rp::dma::InterruptHandler<DMA_CH3>;
 });
 
+// Embassy tasks require permanent, heap-free storage. StaticCell initialises
+// each item once and returns a `'static` reference.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
@@ -77,6 +88,7 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
+    // Board::new consumes every peripheral once and groups it by owner.
     let p = embassy_rp::init(Default::default());
     LASER_RANGE_MM.store(
         config::LASER_RANGE_MM.to_bits(),
@@ -89,6 +101,7 @@ fn main() -> ! {
     );
 
     let board = board::Board::new(p);
+    // Fixed-capacity SPSC queues are the only structured cross-core channels.
     let (cmd_tx, cmd_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (rec_tx, rec_rx) = RECORD_QUEUE.init(Queue::new()).split();
     let controller = config::make_controller();
@@ -100,6 +113,8 @@ fn main() -> ! {
         &controller,
     );
 
+    // Moving the analogue bundle, controller and endpoints into this closure
+    // makes core-1 ownership a compile-time property.
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         executor1.run(|spawner| {
@@ -130,6 +145,7 @@ async fn core0_main(
     store: Store,
     records: shared_rt::RecordConsumer,
 ) {
+    // `.await` yields while Ethernet comes up; it does not stall core 1.
     let stack = net::wiznet::init(spawner, eth, config::MAC_ADDR, config::NET_CONFIG).await;
     spawner.spawn(unwrap!(control_task(stack, store)));
     spawner.spawn(unwrap!(comms::udp::stream_task(stack, records)));
@@ -142,6 +158,7 @@ async fn core0_main(
 
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
+    // `!` means this long-lived server never returns normally.
     comms::tcp::control_run(stack, store).await
 }
 

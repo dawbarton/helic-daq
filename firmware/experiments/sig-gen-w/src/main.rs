@@ -1,5 +1,10 @@
 //! HELIC-DAQ Pico 2W signal generator: Wi-Fi, DAC output and laser logging.
+//!
+//! The RT side matches `sig-gen`; core 0 substitutes the CYW43439 transport
+//! and its radio-controlled LED. Network-facing tasks still consume the same
+//! `embassy_net::Stack`. See the transport sections of both project guides.
 
+// The target has no operating-system standard library or conventional entry.
 #![no_std]
 #![no_main]
 
@@ -31,6 +36,7 @@ use board::{LaserParts, RtAnalog};
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 type Store = ParamStore<config::ActiveController, RtAnalog>;
+// Reject an over-large discovered source table during compilation.
 const _: () =
     assert!(helic_fw_common::rig::source_count::<RtAnalog>() <= helic_fw_common::rig::MAX_SOURCES);
 
@@ -39,6 +45,7 @@ pub(crate) static LASER_VALUE: core::sync::atomic::AtomicU32 =
 pub(crate) static LASER_RANGE_MM: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 
+// AtomicU32 carries an f32's exact bits between cores without locking.
 fn get_laser(out: &mut [u8]) {
     out.copy_from_slice(
         &LASER_VALUE
@@ -47,6 +54,7 @@ fn get_laser(out: &mut [u8]) {
     );
 }
 
+// Extra values extend the discovered registry, not the wire protocol.
 const EXTRA_PARAMS: &[ExtraParam] = &[ExtraParam {
     def: ParamDef {
         name: "laser",
@@ -61,6 +69,8 @@ const EXTRA_PARAMS: &[ExtraParam] = &[ExtraParam {
 #[used]
 pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 
+// PIO1 and DMA0 belong to the CYW43439 backend; the remaining handlers serve
+// the laser UART and hardware sample clock.
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ => uart::InterruptHandler<UART0>;
     PIO1_IRQ_0 => pio::InterruptHandler<PIO1>;
@@ -69,6 +79,7 @@ bind_interrupts!(pub struct Irqs {
         embassy_rp::dma::InterruptHandler<DMA_CH1>;
 });
 
+// StaticCell supplies permanent task and queue storage without a heap.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
@@ -77,6 +88,7 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
+    // Board::new consumes every peripheral once and groups it by core/task.
     let p = embassy_rp::init(Default::default());
     LASER_RANGE_MM.store(
         config::LASER_RANGE_MM.to_bits(),
@@ -89,6 +101,7 @@ fn main() -> ! {
     );
 
     let board = board::Board::new(p);
+    // Commands flow to core 1; non-blocking sample records flow back to core 0.
     let (cmd_tx, cmd_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (rec_tx, rec_rx) = RECORD_QUEUE.init(Queue::new()).split();
     let controller = config::make_controller();
@@ -100,6 +113,7 @@ fn main() -> ! {
         &controller,
     );
 
+    // `move` gives the RT core exclusive ownership of its hardware and state.
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         executor1.run(|spawner| {
@@ -130,6 +144,8 @@ async fn core0_main(
     store: Store,
     records: shared_rt::RecordConsumer,
 ) {
+    // Radio initialisation joins the access point and returns the same network
+    // stack abstraction used by wired experiments, plus LED control and MAC.
     let (stack, control, mac) = net::cyw43::init(
         spawner,
         wifi,
@@ -152,11 +168,13 @@ async fn core0_main(
 
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
+    // `!` is the never type used for a task intended to run indefinitely.
     comms::tcp::control_run(stack, store).await
 }
 
 #[embassy_executor::task]
 async fn blink(mut control: cyw43::Control<'static>) -> ! {
+    // Pico 2W's LED is attached to the radio GPIO, not an RP2350 GPIO pin.
     let mut on = false;
     loop {
         on = !on;

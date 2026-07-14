@@ -6,11 +6,15 @@ edition.workspace = true
 license.workspace = true
 
 [features]
+# Select exactly one physical WIZnet chip. Features configure common network
+# plumbing at compile time and do not create run-time transport dispatch.
 default = ["board-w5500"]
 board-w5500 = ["helic-fw-common/net-wiznet-w5500"]
 board-w6100 = ["helic-fw-common/net-wiznet-w6100"]
 
 [dependencies]
+# Versions are inherited from the firmware workspace so all experiment
+# binaries use one tested Embassy/RP2350 dependency set.
 helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true

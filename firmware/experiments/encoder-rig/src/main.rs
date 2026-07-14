@@ -5,7 +5,13 @@
 //! communications: WIZnet Ethernet with a TCP control server (parameter
 //! registry, stream control) and a UDP sample streamer, plus the laser UART
 //! and a 1 Hz defmt status line.
+//!
+//! This variant follows `cbc-rig` and adds a PIO-driven SSI encoder owned by
+//! core 1. `board.rs` is therefore the main teaching point for the difference.
+//! See the encoder notes in `docs/user_guide.md` and `notes.md` before hardware
+//! use.
 
+// Embedded firmware has no desktop standard library or conventional `main`.
 #![no_std]
 #![no_main]
 
@@ -38,6 +44,7 @@ use board::{LaserParts, RtAnalog};
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 type Store = ParamStore<config::ActiveController, RtAnalog>;
+// Check the complete discovered source count, including controller telemetry.
 const _: () =
     assert!(helic_fw_common::rig::source_count::<RtAnalog>() <= helic_fw_common::rig::MAX_SOURCES);
 
@@ -51,6 +58,8 @@ pub(crate) static ENCODER_ERRORS: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 pub(crate) static ADC_ERRORS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
+// These getters serialise independent latest-value atomics into little-endian
+// protocol bytes. Floating-point values use their exact u32 bit pattern.
 fn get_laser(out: &mut [u8]) {
     out.copy_from_slice(
         &LASER_VALUE
@@ -83,6 +92,8 @@ fn get_adc_errors(out: &mut [u8]) {
     );
 }
 
+// Extra parameters are discovered by name and need no new protocol messages.
+// Keep each ParamDef's type consistent with the four bytes written by getter.
 const EXTRA_PARAMS: &[ExtraParam] = &[
     ExtraParam {
         def: ParamDef {
@@ -128,6 +139,8 @@ const EXTRA_PARAMS: &[ExtraParam] = &[
 pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 
 bind_interrupts!(pub struct Irqs {
+    // PIO0 belongs to SSI here. The remaining bindings service the laser,
+    // sample timing and DMA-backed Ethernet paths.
     UART0_IRQ => uart::InterruptHandler<UART0>;
     PIO0_IRQ_0 => pio::InterruptHandler<PIO0>;
     PWM_IRQ_WRAP_0 => helic_fw_common::rig::PwmWrapInterruptHandler;
@@ -136,6 +149,8 @@ bind_interrupts!(pub struct Irqs {
         embassy_rp::dma::InterruptHandler<DMA_CH3>;
 });
 
+// StaticCell provides one-time, heap-free storage for indefinitely lived tasks
+// and queues. SPSC capacities are fixed to keep memory and timing bounded.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
@@ -144,6 +159,7 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
+    // The peripheral singleton is consumed and divided into ownership bundles.
     let p = embassy_rp::init(Default::default());
     LASER_RANGE_MM.store(
         config::LASER_RANGE_MM.to_bits(),
@@ -153,6 +169,8 @@ fn main() -> ! {
 
     let b = board::Board::new(p);
 
+    // Commands flow core 0 -> 1; records flow core 1 -> 0. The split endpoints
+    // make the single-producer/single-consumer rule explicit in Rust's types.
     let (cmd_tx, cmd_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (rec_tx, rec_rx) = RECORD_QUEUE.init(Queue::new()).split();
     let controller = config::make_controller();
@@ -164,6 +182,8 @@ fn main() -> ! {
         &controller,
     );
 
+    // Moving the analogue/encoder bundle and RT endpoints into the closure
+    // prevents accidental use from the communications core.
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         executor1.run(|spawner| {
@@ -188,7 +208,7 @@ fn main() -> ! {
 }
 
 /// Brings the network up (async, so it cannot run inside `main`), then
-/// spawns the servers.
+/// spawns the transport-independent servers.
 #[embassy_executor::task]
 async fn core0_main(
     spawner: Spawner,
@@ -197,6 +217,7 @@ async fn core0_main(
     records: shared_rt::RecordConsumer,
 ) {
     info!("core0_main: task started");
+    // Awaiting network hardware yields core 0 and never affects core-1 timing.
     let stack = net::wiznet::init(spawner, eth, config::MAC_ADDR, config::NET_CONFIG).await;
     spawner.spawn(unwrap!(control_task(stack, store)));
     spawner.spawn(unwrap!(comms::udp::stream_task(stack, records)));
@@ -209,6 +230,7 @@ async fn core0_main(
 
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
+    // The never return type `!` documents this as an indefinitely lived task.
     comms::tcp::control_run(stack, store).await
 }
 

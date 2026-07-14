@@ -8,15 +8,20 @@
 //! - GP0/GP1: UART0 TX/RX, optoNCDT laser (core 0)
 //! - GP2/GP3/GP4: AD7609 OS0/OS1/OS2
 //! - GP5: AD7609 RANGE, GP6: RESET, GP7: BUSY (input)
-//! - GP8: AD7609 CONVST — PWM slice 4 output A, the hardware sample clock
+//! - GP8: AD7609 CONVST, PWM slice 4 output A, the hardware sample clock
 //! - GP9: AD5064 ~SYNC (CS), GP15: AD5064 ~LDAC (held low)
 //! - GP10/GP11/GP12: SPI1 SCK/MOSI/MISO (shared: AD7609 + AD5064)
 //! - GP13: AD7609 ~CS, GP14: tick-timing debug pin
 //!
 //! The analog SPI bus is used only by the real-time loop on core 1, so
-//! [`AnalogParts`] is moved to core 1 and assembled there — the shared-bus
+//! [`AnalogParts`] is moved to core 1 and assembled there. The shared-bus
 //! mutex can then be the zero-cost `NoopRawMutex` (which is `!Sync` and
 //! could not be shared across cores anyway).
+//!
+//! The reusable behaviour is expressed through the `Rig` trait below. A new
+//! experiment should keep this module to ownership, pins and thin adaptation;
+//! reusable device behaviour belongs in `helic-drivers`. See "Swapping
+//! peripherals" in `docs/developer_guide.md`.
 
 use core::cell::RefCell;
 use core::sync::atomic::Ordering;
@@ -56,6 +61,9 @@ pub const DAC_POLARITY: [ChannelPolarity; 4] = [
     ChannelPolarity::Unipolar,
 ];
 
+// These aliases make otherwise long generic hardware types readable. The
+// lifetime `'static` means the peripheral remains valid for the firmware's
+// entire run, not that it is globally accessible from both cores.
 type SpiBus = Mutex<NoopRawMutex, RefCell<Spi<'static, SPI1, Blocking>>>;
 type SpiDev =
     SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, Blocking>, Output<'static>>;
@@ -64,8 +72,14 @@ type SpiDev =
 pub type Adc = Ad7609<SpiDev, Output<'static>>;
 pub type Dac = Ad5064<SpiDev>;
 
+// The shared ADC/DAC bus requires stable storage because each chip-select
+// device borrows it. StaticCell initialises that storage exactly once.
 static SPI_BUS: StaticCell<SpiBus> = StaticCell::new();
 
+/// Top-level ownership bundle returned after assigning every board peripheral.
+///
+/// Rust peripherals are unique values. Moving a field into a task proves no
+/// other task can configure or use the same hardware concurrently.
 pub struct Board {
     /// Board LED (GP25), core-0 heartbeat.
     pub led: Output<'static>,
@@ -104,7 +118,10 @@ pub struct AnalogParts {
     convst_pin: Peri<'static, PIN_8>,
 }
 
-/// The assembled core-1 analog subsystem.
+/// The assembled core-1 analogue subsystem and its persistent RT state.
+///
+/// Failed ADC reads deliberately retain `adc_last`; injecting zero into a
+/// controller would be a less safe and less observable failure mode.
 pub struct RtAnalog {
     pub adc: Adc,
     pub dac: Dac,
@@ -163,6 +180,9 @@ impl AnalogParts {
 }
 
 impl Rig for RtAnalog {
+    // These names and units become the first entries in source discovery.
+    // `measure()` must fill its slice in exactly this order. The common loop
+    // appends controller telemetry and generated/output signals automatically.
     const INPUTS: &'static [(&'static str, &'static str)] = &[
         ("adc0", "V"),
         ("adc1", "V"),
@@ -175,10 +195,14 @@ impl Rig for RtAnalog {
         ("laser", "mm"),
     ];
 
+    // Associated types select concrete implementations at compile time. There
+    // is no run-time trait-object lookup inside a sample tick.
     type Tick = BusyEdgeTick;
     type Ctrl = ActiveController;
 
     fn init(&mut self) {
+        // `init` runs once on core 1 before the first tick. It is the correct
+        // place for slow reset delays and fail-safe output initialisation.
         self.adc.init(
             helic_drivers::ad7609::InputRange::Bipolar10V,
             helic_drivers::ad7609::Oversampling::for_sample_rate(self.sample_rate.hz()),
@@ -197,6 +221,8 @@ impl Rig for RtAnalog {
     }
 
     fn measure(&mut self, values: &mut [f32]) {
+        // This method is on the bounded RT path. It performs no allocation and
+        // uses f32 so arithmetic is accelerated by the Cortex-M33 FPU.
         match self.adc.read_frame() {
             Ok(frame) => self.adc_last = frame,
             Err(_) => {
@@ -210,6 +236,8 @@ impl Rig for RtAnalog {
     }
 
     fn actuate(&mut self, out: f32) {
+        // The driver clamps or maps according to this channel's declared
+        // polarity. DAC_POLARITY must match the fitted output stage.
         let _ = self.dac.write_volts(self.output_channel, out);
     }
 
@@ -222,6 +250,8 @@ impl Rig for RtAnalog {
     }
 
     fn param_names() -> &'static [&'static str] {
+        // The common registry prefixes these rig controls after base and extra
+        // parameters. Keep names, defaults and match-arm IDs in one order.
         &["rig_laser_range", "rig_out_channel"]
     }
 
@@ -230,6 +260,8 @@ impl Rig for RtAnalog {
     }
 
     fn normalise_param(id: u16, value: f32) -> Option<f32> {
+        // Returning None rejects a host write before acknowledgement. Channel
+        // values must be exact integers representable by the DAC array index.
         match id {
             0 if value.is_finite() && value > 0.0 => Some(value),
             1 if value.is_finite()
@@ -244,6 +276,9 @@ impl Rig for RtAnalog {
     }
 
     fn set_param(&mut self, id: u16, value: f32) {
+        // Commands reach here only at a sample boundary. Large or structured
+        // updates use the queue/table mechanisms described in the developer
+        // guide rather than shared mutable state.
         match id {
             0 => LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed),
             1 => self.output_channel = value as usize,
@@ -254,7 +289,7 @@ impl Rig for RtAnalog {
 
 impl RtAnalog {
     /// Start the hardware sample clock: CONVST as a free-running PWM output.
-    /// Conversion starts on each rising edge, crystal-timed — software jitter
+    /// Conversion starts on each rising edge and is crystal-timed; software jitter
     /// cannot move the sampling instant. Call after ADC init; the returned
     /// handle must be kept alive.
     pub fn start_convst_pwm(&mut self, divider: u8, top: u16) -> Pwm<'static> {
@@ -268,7 +303,14 @@ impl RtAnalog {
 }
 
 impl Board {
+    /// Consume the singleton peripheral set and assign each item exactly once.
+    ///
+    /// Keep all pin numbers in this constructor and in the module pin map so a
+    /// reviewer can audit wiring without searching algorithmic code.
     pub fn new(p: Peripherals) -> Self {
+        // SPI1 is blocking because only core 1 uses it in the bounded tick.
+        // SPI0 is asynchronous and DMA-backed so network transfers yield core
+        // 0 while the WIZnet controller is active.
         let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi::Config::default());
         let mut eth_config = spi::Config::default();
         eth_config.frequency = 40_000_000;

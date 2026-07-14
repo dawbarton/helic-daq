@@ -5,7 +5,15 @@
 //! communications: WIZnet Ethernet with a TCP control server (parameter
 //! registry, stream control) and a UDP sample streamer, plus the laser UART
 //! and a 1 Hz defmt status line.
+//!
+//! This file is intentionally orchestration rather than experiment logic. A
+//! new experiment normally changes the concrete parts and task wrappers here,
+//! implements `Rig` in `board.rs`, and reuses the runners in `firmware/common`.
+//! See "Firmware architecture" and "Adding an experiment" in
+//! `docs/developer_guide.md`.
 
+// `no_std` removes the desktop standard library, which is unavailable on the
+// microcontroller. `no_main` lets the Cortex-M runtime provide the reset entry.
 #![no_std]
 #![no_main]
 
@@ -37,9 +45,15 @@ use board::{LaserParts, RtAnalog};
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 type Store = ParamStore<config::ActiveController, RtAnalog>;
+// This unnamed compile-time assertion fails the build if the chosen rig and
+// controller would overflow the fixed protocol source table.
 const _: () =
     assert!(helic_fw_common::rig::source_count::<RtAnalog>() <= helic_fw_common::rig::MAX_SOURCES);
 
+// Atomics are the only scalar state shared across cores. An AtomicU32 can also
+// carry an f32 losslessly by storing its IEEE-754 bit pattern with to_bits().
+// Relaxed ordering is sufficient because each value is an independent latest
+// reading; the SPSC queues provide ordering for coherent commands and records.
 pub(crate) static LASER_VALUE: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 pub(crate) static LASER_RANGE_MM: core::sync::atomic::AtomicU32 =
@@ -47,6 +61,8 @@ pub(crate) static LASER_RANGE_MM: core::sync::atomic::AtomicU32 =
 pub(crate) static ADC_ERRORS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 fn get_laser(out: &mut [u8]) {
+    // Protocol values are little-endian bytes. `out` has the four-byte size
+    // guaranteed by the matching `ParamDef` below.
     out.copy_from_slice(
         &LASER_VALUE
             .load(core::sync::atomic::Ordering::Relaxed)
@@ -63,6 +79,8 @@ fn get_adc_errors(out: &mut [u8]) {
 }
 
 const EXTRA_PARAMS: &[ExtraParam] = &[
+    // Extra parameters supplement the common registry without changing the
+    // wire protocol. Names, types and access are discovered by the host.
     ExtraParam {
         def: ParamDef {
             name: "laser",
@@ -89,6 +107,8 @@ const EXTRA_PARAMS: &[ExtraParam] = &[
 pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 
 bind_interrupts!(pub struct Irqs {
+    // Embassy turns this declarative list into type-safe interrupt tokens.
+    // Bind only peripherals owned by this experiment.
     UART0_IRQ => uart::InterruptHandler<UART0>;
     PWM_IRQ_WRAP_0 => helic_fw_common::rig::PwmWrapInterruptHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH1>,
@@ -96,6 +116,9 @@ bind_interrupts!(pub struct Irqs {
         embassy_rp::dma::InterruptHandler<DMA_CH3>;
 });
 
+// Embedded async tasks live for the whole firmware run. StaticCell performs a
+// one-time initialisation and returns the required `'static` reference without
+// a heap allocator. Queue capacities are fixed for the same reason.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
@@ -104,6 +127,8 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
+    // Taking `Peripherals` gives this function unique ownership of every RP2350
+    // peripheral. `Board::new` then divides those resources by task and core.
     let p = embassy_rp::init(Default::default());
     LASER_RANGE_MM.store(
         config::LASER_RANGE_MM.to_bits(),
@@ -113,6 +138,9 @@ fn main() -> ! {
 
     let b = board::Board::new(p);
 
+    // `split` creates a producer and consumer with Rust types that prevent
+    // either SPSC endpoint being used from both cores. Commands flow 0 -> 1;
+    // sample records flow 1 -> 0.
     let (cmd_tx, cmd_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (rec_tx, rec_rx) = RECORD_QUEUE.init(Queue::new()).split();
     let controller = config::make_controller();
@@ -124,6 +152,9 @@ fn main() -> ! {
         &controller,
     );
 
+    // `move` transfers ownership of the analogue peripherals, controller and
+    // queue endpoints into core 1. Core 0 cannot use them afterwards, which
+    // enforces the architecture at compile time.
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         executor1.run(|spawner| {
@@ -138,6 +169,9 @@ fn main() -> ! {
     // that livelocks core 0; an external 10k pull-up to 3V3 holds the line in
     // the idle (mark) state so a disconnected/quiet sensor just parks in
     // `rx.read().await`. See docs/developer_guide.md known gaps.
+    //
+    // `Executor::run` never returns. Embassy polls these cooperative async
+    // tasks whenever interrupts or timers make progress possible.
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
         spawner.spawn(unwrap!(core0_main(spawner, b.eth, store, rec_rx)));
@@ -148,7 +182,10 @@ fn main() -> ! {
 }
 
 /// Brings the network up (async, so it cannot run inside `main`), then
-/// spawns the servers.
+/// spawns the transport-independent servers.
+///
+/// Embassy task functions cannot be generic, hence this concrete wrapper
+/// around the reusable WIZnet and communications functions.
 #[embassy_executor::task]
 async fn core0_main(
     spawner: Spawner,
@@ -157,6 +194,8 @@ async fn core0_main(
     records: shared_rt::RecordConsumer,
 ) {
     info!("core0_main: task started");
+    // `.await` yields core 0 while the network initialises; it does not block
+    // the independent real-time executor running on core 1.
     let stack = net::wiznet::init(spawner, eth, config::MAC_ADDR, config::NET_CONFIG).await;
     spawner.spawn(unwrap!(control_task(stack, store)));
     spawner.spawn(unwrap!(comms::udp::stream_task(stack, records)));
@@ -169,6 +208,7 @@ async fn core0_main(
 
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
+    // `-> !` is Rust's never type: a server task is expected to run forever.
     comms::tcp::control_run(stack, store).await
 }
 
