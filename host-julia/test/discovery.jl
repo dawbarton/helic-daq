@@ -1,9 +1,9 @@
-"""Directed-loopback tests for HELIC-DAQ UDP discovery."""
+# Directed-loopback tests for HELIC-DAQ UDP discovery.
 
 @testset "discovery" begin
-    port = 32352
     server = UDPSocket()
-    bind(server, ip"127.0.0.1", port)
+    @test bind(server, ip"127.0.0.1", 0)
+    port = Int(HelicDAQ._bound_port(server))
     task = @async begin
         peer, request = recvfrom(server)
         @test request == P.BEACON_REQUEST

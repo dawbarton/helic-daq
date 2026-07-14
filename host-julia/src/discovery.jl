@@ -1,4 +1,4 @@
-"""UDP discovery of HELIC-DAQ devices on IPv4 networks."""
+# UDP discovery of HELIC-DAQ devices on IPv4 networks.
 
 """Identity and connection details returned by a discovery beacon."""
 struct DiscoveredDevice
@@ -29,13 +29,18 @@ function find_devices(;
     targets = isnothing(addresses) ? IPv4[ip"255.255.255.255", ip"127.0.0.1"] :
         _ipv4.(addresses)
     socket = UDPSocket()
-    bind(socket, ip"0.0.0.0", 0)
-    Sockets.setopt(socket; enable_broadcast = true)
-    timer = Timer(timeout) do _
-        isopen(socket) && close(socket)
-    end
-
+    timer = nothing
     try
+        # bind returns false (rather than throwing) when the address is
+        # inaccessible.
+        bind(socket, ip"0.0.0.0", 0) ||
+            throw(Base.IOError("could not bind a UDP discovery socket", 0))
+        Sockets.setopt(socket; enable_broadcast = true)
+        # The timer ends the receive loop by closing the socket.
+        timer = Timer(timeout) do _
+            isopen(socket) && close(socket)
+        end
+
         for target in targets
             try
                 send(socket, target, port, Protocol.BEACON_REQUEST)
@@ -71,7 +76,7 @@ function find_devices(;
         end
         return sort!(collect(values(found)); by = device -> (device.address.host, device.mac))
     finally
-        close(timer)
+        isnothing(timer) || close(timer)
         isopen(socket) && close(socket)
     end
 end

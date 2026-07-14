@@ -1,4 +1,4 @@
-"""End-to-end device API tests against a small in-process protocol peer."""
+# End-to-end device API tests against a small in-process protocol peer.
 
 function mock_raw(type_code::Char, count::Int, value)
     if type_code == 'c'
@@ -199,6 +199,7 @@ end
         values = getparams(device, (:firmware, :freq))
         @test values.firmware == "helic-daq test"
         @test values.freq == 12.5f0
+        @test_throws ArgumentError getparams(device, (:freq, :freq))
         @test_throws DeviceError setparam!(device, :firmware, "x")
 
         upload_table!(device, [0, 1, 0, -1]; duration = 0.2, gain = 2, mode = :one_shot)
@@ -213,7 +214,7 @@ end
             [:adc0, :out];
             samples = 4,
             decimation = 2,
-            port = 32353,
+            port = 0,
             timeout = 1,
         )
         @test result[:index] == UInt64[100, 102, 104, 106]
@@ -232,4 +233,15 @@ end
     @test answer == 0.0f0
     wait(opened.task)
     close(opened.listener)
+end
+
+@testset "device timeout" begin
+    # A listener that accepts the connection but never responds.
+    silent = listen(ip"127.0.0.1", 0)
+    _, silent_port = getsockname(silent)
+    try
+        @test_throws DeviceError Device("127.0.0.1"; port = Int(silent_port), timeout = 0.05)
+    finally
+        close(silent)
+    end
 end

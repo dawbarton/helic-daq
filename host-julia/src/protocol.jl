@@ -1,4 +1,9 @@
-"""Wire-level codecs for HELIC-DAQ protocol v2."""
+"""Wire-level codecs for HELIC-DAQ protocol v2.
+
+Everything is little-endian. The authoritative description is
+`docs/protocol.md`; its known-answer vectors are tested against this module
+alongside the Rust and Python implementations.
+"""
 module Protocol
 
 export BEACON_REQUEST,
@@ -29,7 +34,7 @@ export BEACON_REQUEST,
     encode_stream_header,
     crc16
 
-const MAGIC = UInt16(0x4c48)
+const MAGIC = UInt16(0x4c48)  # little-endian ASCII "HL"
 const VERSION = UInt8(2)
 const CONTROL_PORT = 2350
 const STREAM_PORT = 2351
@@ -38,6 +43,8 @@ const HEADER_LEN = 6
 const TRAILER_LEN = 2
 const MAX_PAYLOAD = 1024
 const STREAM_HEADER_LEN = 20
+# Error code (payload byte 1 of an Error response) the device returns while a
+# table commit is still pending; hosts may retry.
 const ERROR_BUSY = UInt8(7)
 
 const ERROR_NAMES = Dict{UInt8, String}(
@@ -103,6 +110,7 @@ _read_le(io::IO, ::Type{UInt32}) = ltoh(read(io, UInt32))
 _read_le(io::IO, ::Type{Int32}) = ltoh(read(io, Int32))
 _read_le(io::IO, ::Type{Float32}) = reinterpret(Float32, _read_le(io, UInt32))
 
+"""CRC-16/CCITT-FALSE (polynomial 0x1021, initial value 0xffff)."""
 function crc16(data)::UInt16
     crc = UInt16(0xffff)
     for byte in data
@@ -125,7 +133,7 @@ function encode_frame(message_type, sequence::Integer, payload = UInt8[])
         throw(ProtocolError("payload too long ($(length(payload)) > $MAX_PAYLOAD)"))
     body = IOBuffer()
     _write_le(body, UInt8(message_type))
-    _write_le(body, UInt8(sequence % 256))
+    _write_le(body, sequence % UInt8)  # truncating conversion, like Python's & 0xff
     _write_le(body, UInt16(length(payload)))
     write(body, payload)
     body_bytes = take!(body)
@@ -240,14 +248,14 @@ function decode_beacon_response(payload::AbstractVector{UInt8})
     version = _read_le(io, UInt8)
     control_port = _read_le(io, UInt16)
     mac = Tuple(read(io, 6))
-    identity(bytes) = begin
+    fixed_string(bytes) = begin
         ending = something(findfirst(==(0x00), bytes), length(bytes) + 1)
         text = @view bytes[1:(ending - 1)]
         all(<(0x80), text) || throw(ProtocolError("non-ASCII beacon identity"))
         String(text)
     end
-    experiment = identity(read(io, 16))
-    firmware = identity(read(io, 16))
+    experiment = fixed_string(read(io, 16))
+    firmware = fixed_string(read(io, 16))
     return BeaconResponse(version, control_port, mac, experiment, firmware)
 end
 

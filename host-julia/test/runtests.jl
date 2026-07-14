@@ -1,4 +1,4 @@
-"""HELIC-DAQ Julia package test entry point."""
+# HELIC-DAQ Julia package test entry point.
 
 using HelicDAQ
 using Sockets

@@ -1,5 +1,6 @@
-"""UDP stream reception and the Tables.jl-compatible capture container."""
+# UDP stream reception and the Tables.jl-compatible capture container.
 
+"""No stream packet arrived within the receiver timeout; the receiver is closed."""
 struct StreamTimeout <: Exception
     seconds::Float64
 end
@@ -7,7 +8,11 @@ end
 Base.showerror(io::IO, error::StreamTimeout) =
     print(io, "no HELIC-DAQ stream packet received within $(error.seconds) seconds")
 
-"""A bound UDP receiver that tracks packet-sequence loss."""
+"""A bound UDP receiver that tracks packet-sequence loss.
+
+Pass `port = 0` to bind an ephemeral port; `receiver.port` is always the
+actual bound port.
+"""
 mutable struct StreamReceiver
     socket::UDPSocket
     port::UInt16
@@ -16,22 +21,53 @@ mutable struct StreamReceiver
     lost_packets::Int
 end
 
+# Enlarge the OS receive buffer (best effort) so bursty streams are less
+# likely to be dropped in the kernel before `receive` runs.
+function _set_receive_buffer(socket::UDPSocket, bytes::Integer)
+    size = Ref{Cint}(bytes)
+    ccall(:uv_recv_buffer_size, Cint, (Ptr{Cvoid}, Ref{Cint}), socket.handle, size)
+    return nothing
+end
+
+# Sockets.getsockname does not support UDPSocket (as of Julia 1.10), so ask
+# libuv directly. The port is at byte offset 2 in network order for both
+# sockaddr_in and sockaddr_in6.
+function _bound_port(socket::UDPSocket)
+    storage = zeros(UInt8, 128)
+    storage_length = Ref{Cint}(length(storage))
+    rc = ccall(
+        :uv_udp_getsockname,
+        Cint,
+        (Ptr{Cvoid}, Ptr{UInt8}, Ref{Cint}),
+        socket.handle,
+        storage,
+        storage_length,
+    )
+    rc == 0 || throw(Base.IOError("could not read the bound stream port", rc))
+    return UInt16(storage[3]) << 8 | UInt16(storage[4])
+end
+
 function StreamReceiver(;
         port::Integer = Protocol.STREAM_PORT,
         bind_address::IPAddr = ip"0.0.0.0",
         timeout::Real = 2.0,
     )
-    1 <= port <= typemax(UInt16) ||
-        throw(ArgumentError("port must be between 1 and $(typemax(UInt16))"))
+    0 <= port <= typemax(UInt16) ||
+        throw(ArgumentError("port must be between 0 and $(typemax(UInt16))"))
     timeout > 0 || throw(ArgumentError("timeout must be positive"))
     socket = UDPSocket()
     try
-        bind(socket, bind_address, port)
+        # bind returns false (rather than throwing) when the address is in
+        # use or inaccessible.
+        bind(socket, bind_address, port) || throw(
+            Base.IOError("could not bind stream receiver to $bind_address:$port", 0),
+        )
+        _set_receive_buffer(socket, 1 << 20)
+        return StreamReceiver(socket, _bound_port(socket), Float64(timeout), nothing, 0)
     catch
         close(socket)
         rethrow()
     end
-    return StreamReceiver(socket, UInt16(port), Float64(timeout), nothing, 0)
 end
 
 Base.close(receiver::StreamReceiver) = close(receiver.socket)
@@ -46,6 +82,8 @@ function Base.open(f::Function, ::Type{StreamReceiver}; kwargs...)
     end
 end
 
+# Julia sockets have no native read timeout, so a Timer closes the socket to
+# interrupt the blocking recvfrom; a timed-out receiver is therefore unusable.
 function _recvfrom_timeout(socket::UDPSocket, timeout::Float64)
     expired = Ref(false)
     timer = Timer(timeout) do _
@@ -64,7 +102,11 @@ function _recvfrom_timeout(socket::UDPSocket, timeout::Float64)
     end
 end
 
-"""Receive and decode one stream packet as a header and record-major matrix."""
+"""Receive and decode one stream packet as a header and record-major matrix.
+
+Throws [`StreamTimeout`](@ref) and closes the receiver if nothing arrives
+within the receiver's timeout.
+"""
 function receive(receiver::StreamReceiver)
     _, packet = _recvfrom_timeout(receiver.socket, receiver.timeout)
     header = Protocol.decode_stream_header(packet)
@@ -78,6 +120,8 @@ function receive(receiver::StreamReceiver)
 
     if !isnothing(receiver.last_sequence)
         gap = header.seq - receiver.last_sequence - UInt32(1)
+        # Count small forward gaps as loss; huge wrapped gaps are stream
+        # restarts (sequence reset to zero) or reordering, not loss.
         if 0 < gap < (UInt32(1) << 16)
             receiver.lost_packets += Int(gap)
         end

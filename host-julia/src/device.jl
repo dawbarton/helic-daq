@@ -1,5 +1,9 @@
-"""TCP device connection, discovered parameters, and capture orchestration."""
+# TCP device connection, discovered parameters, and capture orchestration.
 
+"""A device-reported error or broken control-channel invariant.
+
+`code` is the wire error code for device-reported errors, `nothing` otherwise.
+"""
 struct DeviceError <: Exception
     message::String
     code::Union{Nothing, UInt8}
@@ -24,11 +28,16 @@ struct Source
     unit::String
 end
 
-"""A HELIC-DAQ TCP control connection with connection-local discovery tables."""
+"""A HELIC-DAQ TCP control connection with connection-local discovery tables.
+
+Connecting and every request give up after `timeout` seconds; a timed-out
+connection is closed and must be reopened.
+"""
 mutable struct Device
     socket::TCPSocket
     host::String
     port::UInt16
+    timeout::Float64
     sequence::UInt8
     parameters::Vector{Parameter}
     parameter_by_name::Dict{String, Parameter}
@@ -36,14 +45,39 @@ mutable struct Device
     source_by_name::Dict{String, Source}
 end
 
-function Device(host::AbstractString; port::Integer = Protocol.CONTROL_PORT)
+# Julia's connect has no timeout argument, so run it in a task and give up
+# after `timeout` seconds, closing the socket if it ever appears late.
+function _connect_timeout(host::AbstractString, port::Integer, timeout::Real)
+    task = @async connect(host, port)
+    if timedwait(() -> istaskdone(task), Float64(timeout)) === :timed_out
+        @async try
+            close(fetch(task))
+        catch
+        end
+        throw(DeviceError("connection to $host:$port timed out"))
+    end
+    return try
+        fetch(task)
+    catch error
+        error isa TaskFailedException ? throw(error.task.exception) : rethrow()
+    end
+end
+
+function Device(
+        host::AbstractString;
+        port::Integer = Protocol.CONTROL_PORT,
+        timeout::Real = 5.0,
+    )
     1 <= port <= typemax(UInt16) ||
         throw(ArgumentError("port must be between 1 and $(typemax(UInt16))"))
-    socket = connect(host, port)
+    timeout > 0 || throw(ArgumentError("timeout must be positive"))
+    socket = _connect_timeout(host, port, timeout)
+    Sockets.nagle(socket, false)  # request/response protocol: no batching delay
     device = Device(
         socket,
         String(host),
         UInt16(port),
+        Float64(timeout),
         UInt8(0),
         Parameter[],
         Dict{String, Parameter}(),
@@ -83,16 +117,32 @@ function Base.open(f::Function, ::Type{Device}, host::AbstractString; kwargs...)
 end
 
 function _request(device::Device, message_type, payload = UInt8[])
-    device.sequence = UInt8(mod(Int(device.sequence) + 1, 256))
-    write(device.socket, Protocol.encode_frame(message_type, device.sequence, payload))
-    flush(device.socket)
-    header = read(device.socket, Protocol.HEADER_LEN)
-    length(header) == Protocol.HEADER_LEN || throw(DeviceError("connection closed by device"))
-    payload_length = Int(UInt16(header[5]) | (UInt16(header[6]) << 8))
-    rest = read(device.socket, payload_length + Protocol.TRAILER_LEN)
-    length(rest) == payload_length + Protocol.TRAILER_LEN ||
-        throw(DeviceError("connection closed by device"))
-    response = Protocol.decode_frame([header; rest])
+    device.sequence += 0x01  # UInt8 arithmetic wraps 255 -> 0
+    # Julia sockets have no native read timeout, so a Timer closes the socket
+    # to interrupt a blocked read; a timed-out connection stays closed.
+    expired = Ref(false)
+    timer = Timer(device.timeout) do _
+        expired[] = true
+        isopen(device.socket) && close(device.socket)
+    end
+    response = try
+        write(device.socket, Protocol.encode_frame(message_type, device.sequence, payload))
+        flush(device.socket)
+        header = read(device.socket, Protocol.HEADER_LEN)
+        length(header) == Protocol.HEADER_LEN ||
+            throw(DeviceError("connection closed by device"))
+        payload_length = Int(UInt16(header[5]) | (UInt16(header[6]) << 8))
+        rest = read(device.socket, payload_length + Protocol.TRAILER_LEN)
+        length(rest) == payload_length + Protocol.TRAILER_LEN ||
+            throw(DeviceError("connection closed by device"))
+        Protocol.decode_frame([header; rest])
+    catch
+        expired[] &&
+            throw(DeviceError("no response from device within $(device.timeout) seconds"))
+        rethrow()
+    finally
+        close(timer)
+    end
     response.sequence == device.sequence || throw(
         DeviceError(
             "sequence mismatch: sent $(device.sequence), received $(response.sequence)",
@@ -160,10 +210,13 @@ _wire_type(code::Char) = get(WIRE_TYPES, code) do
     throw(Protocol.ProtocolError("invalid parameter type code '$code'"))
 end
 
-Base.sizeof(parameter::Parameter) = sizeof(_wire_type(parameter.type_code)) * parameter.count
+# Encoded size of a parameter value on the wire (not the struct's own size).
+_wire_size(parameter::Parameter) = sizeof(_wire_type(parameter.type_code)) * parameter.count
 
 function _pack_value(parameter::Parameter, value)
     if parameter.type_code == 'c'
+        value isa Union{AbstractString, Symbol} ||
+            throw(ArgumentError("character parameters take a string or symbol"))
         text = String(value)
         isascii(text) || throw(ArgumentError("character parameters must be ASCII"))
         bytes = collect(codeunits(text))
@@ -188,7 +241,7 @@ function _pack_value(parameter::Parameter, value)
 end
 
 function _unpack_value(parameter::Parameter, bytes::AbstractVector{UInt8})
-    length(bytes) == sizeof(parameter) ||
+    length(bytes) == _wire_size(parameter) ||
         throw(Protocol.ProtocolError("parameter value has an invalid length"))
     if parameter.type_code == 'c'
         ending = something(findfirst(==(0x00), bytes), length(bytes) + 1)
@@ -204,7 +257,9 @@ end
 function getparams(device::Device, names)
     parameters = [parameter(device, name) for name in names]
     isempty(parameters) && throw(ArgumentError("at least one parameter is required"))
-    total_size = sum(sizeof, parameters)
+    allunique(definition.index for definition in parameters) ||
+        throw(ArgumentError("parameter names must be unique"))
+    total_size = sum(_wire_size, parameters)
     total_size <= Protocol.MAX_PAYLOAD || throw(
         DeviceError(
             "requested values need $total_size bytes; responses are limited to " *
@@ -222,7 +277,7 @@ function getparams(device::Device, names)
     offset = 1
     result = Any[]
     for definition in parameters
-        ending = offset + sizeof(definition) - 1
+        ending = offset + _wire_size(definition) - 1
         push!(result, _unpack_value(definition, @view response[offset:ending]))
         offset = ending + 1
     end
@@ -345,7 +400,7 @@ function _request_with_busy_retry(
             sleep(0.005)
         end
     end
-    return
+    return  # unreachable; Runic requires an explicit return
 end
 
 """Stage and atomically activate a finite arbitrary waveform table."""
@@ -370,6 +425,8 @@ function upload_table!(
         duration > 0 || throw(ArgumentError("duration must be positive"))
         frequency = inv(duration)
     end
+    isnothing(frequency) || frequency > 0 ||
+        throw(ArgumentError("frequency must be positive"))
     modes = Dict(:off => 0, :loop => 1, :one_shot => 2, :locked => 3, :locked_one_shot => 4)
     haskey(modes, mode) || throw(ArgumentError("unknown table mode :$mode"))
     multiplier >= 1 || throw(ArgumentError("multiplier must be at least 1"))

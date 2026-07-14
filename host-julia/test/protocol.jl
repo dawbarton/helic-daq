@@ -1,4 +1,4 @@
-"""Known-answer and validation tests for the Julia protocol codec."""
+# Known-answer and validation tests for the Julia protocol codec.
 
 const P = HelicDAQ.Protocol
 
