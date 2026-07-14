@@ -17,7 +17,7 @@
         send(server, peer.host, peer.port, P.encode_beacon_response(response))
     end
     try
-        devices = find_devices(; timeout=0.2, port, addresses=["127.0.0.1"])
+        devices = find_devices(; timeout = 0.2, port, addresses = ["127.0.0.1"])
         @test length(devices) == 1
         @test devices[1].address == ip"127.0.0.1"
         @test devices[1].control_port == 2350

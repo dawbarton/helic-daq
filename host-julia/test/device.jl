@@ -59,7 +59,7 @@ end
 
 function send_mock_stream(port::UInt16, ids, count::UInt32, decimation::UInt16)
     socket = UDPSocket()
-    try
+    return try
         header = P.StreamHeader(
             UInt8(length(ids)),
             UInt32(0),
@@ -82,115 +82,117 @@ end
 
 function start_mock_device()
     parameters = [
-        (name="firmware", type_code='c', count=16, writable=false, value="helic-daq test"),
-        (name="sample_freq", type_code='f', count=1, writable=false, value=Float32(1000)),
-        (name="freq", type_code='f', count=1, writable=true, value=Float32(0)),
-        (name="forcing_coeffs", type_code='f', count=5, writable=true, value=zeros(Float32, 5)),
-        (name="table", type_code='f', count=8, writable=true, value=zeros(Float32, 8)),
-        (name="table_len", type_code='H', count=1, writable=false, value=UInt16(0)),
-        (name="table_freq", type_code='f', count=1, writable=true, value=Float32(0)),
-        (name="table_gain", type_code='f', count=1, writable=true, value=Float32(1)),
-        (name="table_mode", type_code='I', count=1, writable=true, value=UInt32(0)),
-        (name="table_mult", type_code='I', count=1, writable=true, value=UInt32(1)),
-        (name="table_phase", type_code='f', count=1, writable=true, value=Float32(0)),
-        (name="table_trigger", type_code='I', count=1, writable=true, value=UInt32(0)),
+        (name = "firmware", type_code = 'c', count = 16, writable = false, value = "helic-daq test"),
+        (name = "sample_freq", type_code = 'f', count = 1, writable = false, value = Float32(1000)),
+        (name = "freq", type_code = 'f', count = 1, writable = true, value = Float32(0)),
+        (name = "forcing_coeffs", type_code = 'f', count = 5, writable = true, value = zeros(Float32, 5)),
+        (name = "table", type_code = 'f', count = 8, writable = true, value = zeros(Float32, 8)),
+        (name = "table_len", type_code = 'H', count = 1, writable = false, value = UInt16(0)),
+        (name = "table_freq", type_code = 'f', count = 1, writable = true, value = Float32(0)),
+        (name = "table_gain", type_code = 'f', count = 1, writable = true, value = Float32(1)),
+        (name = "table_mode", type_code = 'I', count = 1, writable = true, value = UInt32(0)),
+        (name = "table_mult", type_code = 'I', count = 1, writable = true, value = UInt32(1)),
+        (name = "table_phase", type_code = 'f', count = 1, writable = true, value = Float32(0)),
+        (name = "table_trigger", type_code = 'I', count = 1, writable = true, value = UInt32(0)),
     ]
-    sources = [(name="adc0", unit="V"), (name="out", unit="V")]
+    sources = [(name = "adc0", unit = "V"), (name = "out", unit = "V")]
     values = [mock_raw(p.type_code, p.count, p.value) for p in parameters]
     staged = copy(values[5])
     listener = listen(ip"127.0.0.1", 0)
     _, port = getsockname(listener)
 
-    task = errormonitor(@async begin
-        socket = accept(listener)
-        selected_ids = UInt8[]
-        stream_count = UInt32(0)
-        stream_decimation = UInt16(1)
-        try
-            while true
-                request = try
-                    read_mock_request(socket)
-                catch error
-                    error isa EOFError ? nothing : rethrow()
-                end
-                isnothing(request) && break
-                payload = UInt8[]
-                send_stream_to = nothing
-                if request.message_type == UInt8(P.STATUS)
-                    payload = mock_status_payload(length(parameters), length(sources))
-                elseif request.message_type == UInt8(P.GET_PARAMS)
-                    payload = mock_discovery_payload(parameters)
-                elseif request.message_type == UInt8(P.GET_SOURCES)
-                    payload = mock_sources_payload(sources)
-                elseif request.message_type == UInt8(P.GET_PAR)
-                    io = IOBuffer(request.payload)
-                    output = IOBuffer()
-                    while !eof(io)
-                        index = Int(P._read_le(io, UInt16)) + 1
-                        write(output, values[index])
+    task = errormonitor(
+        @async begin
+            socket = accept(listener)
+            selected_ids = UInt8[]
+            stream_count = UInt32(0)
+            stream_decimation = UInt16(1)
+            try
+                while true
+                    request = try
+                        read_mock_request(socket)
+                    catch error
+                        error isa EOFError ? nothing : rethrow()
                     end
-                    payload = take!(output)
-                elseif request.message_type == UInt8(P.SET_PAR)
-                    io = IOBuffer(request.payload)
-                    index = Int(P._read_le(io, UInt16)) + 1
-                    values[index] = read(io)
-                elseif request.message_type == UInt8(P.SET_BLOCK)
-                    io = IOBuffer(request.payload)
-                    index = Int(P._read_le(io, UInt16)) + 1
-                    @test parameters[index].name == "table"
-                    offset = Int(P._read_le(io, UInt32)) * 4
-                    data = read(io)
-                    copyto!(staged, offset + 1, data, 1, length(data))
-                elseif request.message_type == UInt8(P.COMMIT)
-                    io = IOBuffer(request.payload)
-                    index = Int(P._read_le(io, UInt16)) + 1
-                    @test parameters[index].name == "table"
-                    commit_length = P._read_le(io, UInt32)
-                    values[5] = copy(staged)
-                    values[6] = mock_raw('H', 1, UInt16(commit_length))
-                elseif request.message_type == UInt8(P.STREAM_SETUP)
-                    io = IOBuffer(request.payload)
-                    stream_decimation = P._read_le(io, UInt16)
-                    stream_count = P._read_le(io, UInt32)
-                    n_sources = Int(P._read_le(io, UInt8))
-                    selected_ids = read(io, n_sources)
-                elseif request.message_type == UInt8(P.STREAM_START)
-                    io = IOBuffer(request.payload)
-                    send_stream_to = P._read_le(io, UInt16)
-                elseif request.message_type != UInt8(P.STREAM_STOP)
-                    error("unsupported mock request $(request.message_type)")
+                    isnothing(request) && break
+                    payload = UInt8[]
+                    send_stream_to = nothing
+                    if request.message_type == UInt8(P.STATUS)
+                        payload = mock_status_payload(length(parameters), length(sources))
+                    elseif request.message_type == UInt8(P.GET_PARAMS)
+                        payload = mock_discovery_payload(parameters)
+                    elseif request.message_type == UInt8(P.GET_SOURCES)
+                        payload = mock_sources_payload(sources)
+                    elseif request.message_type == UInt8(P.GET_PAR)
+                        io = IOBuffer(request.payload)
+                        output = IOBuffer()
+                        while !eof(io)
+                            index = Int(P._read_le(io, UInt16)) + 1
+                            write(output, values[index])
+                        end
+                        payload = take!(output)
+                    elseif request.message_type == UInt8(P.SET_PAR)
+                        io = IOBuffer(request.payload)
+                        index = Int(P._read_le(io, UInt16)) + 1
+                        values[index] = read(io)
+                    elseif request.message_type == UInt8(P.SET_BLOCK)
+                        io = IOBuffer(request.payload)
+                        index = Int(P._read_le(io, UInt16)) + 1
+                        @test parameters[index].name == "table"
+                        offset = Int(P._read_le(io, UInt32)) * 4
+                        data = read(io)
+                        copyto!(staged, offset + 1, data, 1, length(data))
+                    elseif request.message_type == UInt8(P.COMMIT)
+                        io = IOBuffer(request.payload)
+                        index = Int(P._read_le(io, UInt16)) + 1
+                        @test parameters[index].name == "table"
+                        commit_length = P._read_le(io, UInt32)
+                        values[5] = copy(staged)
+                        values[6] = mock_raw('H', 1, UInt16(commit_length))
+                    elseif request.message_type == UInt8(P.STREAM_SETUP)
+                        io = IOBuffer(request.payload)
+                        stream_decimation = P._read_le(io, UInt16)
+                        stream_count = P._read_le(io, UInt32)
+                        n_sources = Int(P._read_le(io, UInt8))
+                        selected_ids = read(io, n_sources)
+                    elseif request.message_type == UInt8(P.STREAM_START)
+                        io = IOBuffer(request.payload)
+                        send_stream_to = P._read_le(io, UInt16)
+                    elseif request.message_type != UInt8(P.STREAM_STOP)
+                        error("unsupported mock request $(request.message_type)")
+                    end
+                    write(socket, P.encode_frame(request.message_type, request.sequence, payload))
+                    flush(socket)
+                    if !isnothing(send_stream_to)
+                        send_mock_stream(
+                            send_stream_to,
+                            selected_ids,
+                            stream_count,
+                            stream_decimation,
+                        )
+                    end
                 end
-                write(socket, P.encode_frame(request.message_type, request.sequence, payload))
-                flush(socket)
-                if !isnothing(send_stream_to)
-                    send_mock_stream(
-                        send_stream_to,
-                        selected_ids,
-                        stream_count,
-                        stream_decimation,
-                    )
-                end
+            finally
+                close(socket)
             end
-        finally
-            close(socket)
         end
-    end)
-    return (; listener, port=Int(port), task, values)
+    )
+    return (; listener, port = Int(port), task, values)
 end
 
 @testset "device" begin
     mock = start_mock_device()
-    device = Device("127.0.0.1"; port=mock.port)
+    device = Device("127.0.0.1"; port = mock.port)
     try
         @test length(device.parameters) == 12
         @test parameter(device, :freq).index == 2
         @test device["firmware"] == "helic-daq test"
         @test status(device) == (
-            protocol_version=UInt8(2),
-            n_params=12,
-            n_sources=2,
-            sample_rate=Float32(1000),
-            uptime=42.0,
+            protocol_version = UInt8(2),
+            n_params = 12,
+            n_sources = 2,
+            sample_rate = Float32(1000),
+            uptime = 42.0,
         )
         device[:freq] = 12.5f0
         @test device[:freq] == 12.5f0
@@ -199,7 +201,7 @@ end
         @test values.freq == 12.5f0
         @test_throws DeviceError setparam!(device, :firmware, "x")
 
-        upload_table!(device, [0, 1, 0, -1]; duration=0.2, gain=2, mode=:one_shot)
+        upload_table!(device, [0, 1, 0, -1]; duration = 0.2, gain = 2, mode = :one_shot)
         @test device[:table_len] == 4
         @test device[:table_freq] == 5.0f0
         @test device[:table_gain] == 2.0f0
@@ -209,10 +211,10 @@ end
         result = capture(
             device,
             [:adc0, :out];
-            samples=4,
-            decimation=2,
-            port=32353,
-            timeout=1,
+            samples = 4,
+            decimation = 2,
+            port = 32353,
+            timeout = 1,
         )
         @test result[:index] == UInt64[100, 102, 104, 106]
         @test result[:adc0] == Float32[0, 1, 2, 3]
@@ -224,7 +226,7 @@ end
     end
 
     opened = start_mock_device()
-    answer = open(Device, "127.0.0.1"; port=opened.port) do connected
+    answer = open(Device, "127.0.0.1"; port = opened.port) do connected
         connected[:freq]
     end
     @test answer == 0.0f0

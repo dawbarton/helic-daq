@@ -10,7 +10,7 @@ function stream_packet(header::P.StreamHeader, rows)
 end
 
 @testset "stream timeout" begin
-    receiver = StreamReceiver(; port=32355, bind_address=ip"127.0.0.1", timeout=0.02)
+    receiver = StreamReceiver(; port = 32355, bind_address = ip"127.0.0.1", timeout = 0.02)
     try
         @test_throws StreamTimeout receive(receiver)
         @test !isopen(receiver)
@@ -21,7 +21,7 @@ end
 
 @testset "stream receiver and Tables.jl" begin
     port = 32351
-    receiver = StreamReceiver(; port, bind_address=ip"127.0.0.1", timeout=1)
+    receiver = StreamReceiver(; port, bind_address = ip"127.0.0.1", timeout = 1)
     sender = UDPSocket()
     try
         first_packet = stream_packet(

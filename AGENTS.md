@@ -72,6 +72,7 @@ except where CBC is the experiment.
 - Keep commits to one logical unit. Use the established `<Area>: <what and
   why>` style and explain rationale in the body. Commit as you go.
 - Preserve unrelated working-tree changes.
+- Format Julia code with Runic.jl via the `runic` command.
 
 Before declaring a change complete, run the checks relevant to it. The full
 set is:

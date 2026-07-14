@@ -12,15 +12,15 @@ mutable struct StreamReceiver
     socket::UDPSocket
     port::UInt16
     timeout::Float64
-    last_sequence::Union{Nothing,UInt32}
+    last_sequence::Union{Nothing, UInt32}
     lost_packets::Int
 end
 
 function StreamReceiver(;
-    port::Integer=Protocol.STREAM_PORT,
-    bind_address::IPAddr=ip"0.0.0.0",
-    timeout::Real=2.0,
-)
+        port::Integer = Protocol.STREAM_PORT,
+        bind_address::IPAddr = ip"0.0.0.0",
+        timeout::Real = 2.0,
+    )
     1 <= port <= typemax(UInt16) ||
         throw(ArgumentError("port must be between 1 and $(typemax(UInt16))"))
     timeout > 0 || throw(ArgumentError("timeout must be positive"))
@@ -69,7 +69,7 @@ function receive(receiver::StreamReceiver)
     _, packet = _recvfrom_timeout(receiver.socket, receiver.timeout)
     header = Protocol.decode_stream_header(packet)
     expected = Protocol.STREAM_HEADER_LEN +
-               4 * Int(header.n_sources) * Int(header.n_records)
+        4 * Int(header.n_sources) * Int(header.n_records)
     length(packet) == expected || throw(
         Protocol.ProtocolError(
             "stream packet length $(length(packet)) does not match expected $expected",
@@ -93,7 +93,7 @@ function receive(receiver::StreamReceiver)
 end
 
 """A Tables.jl-compatible finite capture with stream-loss metadata."""
-struct Capture{C<:NamedTuple}
+struct Capture{C <: NamedTuple}
     columns::C
     dropped::UInt32
     lost_packets::Int
@@ -112,7 +112,7 @@ Base.getindex(capture::Capture, name::Symbol) = getproperty(capture.columns, nam
 Base.getindex(capture::Capture, name::AbstractString) = capture[Symbol(name)]
 
 function Base.show(io::IO, capture::Capture)
-    print(
+    return print(
         io,
         "Capture($(length(capture)) rows, $(length(capture.columns) - 1) sources, ",
         "dropped=$(capture.dropped), lost_packets=$(capture.lost_packets))",
@@ -145,7 +145,7 @@ function capture(receiver::StreamReceiver, n_records::Integer, names)
         taken = min(packet_records, n_records - offset)
         for row in 1:taken
             indices[offset + row] = UInt64(header.first_index) +
-                                    UInt64(row - 1) * UInt64(header.decimation)
+                UInt64(row - 1) * UInt64(header.decimation)
         end
         for source in eachindex(source_names)
             copyto!(columns[source], offset + 1, @view(values[1:taken, source]), 1, taken)

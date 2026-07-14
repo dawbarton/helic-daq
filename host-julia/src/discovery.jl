@@ -19,18 +19,18 @@ end
 
 """Query IPv4 discovery targets and return unique responses before timeout."""
 function find_devices(;
-    timeout::Real=1.0,
-    port::Integer=Protocol.DISCOVERY_PORT,
-    addresses=nothing,
-)
+        timeout::Real = 1.0,
+        port::Integer = Protocol.DISCOVERY_PORT,
+        addresses = nothing,
+    )
     timeout > 0 || throw(ArgumentError("timeout must be positive"))
     1 <= port <= typemax(UInt16) ||
         throw(ArgumentError("port must be between 1 and $(typemax(UInt16))"))
     targets = isnothing(addresses) ? IPv4[ip"255.255.255.255", ip"127.0.0.1"] :
-              _ipv4.(addresses)
+        _ipv4.(addresses)
     socket = UDPSocket()
     bind(socket, ip"0.0.0.0", 0)
-    Sockets.setopt(socket; enable_broadcast=true)
+    Sockets.setopt(socket; enable_broadcast = true)
     timer = Timer(timeout) do _
         isopen(socket) && close(socket)
     end
@@ -44,7 +44,7 @@ function find_devices(;
             end
         end
 
-        found = Dict{Tuple{IPv4,NTuple{6,UInt8}},DiscoveredDevice}()
+        found = Dict{Tuple{IPv4, NTuple{6, UInt8}}, DiscoveredDevice}()
         while true
             peer, payload = try
                 recvfrom(socket)
@@ -59,7 +59,7 @@ function find_devices(;
                 continue
             end
             peer.host isa IPv4 || continue
-            mac = join((string(byte; base=16, pad=2) for byte in beacon.mac), ":")
+            mac = join((string(byte; base = 16, pad = 2) for byte in beacon.mac), ":")
             found[(peer.host, beacon.mac)] = DiscoveredDevice(
                 peer.host,
                 beacon.version,
@@ -69,7 +69,7 @@ function find_devices(;
                 beacon.firmware,
             )
         end
-        return sort!(collect(values(found)); by=device -> (device.address.host, device.mac))
+        return sort!(collect(values(found)); by = device -> (device.address.host, device.mac))
     finally
         close(timer)
         isopen(socket) && close(socket)

@@ -40,7 +40,7 @@ const MAX_PAYLOAD = 1024
 const STREAM_HEADER_LEN = 20
 const ERROR_BUSY = UInt8(7)
 
-const ERROR_NAMES = Dict{UInt8,String}(
+const ERROR_NAMES = Dict{UInt8, String}(
     1 => "bad frame",
     2 => "unknown message type",
     3 => "bad parameter index",
@@ -73,7 +73,7 @@ Base.showerror(io::IO, error::ProtocolError) = print(io, error.message)
 struct BeaconResponse
     version::UInt8
     control_port::UInt16
-    mac::NTuple{6,UInt8}
+    mac::NTuple{6, UInt8}
     experiment::String
     firmware::String
 end
@@ -120,7 +120,7 @@ const BEACON_REQUEST = let io = IOBuffer()
     take!(io)
 end
 
-function encode_frame(message_type, sequence::Integer, payload=UInt8[])
+function encode_frame(message_type, sequence::Integer, payload = UInt8[])
     length(payload) <= MAX_PAYLOAD ||
         throw(ProtocolError("payload too long ($(length(payload)) > $MAX_PAYLOAD)"))
     body = IOBuffer()
@@ -151,7 +151,7 @@ function decode_frame(frame::AbstractVector{UInt8})
     stored_crc = _read_le(io, UInt16)
     crc16(@view frame[3:(HEADER_LEN + payload_length)]) == stored_crc ||
         throw(ProtocolError("CRC mismatch"))
-    return (message_type=message_type, sequence=sequence, payload=payload)
+    return (message_type = message_type, sequence = sequence, payload = payload)
 end
 
 function _nul_string(payload::AbstractVector{UInt8}, offset::Int)
@@ -165,7 +165,7 @@ end
 function decode_params(payload::AbstractVector{UInt8})
     Definition = NamedTuple{
         (:name, :type_code, :count, :writable),
-        Tuple{String,Char,UInt16,Bool},
+        Tuple{String, Char, UInt16, Bool},
     }
     definitions = Definition[]
     offset = 1
@@ -179,14 +179,14 @@ function decode_params(payload::AbstractVector{UInt8})
         count = UInt16(payload[offset + 1]) | (UInt16(payload[offset + 2]) << 8)
         writable_byte = payload[offset + 3]
         writable_byte <= 1 || throw(ProtocolError("invalid writable flag"))
-        push!(definitions, (; name, type_code, count, writable=Bool(writable_byte)))
+        push!(definitions, (; name, type_code, count, writable = Bool(writable_byte)))
         offset += 4
     end
     return definitions
 end
 
 function decode_sources(payload::AbstractVector{UInt8})
-    definitions = NamedTuple{(:name, :unit),Tuple{String,String}}[]
+    definitions = NamedTuple{(:name, :unit), Tuple{String, String}}[]
     offset = 1
     while offset <= length(payload)
         name, offset = _nul_string(payload, offset)

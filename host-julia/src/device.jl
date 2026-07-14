@@ -2,7 +2,7 @@
 
 struct DeviceError <: Exception
     message::String
-    code::Union{Nothing,UInt8}
+    code::Union{Nothing, UInt8}
 end
 
 DeviceError(message::AbstractString) = DeviceError(String(message), nothing)
@@ -31,12 +31,12 @@ mutable struct Device
     port::UInt16
     sequence::UInt8
     parameters::Vector{Parameter}
-    parameter_by_name::Dict{String,Parameter}
+    parameter_by_name::Dict{String, Parameter}
     sources::Vector{Source}
-    source_by_name::Dict{String,Source}
+    source_by_name::Dict{String, Source}
 end
 
-function Device(host::AbstractString; port::Integer=Protocol.CONTROL_PORT)
+function Device(host::AbstractString; port::Integer = Protocol.CONTROL_PORT)
     1 <= port <= typemax(UInt16) ||
         throw(ArgumentError("port must be between 1 and $(typemax(UInt16))"))
     socket = connect(host, port)
@@ -46,16 +46,16 @@ function Device(host::AbstractString; port::Integer=Protocol.CONTROL_PORT)
         UInt16(port),
         UInt8(0),
         Parameter[],
-        Dict{String,Parameter}(),
+        Dict{String, Parameter}(),
         Source[],
-        Dict{String,Source}(),
+        Dict{String, Source}(),
     )
     try
         initial_status = _decode_status(_request(device, Protocol.STATUS))
         initial_status.protocol_version == Protocol.VERSION || throw(
             DeviceError(
                 "protocol version mismatch: device $(initial_status.protocol_version), " *
-                "host $(Protocol.VERSION)",
+                    "host $(Protocol.VERSION)",
             ),
         )
         _discover!(device)
@@ -82,7 +82,7 @@ function Base.open(f::Function, ::Type{Device}, host::AbstractString; kwargs...)
     end
 end
 
-function _request(device::Device, message_type, payload=UInt8[])
+function _request(device::Device, message_type, payload = UInt8[])
     device.sequence = UInt8(mod(Int(device.sequence) + 1, 256))
     write(device.socket, Protocol.encode_frame(message_type, device.sequence, payload))
     flush(device.socket)
@@ -115,28 +115,28 @@ function _discover!(device::Device)
     definitions = Protocol.decode_params(_request(device, Protocol.GET_PARAMS))
     device.parameters = [
         Parameter(UInt16(index - 1), def.name, def.type_code, Int(def.count), def.writable) for
-        (index, def) in enumerate(definitions)
+            (index, def) in enumerate(definitions)
     ]
     device.parameter_by_name = Dict(parameter.name => parameter for parameter in device.parameters)
 
     definitions = Protocol.decode_sources(_request(device, Protocol.GET_SOURCES))
     device.sources = [
         Source(UInt8(index - 1), def.name, def.unit) for
-        (index, def) in enumerate(definitions)
+            (index, def) in enumerate(definitions)
     ]
     device.source_by_name = Dict(source.name => source for source in device.sources)
     return device
 end
 
 """Return the discovered definition for a parameter name."""
-function parameter(device::Device, name::Union{AbstractString,Symbol})
+function parameter(device::Device, name::Union{AbstractString, Symbol})
     key = String(name)
     haskey(device.parameter_by_name, key) ||
         throw(DeviceError("no parameter named '$key'"))
     return device.parameter_by_name[key]
 end
 
-function _source(device::Device, name::Union{AbstractString,Symbol})
+function _source(device::Device, name::Union{AbstractString, Symbol})
     key = String(name)
     haskey(device.source_by_name, key) || begin
         choices = join(("$(source.name) [$(source.unit)]" for source in device.sources), ", ")
@@ -176,7 +176,7 @@ function _pack_value(parameter::Parameter, value)
     length(values) == parameter.count || throw(
         DeviceError(
             "parameter '$(parameter.name)' expects $(parameter.count) values, " *
-            "received $(length(values))",
+                "received $(length(values))",
         ),
     )
     type = _wire_type(parameter.type_code)
@@ -208,7 +208,7 @@ function getparams(device::Device, names)
     total_size <= Protocol.MAX_PAYLOAD || throw(
         DeviceError(
             "requested values need $total_size bytes; responses are limited to " *
-            "$(Protocol.MAX_PAYLOAD) bytes",
+                "$(Protocol.MAX_PAYLOAD) bytes",
         ),
     )
     request = IOBuffer()
@@ -231,11 +231,11 @@ function getparams(device::Device, names)
 end
 
 """Read one parameter by its discovered name."""
-getparam(device::Device, name::Union{AbstractString,Symbol}) =
+getparam(device::Device, name::Union{AbstractString, Symbol}) =
     first(values(getparams(device, (name,))))
 
 """Write one parameter by its discovered name."""
-function setparam!(device::Device, name::Union{AbstractString,Symbol}, value)
+function setparam!(device::Device, name::Union{AbstractString, Symbol}, value)
     definition = parameter(device, name)
     definition.writable || throw(DeviceError("parameter '$(definition.name)' is read-only"))
     payload = IOBuffer()
@@ -245,9 +245,9 @@ function setparam!(device::Device, name::Union{AbstractString,Symbol}, value)
     return device
 end
 
-Base.getindex(device::Device, name::Union{AbstractString,Symbol}) = getparam(device, name)
+Base.getindex(device::Device, name::Union{AbstractString, Symbol}) = getparam(device, name)
 
-function Base.setindex!(device::Device, value, name::Union{AbstractString,Symbol})
+function Base.setindex!(device::Device, value, name::Union{AbstractString, Symbol})
     setparam!(device, name, value)
     return value
 end
@@ -256,11 +256,11 @@ function _decode_status(payload::AbstractVector{UInt8})
     length(payload) == 12 || throw(Protocol.ProtocolError("invalid Status payload length"))
     io = IOBuffer(payload)
     return (
-        protocol_version=Protocol._read_le(io, UInt8),
-        n_params=Int(Protocol._read_le(io, UInt16)),
-        n_sources=Int(Protocol._read_le(io, UInt8)),
-        sample_rate=Protocol._read_le(io, Float32),
-        uptime=Protocol._read_le(io, UInt32) / 1000,
+        protocol_version = Protocol._read_le(io, UInt8),
+        n_params = Int(Protocol._read_le(io, UInt16)),
+        n_sources = Int(Protocol._read_le(io, UInt8)),
+        sample_rate = Protocol._read_le(io, Float32),
+        uptime = Protocol._read_le(io, UInt32) / 1000,
     )
 end
 
@@ -268,7 +268,7 @@ end
 status(device::Device) = _decode_status(_request(device, Protocol.STATUS))
 
 """Configure selected discovered sources, decimation, and record count."""
-function configure_stream!(device::Device, sources; decimation::Integer=1, count::Integer=0)
+function configure_stream!(device::Device, sources; decimation::Integer = 1, count::Integer = 0)
     1 <= decimation <= typemax(UInt16) ||
         throw(ArgumentError("decimation must fit a positive UInt16"))
     0 <= count <= typemax(UInt32) || throw(ArgumentError("count must fit a UInt32"))
@@ -285,7 +285,7 @@ function configure_stream!(device::Device, sources; decimation::Integer=1, count
 end
 
 """Start the configured stream to the TCP peer address and given UDP port."""
-function start_stream!(device::Device, port::Integer=Protocol.STREAM_PORT)
+function start_stream!(device::Device, port::Integer = Protocol.STREAM_PORT)
     payload = IOBuffer()
     Protocol._write_le(payload, UInt16(port))
     _request(device, Protocol.STREAM_START, take!(payload))
@@ -297,14 +297,14 @@ stop_stream!(device::Device) = (_request(device, Protocol.STREAM_STOP); device)
 
 """Configure, receive, and stop a finite capture by sample count or duration."""
 function capture(
-    device::Device,
-    sources;
-    samples::Union{Nothing,Integer}=nothing,
-    seconds::Union{Nothing,Real}=nothing,
-    decimation::Integer=1,
-    port::Integer=Protocol.STREAM_PORT,
-    timeout::Real=2.0,
-)
+        device::Device,
+        sources;
+        samples::Union{Nothing, Integer} = nothing,
+        seconds::Union{Nothing, Real} = nothing,
+        decimation::Integer = 1,
+        port::Integer = Protocol.STREAM_PORT,
+        timeout::Real = 2.0,
+    )
     isnothing(samples) == isnothing(seconds) &&
         throw(ArgumentError("specify exactly one of samples or seconds"))
     if isnothing(samples)
@@ -313,7 +313,7 @@ function capture(
     end
     samples > 0 || throw(ArgumentError("samples must be positive"))
     samples <= typemax(UInt32) || throw(ArgumentError("samples must fit a UInt32"))
-    resolved = configure_stream!(device, sources; decimation, count=samples)
+    resolved = configure_stream!(device, sources; decimation, count = samples)
     receiver = StreamReceiver(; port, timeout)
     started = false
     try
@@ -329,11 +329,11 @@ function capture(
 end
 
 function _request_with_busy_retry(
-    device::Device,
-    message_type,
-    payload;
-    timeout::Real=1.0,
-)
+        device::Device,
+        message_type,
+        payload;
+        timeout::Real = 1.0,
+    )
     deadline = time() + timeout
     while true
         try
@@ -345,19 +345,20 @@ function _request_with_busy_retry(
             sleep(0.005)
         end
     end
+    return
 end
 
 """Stage and atomically activate a finite arbitrary waveform table."""
 function upload_table!(
-    device::Device,
-    values;
-    duration::Union{Nothing,Real}=nothing,
-    frequency::Union{Nothing,Real}=nothing,
-    gain::Real=1,
-    mode::Symbol=:loop,
-    multiplier::Integer=1,
-    phase::Real=0,
-)
+        device::Device,
+        values;
+        duration::Union{Nothing, Real} = nothing,
+        frequency::Union{Nothing, Real} = nothing,
+        gain::Real = 1,
+        mode::Symbol = :loop,
+        multiplier::Integer = 1,
+        phase::Real = 0,
+    )
     table_values = Float32.(values)
     table = parameter(device, "table")
     2 <= length(table_values) <= table.count ||
