@@ -8,15 +8,16 @@ pub use helic_fw_common::SampleRate;
 
 pub const EXPERIMENT: &str = "cbc-rig";
 
-/// DAC channel driven by the control output (0 and 2 are bipolar).
+/// DAC channel driven by the control output. Its polarity is defined in
+/// `board.rs` for the fitted analogue output stage.
 pub const OUTPUT_CHANNEL: usize = 0;
 
 /// Measuring range of the attached optoNCDT sensor in mm (model-dependent:
 /// 10/25/50/100/200/500).
 pub const LASER_RANGE_MM: f32 = 50.0;
 
-/// Static IPv4 address and prefix length (flash-stored config is a future
-/// milestone; until then, edit and reflash).
+/// Static IPv4 address and prefix length. Configuration is not persisted;
+/// edit and reflash to change it.
 pub const NET_CONFIG: NetConfig = NetConfig::Static {
     address: [192, 168, 1, 235],
     prefix: 24,

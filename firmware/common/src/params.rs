@@ -1,5 +1,5 @@
-//! Name-based parameter registry (design adopted from rtc, see
-//! `docs/implementation_plan.md` §5a).
+//! Name-based, discoverable parameter registry derived from rtc's host
+//! interface. Indices are connection-local.
 //!
 //! The host discovers parameters at connect (`GetParams`)
 //! and addresses them by index thereafter. Reads are served from core-0

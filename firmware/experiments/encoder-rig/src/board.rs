@@ -1,6 +1,5 @@
 //! Board definition for the W5500-EVB-Pico2: the single place where
-//! peripherals meet pins. See `docs/implementation_plan.md` §4 for the full
-//! pin map.
+//! peripherals meet pins. The complete pin map is kept below.
 //!
 //! Reserved by the board itself (W5500 on SPI0): GP16 MISO, GP17 CSn,
 //! GP18 SCK, GP19 MOSI, GP20 RSTn, GP21 INTn, GP25 LED.
@@ -90,8 +89,8 @@ pub struct Board {
 }
 
 /// Unconstructed UART0 RX for the laser sensor (assembled in `main`, where
-/// the interrupt bindings live). GP0 stays reserved for TX (sensor commands,
-/// later milestone).
+/// the interrupt bindings live). GP0 stays reserved for possible future
+/// sensor commands.
 pub struct LaserParts {
     pub uart: Peri<'static, UART0>,
     pub rx: Peri<'static, PIN_1>,

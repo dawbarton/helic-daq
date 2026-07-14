@@ -1,39 +1,50 @@
 # Periodic signal generator
 
-## Design
+## Implemented design
 
-**Phase accumulator.** Keep phase as `uint32` (or `uint64`), where the full range represents [0, 2π). Each sample:
+`helic-core` represents one turn with the full range of a `u32`. At each
+sample the phase accumulator wraps modulo 2³²:
 
-```
-phase += increment        // wraps mod 2^32 automatically, exactly
+```text
+phase = phase + increment
 increment = round(f0 / fs * 2^32)
 ```
 
-Frequency resolution is fs/2³² = 8000/2³² ≈ **1.9 µHz**, so 0.1 Hz is hit to ~2×10⁻⁵ relative error. If you want essentially exact frequencies, use a 64-bit accumulator (fs/2⁶⁴ ≈ 4×10⁻¹³ Hz) and take the top 32 bits for evaluation; 64-bit adds are cheap on the Cortex-M33.
+The increment is calculated with `f64` when a parameter changes, outside the
+real-time path. Per-sample work uses integer phase and `f32` values. Frequency
+resolution is `fs / 2^32`, approximately 1.9 µHz at 8 kHz. Changing the
+increment does not reset phase, so frequency updates are phase-continuous.
 
-**Harmonic phases for free.** The k-th harmonic's phase is simply
+The phase of harmonic `k` is `k * phase` with wrapping multiplication. Every
+harmonic is therefore an exact modular multiple of the fundamental and cannot
+drift relative to it. The same master phase drives target and forcing series;
+locked waveform-table modes derive their phase from it in the same way.
 
+Sine and cosine use a 1024-entry `f32` sine table with linear interpolation.
+Cosine is an exact quarter-turn offset. The interpolation error bound is about
+4.7×10⁻⁶, below one 16-bit DAC least-significant bit. A Fourier series is
+
+```text
+mean + sum(a[k] cos(k phase) + b[k] sin(k phase))
 ```
-phase_k = (uint32)(k * phase)   // wrapping multiply = exact mod 2^32
-```
 
-This is *exact*: all harmonics stay perfectly phase-coherent with the fundamental forever, with zero drift. No per-harmonic accumulators needed. This matters for CBC-style forcing where you need the harmonics locked.
+with 16 harmonics in the firmware. Coefficients are copied through the
+cross-core command queue and replaced together at a sample boundary. The
+accumulator also reports phase wrap for period-locked triggers and future
+per-period processing.
 
-**Sine/cosine evaluation.** Two good options:
+## Real-time use
 
-1. **Interpolated LUT.** Table of, say, 1024 float32 sin values over one period (4 KiB, fits comfortably in SRAM). Use the top 10 bits of `phase_k` as index, next bits as fraction, linear interpolation. Max error with N = 1024 is ≈ (2π/N)²/8 ≈ 4.7×10⁻⁶; with N = 4096 it is ≈ 2.9×10⁻⁷, below float32 rounding anyway. Cosine is the same table with a quarter-period offset added to the integer phase before lookup, again exact.
-2. **Chebyshev recurrence.** Evaluate sin θ, cos θ once for the base phase, then sₖ₊₁ = 2c₁sₖ − sₖ₋₁ (likewise for cₖ). Two FMAs per harmonic per function. Error grows ~O(k) ulps but resets every sample, so it is fine for K ≲ 50.
+The common real-time loop advances the master phase once per hardware-timed
+sample, evaluates target and forcing, evaluates any arbitrary-waveform table,
+runs the controller, and actuates the selected rig. It intentionally does not
+generate DMA-sized blocks: acquisition, feedback and output must complete for
+each individual sample.
 
-Option 1 is simpler and errors don't compound across harmonics; I would default to it.
+At 8 kHz and 150 MHz there are 18,750 cycles per tick. Two 16-harmonic series
+occupy only a small part of that budget, but timing claims must be checked on
+hardware through `loop_time_max`, `overruns` and the experiment's timing pin.
 
-**Phase-to-error budget.** With a 32-bit phase truncated to 24-ish effective bits at evaluation, worst-case phase quantisation is ~4×10⁻⁷ rad, giving amplitude errors well below a 16-bit DAC's LSB (1.5×10⁻⁵). Nothing here requires doubles.
-
-## Performance
-
-At 150 MHz you have ~18,750 cycles per sample at 8 kHz. LUT lookup plus interpolation plus multiply-accumulate is roughly 20–30 cycles per harmonic term; 20 harmonics with both sin and cos terms is ~1,000 cycles per sample, so you are using around 5% of one core. The M33's single-precision FPU handles this natively; avoid anything that promotes to f64.
-
-## Practical notes
-
-- Pace output with a hardware timer plus DMA double-buffering (compute blocks of 64–256 samples), rather than computing per-sample in an ISR. In Embassy/Rust this maps naturally onto a DMA-fed PWM or external DAC over SPI.
-- Sum harmonics in float32, scale once, convert to the DAC integer format with rounding; leave headroom so Σ|aₖ| + Σ|bₖ| cannot clip.
-- If you change f0 or coefficients at runtime, update `increment` atomically; phase continuity is automatic since the accumulator never resets.
+Keep output headroom for the sum of controller, forcing and table
+contributions. `FourierCoeffs::amplitude_bound` bounds an individual series,
+but firmware does not currently impose a combined per-channel clipping policy.

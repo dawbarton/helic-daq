@@ -1,60 +1,88 @@
 # HELIC-DAQ
 
-Hackable Experimental Laboratory Instrumentation and Control - a real-time
-control and data acquisition platform for laboratory control, signal generation
-and instrumentation, built on the RP2350 (W5500-EVB-Pico2 / Pico 2W) and the
-Rust Embassy framework. It is the successor to the BeagleBone Black-based
+Hackable Experimental Laboratory Instrumentation and Control: a real-time
+control and data acquisition platform for laboratory control, signal
+generation and instrumentation. It targets RP2350 boards, uses Rust with
+Embassy, and succeeds the BeagleBone Black-based
 [rtc](https://github.com/dawbarton/rtc).
 
-- **User guide** (flashing, connecting, CLI/Python usage): [docs/user_guide.md](docs/user_guide.md)
-- **Developer guide** (architecture, extending, testing): [docs/developer_guide.md](docs/developer_guide.md)
-- Wire protocol: [docs/protocol.md](docs/protocol.md)
-- Requirements: [AGENTS.md](AGENTS.md)
-- Current multi-experiment plan: [docs/multi_experiment_plan.md](docs/multi_experiment_plan.md)
-- Design & roadmap: [docs/implementation_plan.md](docs/implementation_plan.md)
-- Periodic signal generator design: [docs/periodic_signal_generator.md](docs/periodic_signal_generator.md)
+HELIC-DAQ can run a hardware-timed 1–8 kHz control loop, generate
+phase-coherent Fourier and arbitrary waveforms, expose experiment parameters
+at run time, and stream discovered signals over Ethernet or Wi-Fi. The
+controller, rig and network transport are selected at compile time; the host
+interface discovers their parameters and stream sources.
+
+## Documentation
+
+- [User guide](docs/user_guide.md): experiments, flashing, networking and
+  CLI/Python use.
+- [Developer guide](docs/developer_guide.md): architecture, design principles,
+  extension points and testing.
+- [Wire protocol](docs/protocol.md): authoritative protocol v2 specification.
+- [Periodic signal generator](docs/periodic_signal_generator.md): numerical
+  design and error bounds.
+- [Hardware status](notes.md): verified paths, outstanding checks and bring-up
+  constraints.
+- [Interim cape wiring](bbb-daq.md): BBB-DAQ analogue cape pin, power and
+  bring-up reference.
+- [Repository guidance](AGENTS.md): high-value constraints for contributors and
+  coding agents.
+
+## Experiments
+
+| Firmware package | Board and purpose | Verification |
+|---|---|---|
+| `fw-cbc-rig` | W5500-EVB-Pico2, AD7609, AD5064 and optional optoNCDT | Core acquisition, generation and control path verified |
+| `fw-sig-gen` | W5500-EVB-Pico2 and AD5064, with no ADC | Software verified |
+| `fw-pwm-rig` | W5500-EVB-Pico2 with filtered PWM output | Software verified |
+| `fw-encoder-rig` | CBC hardware plus RMB20 SSI encoder | Software verified; encoder format is provisional |
+| `fw-sig-gen-w` | Pico 2W and AD5064 over Wi-Fi | Software verified |
+
+Here, software verified means that portable logic passes host tests and the
+complete firmware target builds; it is not a claim about the physical path.
+See [notes.md](notes.md) for the precise hardware-verification boundary.
 
 ## Layout
 
 | Directory | Contents |
 |---|---|
-| `helic-core/` | Hardware-independent DSP (generators, controllers, filters, Fourier estimation) — `no_std`, host-testable |
-| `helic-drivers/` | Host-testable peripheral drivers over `embedded-hal` traits |
-| `helic-proto/` | Wire protocol shared between firmware and host |
+| `helic-core/` | Hardware-independent DSP, controllers and generators; `no_std`, host-tested |
+| `helic-drivers/` | Portable peripheral drivers over `embedded-hal` traits; host-tested |
+| `helic-proto/` | Protocol framing, payloads and stream codec shared with firmware |
 | `firmware/common/` | Experiment-independent RP2350 firmware support |
-| `firmware/experiments/` | One firmware binary and pin map per physical experiment |
-| `host/` | Python host package + CLI (from milestone 6) |
+| `firmware/experiments/` | One binary, pin map and compile-time configuration per experiment |
+| `host/` | Python package `helic_daq`, simulator and `helic-daq` CLI |
 
-## Building
-
-Host crates (with tests):
+## Build and test
 
 ```sh
 cargo test
+cd firmware && cargo build --release --workspace
+cd ../host && PYTHONPATH=.:tests python3 -m unittest discover -s tests
 ```
 
-Firmware (from `firmware/`; the target is configured automatically):
+CI also gates both Rust workspaces with formatting and clippy warnings as
+errors. See the developer guide for the complete local check set.
+
+## Flash and connect
+
+With a debug probe and
+[probe-rs](https://probe.rs), flash the CBC experiment and stream its defmt
+log:
 
 ```sh
 cd firmware
-cargo build --release --workspace
+cargo run --release -p fw-cbc-rig
 ```
 
-## Flashing & logs
-
-With a debug probe (recommended — Raspberry Pi Debug Probe on the SWD header)
-and [probe-rs](https://probe.rs) (`cargo install probe-rs-tools`):
+Install the host package from the repository root, discover devices, and
+inspect one:
 
 ```sh
-cd firmware
-cargo run --release -p fw-cbc-rig   # flashes and streams defmt logs
+pip install -e host
+helic-daq find
+helic-daq --host 192.168.1.235 status
 ```
 
-Without a probe, via the BOOTSEL USB bootloader:
-
-```sh
-cd firmware
-cargo build --release -p fw-cbc-rig
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf helic-daq.uf2
-picotool load helic-daq.uf2  # board in BOOTSEL mode
-```
+The [user guide](docs/user_guide.md) covers BOOTSEL/UF2 flashing, all firmware
+packages, static addresses, Wi-Fi configuration and the simulator.

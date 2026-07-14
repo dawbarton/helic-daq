@@ -1,22 +1,22 @@
-# Wiring the `rtc` / BBB-DAQ analog cape to the W5500-EVB-Pico2
+# Wiring the `rtc` / BBB-DAQ analogue cape to the W5500-EVB-Pico2
 
-Interim wiring reference for driving the existing **BBB-DAQ** analog board
+Interim wiring reference for driving the existing **BBB-DAQ** analogue board
 (from [github.com/dawbarton/rtc](https://github.com/dawbarton/rtc),
-`hardware/`) — an **AD7609** ADC + **AD5064** DAC — from the helic-daq firmware
-on the RP2350, until a purpose-built board is designed.
+`hardware/`), comprising an **AD7609** ADC and **AD5064** DAC, from HELIC-DAQ
+on the RP2350 until a purpose-built board is available.
 
 Derived from the rtc schematics (`hardware/schematics/rtc-sheet{1,2}.sch`) and
 the pinout planner (`hardware/pins.xlsx`, sheet titled "BBB-DAQ").
 
-## Logic level: 3.3 V — connect directly, no shifters
+## Logic level: 3.3 V; connect directly, with no shifters
 
 The cape is a **BeagleBone Black cape**: every digital line runs from the
 converters straight to the BBB P8/P9 expansion headers with **no level
 shifters** anywhere in the schematic, and `pins.xlsx` states plainly *"All pins
 are 3.3 V logic."* The BBB's GPIO is 3.3 V and not 5 V-tolerant, so the
 converter digital interface (AD7609 V_DRIVE etc.) is already 3.3 V. The RP2350
-is also 3.3 V CMOS → **wire the data/control lines directly.** (The analog
-section still needs its own +5 V / references — see Power below.)
+is also 3.3 V CMOS, so **wire the data/control lines directly.** The analogue
+section still needs its own +5 V supply and references; see Power below.
 
 ## Pin map
 
@@ -26,7 +26,7 @@ are on the **left edge**, pins 4–20). Cape pins are BBB header P8/P9.
 ### Shared SPI (single RP2350 SPI1 bus → both converters)
 
 The rtc board put the ADC and DAC on **separate** BBB SPI ports (SCLK0/SCLK1),
-but the helic-daq firmware drives one shared bus. So **jumper GP10 (SCK) to both**
+but HELIC-DAQ drives one shared bus. So **jumper GP10 (SCK) to both**
 converter clocks; MOSI goes only to the DAC, MISO only from the ADC.
 
 | RP2350 | Pico2 pin | Cape signal | Cape pin |
@@ -58,7 +58,7 @@ converter clocks; MOSI goes only to the DAC, MISO only from the ADC.
 | GP15 | 20 | ~LDAC           | P8&nbsp;7  |
 | —    | —  | **~CLR → tie 3V3** | P8&nbsp;8 |
 
-### Straps (BBB drove these; helic-daq firmware does not)
+### Straps (BBB drove these; HELIC-DAQ does not)
 
 - **STBY (P8 15) → 3V3.** AD7609 STBY is active-low; must be high for normal
   operation (low = standby).
@@ -67,20 +67,20 @@ converter clocks; MOSI goes only to the DAC, MISO only from the ADC.
 
 ### Power and ground
 
-The cape has no on-board regulators — it took its rails from the BBB. Supply:
+The cape has no on-board regulators; it took its rails from the BBB. Supply:
 
 | Cape rail | Cape pins | Feed from |
 |-----------|-----------|-----------|
 | 3.3 V logic (DC_3.3V) | P9 3, P9 4 | Pico2 **3V3(OUT), pin 36** |
-| +5 V analog (VDD_5V / SYS_5V) | P9 5, P9 6, P9 7, P9 8 | clean +5 V (see note) |
-| GND | P8 1–2, P9 1–2, P9 43–46 | Pico2 GND (pins 3/8/13/18/…) — **common all grounds** |
+| +5 V analogue (VDD_5V / SYS_5V) | P9 5, P9 6, P9 7, P9 8 | clean +5 V (see note) |
+| GND | P8 1–2, P9 1–2, P9 43–46 | Pico2 GND (pins 3/8/13/18/…); **common all grounds** |
 
-> **Analog supply note.** The AD7609 + references + output op-amps run off +5 V.
+> **Analogue supply note.** The AD7609, references and output op-amps run off +5 V.
 > Pico2 **VBUS (pin 40)** is USB 5 V and will work for bring-up, but it is noisy
-> and will hurt ADC performance — prefer a clean bench/LDO +5 V for real
+> and will hurt ADC performance. Prefer a clean bench/LDO +5 V for real
 > measurements. Always tie its ground to the Pico2 ground.
 
-### Analog output connector J4 (for reference)
+### Analogue output connector J4 (for reference)
 
 | J4 pin | Signal | | J4 pin | Signal |
 |--------|--------|-|--------|--------|
@@ -91,9 +91,11 @@ The cape has no on-board regulators — it took its rails from the BBB. Supply:
 | 9 | VOUT_D unipolar [0, 4.096] | | 10 | GND |
 | 11 | VOUT_B unipolar [0, 4.096] | | 12 | GND |
 
-DAC channel polarity **[A, B, C, D] = [Bipolar, Unipolar, Bipolar, Unipolar]**,
-matching `board.rs` `DAC_POLARITY`. DAC reference is 4.096 V (matches
-`DAC_VREF`).
+The schematic labels A and C as bipolar and B and D as unipolar. The fitted
+cape used for 2026 bring-up behaved as all-unipolar, so the current
+`DAC_POLARITY` is `[Unipolar; 4]`. Confirm the fitted output stages and change
+that constant before assuming the schematic polarity. The DAC reference is
+4.096 V, matching `DAC_VREF`.
 
 ## Firmware notes
 
@@ -101,17 +103,17 @@ matching `board.rs` `DAC_POLARITY`. DAC reference is 4.096 V (matches
   18-bit serial frame), so the driver clocks out correct raw codes. The input
   ranges differ: **AD7609 is ±10 V (RANGE low) / ±20 V (RANGE high)**, so the
   driver's `InputRange` is `Bipolar10V` / `Bipolar20V` with 20 V / 40 V spans.
-  Analog inputs are **differential** on this part.
+  Analogue inputs are **differential** on this part.
 - ADC SPI is mode 2 @ 12 MHz; DAC SPI is mode 1 @ 16 MHz (`board.rs`). Both are
   on the same shared bus with separate chip selects.
 
 ## Post-wiring bring-up
 
-The RT loop already drives CONVST continuously (that's the climbing
-`busy timeouts` when nothing is connected). Once wired:
+The RT loop drives CONVST continuously. With no ADC response, the discovered
+`tick_timeouts` parameter climbs. Once wired:
 
-1. Flash and watch `status_task` — `busy timeouts` should **stop climbing** and
-   `overruns` stay low once the ADC asserts/deasserts BUSY. First "alive" sign.
+1. Flash and watch the status log. `tick_timeouts` should **stop climbing** and
+   `overruns` should remain zero once the ADC asserts and deasserts BUSY.
 2. Scope: CONVST on GP8/pin 11 = clean square wave at the sample rate; GP14/pin
    19 pulses high per RT tick (timing/load check).
 3. Stream over UDP (`helic-daq` CLI) and check a known input voltage reads back

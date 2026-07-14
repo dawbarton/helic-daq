@@ -24,9 +24,10 @@ dev.upload_table([0.0, 1.0, 0.0, -1.0], duration=0.2)
 For host-side development without hardware, run the protocol-v2 simulator:
 
 ```sh
-python -m helic_daq.sim
+python3 -m helic_daq.sim
 helic-daq --host 127.0.0.1 capture --sources adc0,out --samples 1000
 ```
 
-See `docs/user_guide.md` in the repository for the full guide and
-`docs/protocol.md` for the wire protocol.
+See the repository [user guide](../docs/user_guide.md) for installation,
+discovery, capture and waveform details, and the [wire protocol](../docs/protocol.md)
+for the authoritative binary formats.

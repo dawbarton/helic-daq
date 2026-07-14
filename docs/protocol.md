@@ -10,7 +10,7 @@ All multi-byte fields are little-endian.
 |---|---|---|
 | 2350 | TCP | Parameter access, stream control and status |
 | 2351 | UDP | Device-to-host sample streaming |
-| 2352 | UDP | Device discovery beacon, introduced in phase 9 |
+| 2352 | UDP | Device discovery beacon |
 
 ## Control channel (TCP :2350)
 

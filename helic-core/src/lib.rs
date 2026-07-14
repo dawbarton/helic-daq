@@ -2,7 +2,7 @@
 //!
 //! Everything in this crate is `no_std`, allocation-free `f32` code that runs
 //! identically on the RP2350's Cortex-M33 FPU and on the host, where it is
-//! unit-tested with `cargo test`. See `docs/implementation_plan.md` §5.
+//! unit-tested with `cargo test`.
 
 #![cfg_attr(not(test), no_std)]
 

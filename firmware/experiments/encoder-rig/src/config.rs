@@ -8,7 +8,8 @@ pub use helic_fw_common::SampleRate;
 
 pub const EXPERIMENT: &str = "encoder-rig";
 
-/// DAC channel driven by the control output (0 and 2 are bipolar).
+/// DAC channel driven by the control output. Its polarity is defined in
+/// `board.rs` for the fitted analogue output stage.
 pub const OUTPUT_CHANNEL: usize = 0;
 
 /// Measuring range of the attached optoNCDT sensor in mm (model-dependent:
@@ -21,8 +22,8 @@ pub const ENCODER_GRAY: bool = true;
 pub const ENCODER_BIT_RATE_HZ: u32 = 500_000;
 pub const ENCODER_COUNTS_PER_REV: u32 = 1 << ENCODER_BITS;
 
-/// Static IPv4 address and prefix length (flash-stored config is a future
-/// milestone; until then, edit and reflash).
+/// Static IPv4 address and prefix length. Configuration is not persisted;
+/// edit and reflash to change it.
 pub const NET_CONFIG: NetConfig = NetConfig::Static {
     address: [192, 168, 1, 238],
     prefix: 24,

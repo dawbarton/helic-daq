@@ -11,29 +11,29 @@ signal generator on a Raspberry Pi Pico 2W over Wi-Fi.
 
 ## What it does
 
-- Samples all 8 analogue inputs simultaneously at **1, 2, 4 or 8 kHz**
-  (compile-time preset), hardware-timed so the sampling instant has
-  essentially zero jitter.
+- In `cbc-rig` and `encoder-rig`, samples all 8 analogue inputs
+  simultaneously at **1, 2, 4 or 8 kHz** (compile-time preset), with
+  hardware-timed conversion starts.
 - Runs a **real-time control loop** every sample: measurements → controller
   → analogue output, with total in-to-out latency under one sample period.
-  The default build ships an open-loop pass-through and a PID controller;
-  others can be added in firmware.
+  The default builds select open-loop pass-through; a PID controller is
+  provided and others can be added in firmware.
 - Generates a **periodic reference/forcing signal** as a Fourier series
   (16 harmonics by default) with µHz-resolution frequency control and
-  glitch-free, phase-continuous updates — the core ingredient of CBC.
+  glitch-free, phase-continuous updates, which are central to CBC.
 - Lets a host computer **change parameters on the fly** (frequency, Fourier
   coefficients, controller gains) over the network, safely: updates take
   effect atomically at a sample boundary.
-- **Streams live data** (any of the ADC channels, laser distance, reference,
-  forcing, output) to the host over UDP, with optional decimation and
-  finite captures.
+- **Streams discovered live data** to the host over UDP, with optional
+  decimation and finite captures. Available sources depend on the experiment
+  and controller and carry names and units.
 
 ## Putting the firmware on the device
 
-You need the Rust toolchain (`rustup`, stable channel — the repo pins the
+You need the Rust toolchain (`rustup`, stable channel; the repository pins the
 rest) and one of:
 
-**With a debug probe** (recommended — Raspberry Pi Debug Probe on the SWD
+**With a debug probe** (a Raspberry Pi Debug Probe on the SWD
 header, plus `cargo install probe-rs-tools`):
 
 ```sh
@@ -114,7 +114,7 @@ To exercise the host tools without hardware, start the protocol-v2 simulator
 in one terminal and connect to it from another:
 
 ```sh
-python -m helic_daq.sim
+python3 -m helic_daq.sim
 helic-daq --host 127.0.0.1 capture --sources adc0,out --samples 1000
 ```
 
@@ -203,7 +203,7 @@ pass-through controller the output is simply `target + forcing`.
 | Laser | optoNCDT 1420 via RS422→TTL at 921.6 kBaud, 8 kHz output rate |
 | Encoder (`encoder-rig`) | RMB20 SSI clock GP22, data GP26, each via the appropriate TTL↔RS422 converter |
 
-Output-channel polarity must match your analog board's output stages. The
+Output-channel polarity must match your analogue board's output stages. The
 target design is two bipolar + two unipolar; the current build is **all four
 unipolar** (matching the interim bring-up board). The controller writes to
 output channel 0 by default. The laser sensor must be preconfigured (via
@@ -212,34 +212,38 @@ listens.
 
 ## Things you set at compile time
 
-Edit `firmware/experiments/cbc-rig/src/config.rs` and reflash:
+Edit the selected experiment's `src/config.rs` and reflash. The table shows
+the `cbc-rig` defaults:
 
 | Setting | Constant | Default |
 |---|---|---|
 | Sample rate | `SAMPLE_RATE` | 8 kHz |
 | Controller | `ActiveController` + `make_controller()` | pass-through |
-| Harmonics | `HARMONICS` | 16 |
 | Output channel | `OUTPUT_CHANNEL` | 0 |
 | Network | `NET_CONFIG` | static 192.168.1.235/24 |
 | Laser range | `LASER_RANGE_MM` | 50 mm |
+
+`HARMONICS` is a platform-wide constant in `firmware/common/src/lib.rs`, not
+an experiment setting. Changing it also changes the Fourier coefficient array
+size exposed by the protocol and must be checked against payload and real-time
+budgets.
 
 ## Health monitoring
 
 `helic-daq list` shows the loop diagnostics at any time:
 
-- `loop_time_last` / `loop_time_max` — tick processing time in µs; must
+- `loop_time_last` / `loop_time_max`: tick processing time in µs; must
   stay well under the sample period (125 µs at 8 kHz).
-- `overruns` — ticks that ran over the period. Should be 0.
-- `tick_timeouts` — non-zero means the selected tick source isn't responding;
+- `overruns`: ticks that ran over the period. Should be 0.
+- `tick_timeouts`: non-zero means the selected tick source isn't responding;
   for `cbc-rig`, the ADC may not be wired or powered.
-- `records_dropped` — stream data lost because the host wasn't keeping up.
+- `records_dropped`: stream data lost because the host wasn't keeping up.
 
 If something looks wrong, the same numbers appear once a second in the
 debug-probe log, along with connection events.
 
-**If `capture` times out with no data** while `status`/`get`/`set` work, a
-host firewall is almost certainly blocking inbound UDP on the stream port
-(2351) — control is outbound TCP and unaffected. Allow your client through the
-firewall, or receive on a host/binary the firewall permits. (On managed macOS
-the built-in Application Firewall silently drops UDP to unsigned Python builds;
-see `notes.md` for the Apple-signed-receiver workaround used during bring-up.)
+**If `capture` times out with no data** while `status`/`get`/`set` work, check
+whether a host firewall is blocking inbound UDP on stream port 2351. Control
+uses outbound TCP and can remain functional. On the managed macOS machine used
+for bring-up, the Application Firewall silently dropped UDP to an unsigned
+Homebrew Python executable; [../notes.md](../notes.md) records the workaround.
