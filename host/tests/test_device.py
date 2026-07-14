@@ -21,7 +21,7 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(names[:4], ["firmware", "experiment", "sample_freq", "ticks"])
         self.assertIn("table", names)
         self.assertIn("rig_laser_range", names)
-        coeffs = self.dev._param("forcing_coeffs")
+        coeffs = self.dev.param("forcing_coeffs")
         self.assertEqual(coeffs.type_code, "f")
         self.assertEqual(coeffs.count, 33)
         self.assertTrue(coeffs.writable)

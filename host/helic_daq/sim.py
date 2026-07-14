@@ -327,7 +327,7 @@ class Simulator:
                 return self._error(6, msg_type)
             with self._lock:
                 if self.stream_target is not None:
-                    return self._error(7, msg_type)
+                    return self._error(protocol.ERROR_BUSY, msg_type)
                 self.stream_setup = (decimation, count, sources)
             return msg_type, b""
         if msg_type == MsgType.STREAM_START:

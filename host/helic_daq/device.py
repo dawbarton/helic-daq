@@ -141,7 +141,8 @@ class Device:
         self.sources = [Source(i, *definition) for i, definition in enumerate(definitions)]
         self._source_by_name = {source.name: source for source in self.sources}
 
-    def _param(self, name_or_index) -> Parameter:
+    def param(self, name_or_index) -> Parameter:
+        """Look up a parameter definition by name or index."""
         if isinstance(name_or_index, int):
             if 0 <= name_or_index < len(self.params):
                 return self.params[name_or_index]
@@ -159,7 +160,7 @@ class Device:
         A single argument returns the value directly; multiple arguments
         return a list, fetched in one round trip.
         """
-        params = [self._param(n) for n in names]
+        params = [self.param(n) for n in names]
         size = sum(p.size for p in params)
         if size > protocol.MAX_PAYLOAD:
             raise DeviceError(
@@ -176,7 +177,7 @@ class Device:
 
     def set(self, name, value) -> None:
         """Set a parameter by name (or index)."""
-        p = self._param(name)
+        p = self.param(name)
         if not p.writable:
             raise DeviceError(f"parameter {p.name!r} is read-only")
         raw = self._pack_value(p, value)
@@ -198,7 +199,7 @@ class Device:
         use an exact integer multiple of the master Fourier phase.
         """
         values = [float(value) for value in values]
-        table = self._param("table")
+        table = self.param("table")
         if not 2 <= len(values) <= table.count:
             raise ValueError(f"table length must be between 2 and {table.count}")
         if not all(math.isfinite(value) for value in values):
@@ -246,7 +247,7 @@ class Device:
             try:
                 return self._request(msg_type, payload)
             except DeviceError as error:
-                if error.code != 7 or time.monotonic() >= deadline:
+                if error.code != protocol.ERROR_BUSY or time.monotonic() >= deadline:
                     raise
                 time.sleep(0.005)
 

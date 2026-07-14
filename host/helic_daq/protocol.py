@@ -40,6 +40,10 @@ class MsgType:
     ERROR = 0xFF
 
 
+# Error code (payload byte 0 of an Error response) the device returns while
+# a table commit is still pending; hosts may retry.
+ERROR_BUSY = 7
+
 ERROR_NAMES = {
     1: "bad frame",
     2: "unknown message type",

@@ -82,7 +82,7 @@ def cmd_find(args) -> None:
 def cmd_sine(args) -> None:
     """Quick smoke test: sinusoidal forcing on the output channel."""
     with _connect(args) as dev:
-        coeffs = dev._param("forcing_coeffs")
+        coeffs = dev.param("forcing_coeffs")
         n = coeffs.count  # 1 + 2K: mean, a[1..K], b[1..K]
         harmonics = (n - 1) // 2
         if not 1 <= args.harmonic <= harmonics:
@@ -96,7 +96,7 @@ def cmd_sine(args) -> None:
 
 def cmd_stop(args) -> None:
     with _connect(args) as dev:
-        coeffs = dev._param("forcing_coeffs")
+        coeffs = dev.param("forcing_coeffs")
         dev.set("forcing_coeffs", [0.0] * coeffs.count)
         dev.set("target_coeffs", [0.0] * coeffs.count)
         print("forcing and target zeroed")

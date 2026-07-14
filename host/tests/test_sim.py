@@ -38,7 +38,7 @@ class TestSimulator(unittest.TestCase):
         np.testing.assert_allclose(data["forcing"], data["out"], atol=1e-6)
 
     def test_staged_table_is_committed_and_streamed(self):
-        table = self.dev._param("table")
+        table = self.dev.param("table")
         raw = np.asarray([1.0, 2.0], dtype="<f4").tobytes()
         self.dev._request(MsgType.SET_BLOCK, protocol.encode_set_block(table.index, 0, raw))
         self.dev._request(MsgType.COMMIT, protocol.encode_commit(table.index, 2))
