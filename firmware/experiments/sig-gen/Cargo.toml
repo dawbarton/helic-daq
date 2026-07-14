@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["board-w5500"]
+board-w5500 = ["helic-fw-common/net-wiznet-w5500"]
+board-w6100 = ["helic-fw-common/net-wiznet-w6100"]
+
 [dependencies]
 helic-core.workspace = true
 helic-drivers.workspace = true

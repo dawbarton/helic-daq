@@ -1,9 +1,17 @@
-//! W5500 transport backend for W5500-EVB-Pico2 experiments.
+//! WIZnet transport backend for W5500-EVB-Pico2 and W6100-EVB-Pico2 experiments.
+
+#[cfg(all(feature = "net-wiznet-w5500", feature = "net-wiznet-w6100"))]
+compile_error!("select exactly one WIZnet chip feature");
+#[cfg(not(any(feature = "net-wiznet-w5500", feature = "net-wiznet-w6100")))]
+compile_error!("select a WIZnet chip feature");
 
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
 use embassy_net::Stack;
-use embassy_net_wiznet::chip::W5500;
+#[cfg(feature = "net-wiznet-w5500")]
+use embassy_net_wiznet::chip::W5500 as WiznetChip;
+#[cfg(feature = "net-wiznet-w6100")]
+use embassy_net_wiznet::chip::W6100 as WiznetChip;
 use embassy_net_wiznet::{Device, Runner as WiznetRunner, State as WiznetState};
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::{Input, Output};
@@ -16,7 +24,12 @@ use static_cell::StaticCell;
 use super::NetConfig;
 
 type EthSpi = ExclusiveDevice<Spi<'static, SPI0, Async>, Output<'static>, Delay>;
-type EthRunner = WiznetRunner<'static, W5500, EthSpi, Input<'static>, Output<'static>>;
+type EthRunner = WiznetRunner<'static, WiznetChip, EthSpi, Input<'static>, Output<'static>>;
+
+#[cfg(feature = "net-wiznet-w5500")]
+const CHIP_NAME: &str = "W5500";
+#[cfg(feature = "net-wiznet-w6100")]
+const CHIP_NAME: &str = "W6100";
 
 static WIZNET_STATE: StaticCell<WiznetState<8, 8>> = StaticCell::new();
 
@@ -34,7 +47,7 @@ pub async fn init(
     config: NetConfig,
 ) -> Stack<'static> {
     let spi_dev = unwrap!(ExclusiveDevice::new(parts.spi, parts.cs, Delay));
-    info!("network: starting W5500");
+    info!("network: starting {}", CHIP_NAME);
     let (device, runner) = embassy_net_wiznet::new(
         mac,
         WIZNET_STATE.init(WiznetState::new()),
@@ -43,7 +56,7 @@ pub async fn init(
         parts.rst,
     )
     .await
-    .expect("W5500 init failed");
+    .expect("WIZnet init failed");
     spawner.spawn(unwrap!(ethernet_task(runner)));
 
     let (stack, runner) = super::new(device, config, RoscRng.next_u64());

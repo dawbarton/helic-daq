@@ -1,4 +1,4 @@
-/* RP2350 memory layout (W5500-EVB-Pico2: 2 MiB QSPI flash).
+/* RP2350 memory layout (W5500/W6100-EVB-Pico2: 2 MiB QSPI flash).
    The .start_block / .end_block sections hold the boot ROM image definition;
    .bi_entries holds picotool binary info. Layout follows the embassy rp235x
    examples. */

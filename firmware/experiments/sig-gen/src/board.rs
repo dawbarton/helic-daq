@@ -1,6 +1,6 @@
-//! W5500-EVB-Pico2 wiring for signal generation without an ADC board.
+//! W5500/W6100-EVB-Pico2 wiring for signal generation without an ADC board.
 //!
-//! SPI0 remains the on-board W5500. SPI1 drives only the AD5064 on
+//! SPI0 remains the on-board WIZnet chip. SPI1 drives only the AD5064 on
 //! GP10/GP11 with GP9 as SYNC and GP15 held low as LDAC. PWM slice 4 is an
 //! internal sample clock; no CONVST pin or AD7609 GPIO is claimed.
 

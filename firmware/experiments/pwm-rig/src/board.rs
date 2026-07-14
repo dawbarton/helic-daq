@@ -1,4 +1,4 @@
-//! W5500-EVB-Pico2 wiring for a filtered PWM analogue output.
+//! W5500/W6100-EVB-Pico2 wiring for a filtered PWM analogue output.
 //!
 //! PWM slice 4 is the internal 8 kHz sample clock. Slice 5 channel A drives
 //! GP10 at approximately 146 kHz with 10-bit duty resolution; an external

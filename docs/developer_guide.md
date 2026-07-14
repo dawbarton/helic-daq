@@ -37,8 +37,8 @@ implementation details:
    loss from source-ring loss; timing and overrun diagnostics are ordinary
    discoverable parameters.
 8. **Transport is not an experiment API.** Control, streaming and discovery
-   consume `embassy_net::Stack`; the experiment selects W5500 or CYW43439
-   bring-up. Wired Ethernet remains the full-rate reference transport.
+   consume `embassy_net::Stack`; the experiment selects W5500, W6100 or
+   CYW43439 bring-up. Wired Ethernet remains the full-rate reference transport.
 
 The fixed capacities make memory and packet costs explicit: at most 24 stream
 sources, a 256-record SPSC queue, 16 Fourier harmonics and two 4096-sample
@@ -89,10 +89,12 @@ The firmware crates are deliberately thin: pin wiring, task plumbing and
 glue.
 
 `common::net` owns transport-independent static/DHCP configuration and stack
-resources. `common::net::wiznet` owns W5500 reset, SPI and runner tasks behind
-the default `net-wiznet` feature. TCP, UDP streaming and discovery consume
-only `embassy_net::Stack`, so experiment crates select transport without
-changing protocol tasks.
+resources. `common::net::wiznet` owns W5500/W6100 reset, SPI and runner tasks.
+The `net-wiznet-w5500` and `net-wiznet-w6100` features select the concrete chip
+at compile time. TCP, UDP streaming and discovery consume only
+`embassy_net::Stack`, so experiment crates select transport without changing
+protocol tasks. Wired experiment crates expose these choices as mutually
+exclusive `board-w5500` and `board-w6100` features, with W5500 as the default.
 
 `common::net::cyw43` is selected only by `sig-gen-w`. It owns PIO1 SM0,
 DMA0 and the Pico 2W fixed radio pins GP23/24/25/29, joins in station mode,
@@ -181,8 +183,8 @@ compiler-enforced).
 
 ### Networking (core 0)
 
-`embassy-net` provides the common IP stack over either the W5500 MACRAW
-driver or the CYW43439 driver. `config.rs` selects static addressing or DHCP.
+`embassy-net` provides the common IP stack over the W5500 or W6100 MACRAW
+driver, or the CYW43439 driver. `config.rs` selects static addressing or DHCP.
 Three transport-independent server tasks:
 
 - `helic_fw_common::comms::tcp::control_run`: accepts one client, reads
@@ -219,7 +221,7 @@ and task wrappers:
 
 1. Copy the crate under `firmware/experiments/`, rename its package to
    `fw-<name>`, and select exactly one common network feature:
-   `net-wiznet` or `net-cyw43`.
+   `net-wiznet-w5500`, `net-wiznet-w6100` or `net-cyw43`.
 2. In `board.rs`, assign pins and construct unassembled peripheral parts.
    Move real-time-owned parts to core 1; keep network and sensor tasks on
    core 0. Put reusable driver logic in `helic-drivers`, not here.
@@ -316,9 +318,9 @@ helic-daq capture --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,encode
 
 At 8 kHz, require `loop_time_max < 125`, zero overruns/tick timeouts on a
 complete rig, and no unexpected record or packet-sequence loss. Repeat with
-all discovered sources for W5500 throughput; for Wi-Fi, sweep source count and
-decimation because occasional UDP loss is expected. The capture summary reports
-both source-ring drops and UDP sequence gaps. GP14 gives an independent
+all discovered sources for each wired target; for Wi-Fi, sweep source count
+and decimation because occasional UDP loss is expected. The capture summary
+reports both source-ring drops and UDP sequence gaps. GP14 gives an independent
 scope measurement of the tick body. CI can prove code size, types and builds,
 but cannot establish these timing or RF results.
 

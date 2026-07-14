@@ -6,9 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["net-wiznet"]
+default = ["net-wiznet-w5500"]
 net-cyw43 = ["dep:cyw43", "dep:cyw43-firmware", "dep:cyw43-pio", "dep:cyw43-setup"]
 net-wiznet = ["dep:embassy-net-wiznet", "dep:embedded-hal-bus"]
+net-wiznet-w5500 = ["net-wiznet"]
+net-wiznet-w6100 = ["net-wiznet"]
 
 [dependencies]
 helic-core.workspace = true

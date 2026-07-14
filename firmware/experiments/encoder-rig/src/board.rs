@@ -1,7 +1,7 @@
-//! Board definition for the W5500-EVB-Pico2: the single place where
+//! Board definition for the W5500/W6100-EVB-Pico2: the single place where
 //! peripherals meet pins. The complete pin map is kept below.
 //!
-//! Reserved by the board itself (W5500 on SPI0): GP16 MISO, GP17 CSn,
+//! Reserved by the board itself (WIZnet chip on SPI0): GP16 MISO, GP17 CSn,
 //! GP18 SCK, GP19 MOSI, GP20 RSTn, GP21 INTn, GP25 LED.
 //!
 //! Assignments made here:
@@ -82,7 +82,7 @@ pub struct Board {
     pub analog: AnalogParts,
     /// optoNCDT laser UART, owned by core 0.
     pub laser: LaserParts,
-    /// On-board W5500 Ethernet controller (SPI0), owned by core 0.
+    /// On-board WIZnet Ethernet controller (SPI0), owned by core 0.
     pub eth: EthernetParts,
     /// Second core, handed to `spawn_core1`.
     pub core1: Peri<'static, CORE1>,

@@ -34,6 +34,12 @@ arrays intentionally match it.
 - `fw-sig-gen`, `fw-pwm-rig`, `fw-encoder-rig` and `fw-sig-gen-w`. They build
   with the firmware workspace and their portable logic has host tests, but
   none has been exercised as a complete physical experiment.
+- W6100 Ethernet on every wired experiment. The W6100 variants cross-build,
+  but no W6100-EVB-Pico2 has been exercised. Verify link, static addressing,
+  DHCP, discovery, TCP control and sustained UDP streaming before treating it
+  as equivalent to the W5500 path. The pinned Embassy driver configures 4 KiB
+  MACRAW TX and RX buffers and disables MAC filtering for W6100, so also check
+  packet loss and core-0 load under unrelated broadcast traffic.
 - Full 24-source W5500 throughput and CYW43439 throughput, latency and RF
   behaviour.
 - On hardware, the protocol edge cases that reject `StreamSetup` while a
@@ -115,3 +121,5 @@ evidence:
 4. Pico 2W association, discovery and decimated streaming;
 5. all-source W5500 streaming while watching `records_dropped`, UDP sequence
    gaps, `loop_time_max`, `overruns` and `tick_timeouts`.
+6. W6100 link, static addressing, DHCP, discovery, control and all-source
+   streaming, including core-0 load with broadcast traffic.

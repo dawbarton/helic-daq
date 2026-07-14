@@ -2,9 +2,10 @@
 
 HELIC-DAQ is a real-time control and data acquisition platform for laboratory
 control, signal generation and instrumentation. `cbc-rig` targets
-control-based continuation using an AD7609 ADC and AD5064 DAC. `sig-gen`
-uses the same W5500-EVB-Pico2 and DAC as an arbitrary/function generator with
-optional optoNCDT laser logging, but requires no ADC board. `pwm-rig` replaces
+control-based continuation using an AD7609 ADC and AD5064 DAC. Wired
+experiments support the W5500-EVB-Pico2 and W6100-EVB-Pico2. `sig-gen` uses
+the same board and DAC as an arbitrary/function generator with optional
+optoNCDT laser logging, but requires no ADC board. `pwm-rig` replaces
 the DAC with a filtered 10-bit PWM output on GP10. `encoder-rig` extends the
 CBC instrument with an SSI absolute encoder input. `sig-gen-w` runs the
 signal generator on a Raspberry Pi Pico 2W over Wi-Fi.
@@ -45,6 +46,13 @@ cargo run --release -p fw-encoder-rig # CBC rig plus SSI encoder
 cargo run --release -p fw-sig-gen-w # Pico 2W Wi-Fi signal generator
 ```
 
+Wired packages target the W5500-EVB-Pico2 by default. Select the pin-compatible
+W6100-EVB-Pico2 explicitly:
+
+```sh
+cargo run --release -p fw-cbc-rig --no-default-features --features board-w6100
+```
+
 The log shows a boot banner, network bring-up, and a once-a-second status
 line with loop timing and overruns.
 
@@ -57,6 +65,10 @@ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf 
 # hold BOOTSEL while plugging in the USB cable, then:
 picotool load helic-daq.uf2 && picotool reboot
 ```
+
+Add `--no-default-features --features board-w6100` to the build command for a
+W6100 image. The resulting executable has the same filename, so convert or
+copy it before building the other board variant.
 
 Substitute another `fw-*` experiment package in the build and output filename
 to flash it.

@@ -2,7 +2,7 @@
 //!
 //! Core 1 runs the real-time loop (`rt_loop`): PWM-timed CONVST, BUSY-edge
 //! pipeline, generators + controller, DAC output. Core 0 owns host
-//! communications: W5500 Ethernet with a TCP control server (parameter
+//! communications: WIZnet Ethernet with a TCP control server (parameter
 //! registry, stream control) and a UDP sample streamer, plus the laser UART
 //! and a 1 Hz defmt status line.
 
