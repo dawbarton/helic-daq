@@ -1,7 +1,7 @@
 # HELIC-DAQ wire protocol v2
 
 Authoritative specification. `helic-proto` implements the Rust codec used by
-the firmware; `host/helic_daq/protocol.py` implements the Python codec. Both
+the firmware; `host-python/helic_daq/protocol.py` implements the Python codec. Both
 are tested against the vectors below.
 
 All multi-byte fields are little-endian.

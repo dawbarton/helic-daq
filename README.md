@@ -51,14 +51,14 @@ See [notes.md](notes.md) for the precise hardware-verification boundary.
 | `helic-proto/` | Protocol framing, payloads and stream codec shared with firmware |
 | `firmware/common/` | Experiment-independent RP2350 firmware support |
 | `firmware/experiments/` | One binary, pin map and compile-time configuration per experiment |
-| `host/` | Python package `helic_daq`, simulator and `helic-daq` CLI |
+| `host-python/` | Python package `helic_daq`, simulator and `helic-daq` CLI |
 
 ## Build and test
 
 ```sh
 cargo test
 cd firmware && cargo build --release --workspace
-cd ../host && PYTHONPATH=.:tests python3 -m unittest discover -s tests
+cd ../host-python && PYTHONPATH=.:tests python3 -m unittest discover -s tests
 ```
 
 CI also gates both Rust workspaces with formatting and clippy warnings as
@@ -79,7 +79,7 @@ Install the host package from the repository root, discover devices, and
 inspect one:
 
 ```sh
-pip install -e host
+pip install -e host-python
 helic-daq find
 helic-daq --host 192.168.1.235 status
 ```

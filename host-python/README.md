@@ -6,7 +6,7 @@ sample streaming over UDP, and a `helic-daq` command-line tool.
 Install (from the repository root):
 
 ```sh
-pip install -e host          # add [plot] for the plotting extra
+pip install -e host-python   # add [plot] for the plotting extra
 ```
 
 Quick start:

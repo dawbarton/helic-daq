@@ -83,7 +83,7 @@ cd firmware
 cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings
 cargo build --release --workspace
-cd ../host
+cd ../host-python
 PYTHONPATH=.:tests python3 -m unittest discover -s tests
 ```
 

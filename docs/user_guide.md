@@ -121,7 +121,7 @@ an accepted pulse. `ssi_errors`, `pulse_count`, `pulse_glitches` and
 Install the Python package from the repository root:
 
 ```sh
-pip install -e host        # pip install -e "host[plot]" for plotting
+pip install -e host-python # add `[plot]` for plotting
 ```
 
 To exercise the host tools without hardware, start the protocol-v2 simulator

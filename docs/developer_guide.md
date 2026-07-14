@@ -81,10 +81,11 @@ Two Cargo workspaces plus a Python package:
 | `firmware/experiments/sig-gen-w/` | Pico 2W Wi-Fi variant of the ADC-free signal generator | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/pwm-rig/` | Signal generator using filtered PWM rather than a DAC | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |
-| `host/` | Python package `helic_daq` + `helic-daq` CLI | host |
+| `host-python/` | Python package `helic_daq` + `helic-daq` CLI | host |
 
 The split exists so that **everything with logic in it can be unit-tested on
-the host** (`cargo test` at the root plus `python3 -m unittest` in `host/`).
+the host** (`cargo test` at the root plus `python3 -m unittest` in
+`host-python/`).
 The firmware crates are deliberately thin: pin wiring, task plumbing and
 glue.
 
@@ -368,7 +369,7 @@ cd firmware
 cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings
 cargo build --release --workspace
-cd ../host
+cd ../host-python
 PYTHONPATH=.:tests python3 -m unittest discover -s tests
 ```
 
