@@ -11,6 +11,7 @@ classdef StreamReceiver < handle
     properties (Access = private)
         Socket
         LastSequence = []
+        NativeSocket = false
     end
 
     methods
@@ -33,6 +34,7 @@ classdef StreamReceiver < handle
                     'LocalHost', char(string(parser.Results.BindAddress)), ...
                     'LocalPort', double(parser.Results.Port), ...
                     'Timeout', obj.Timeout);
+                obj.NativeSocket = true;
                 obj.Port = obj.Socket.LocalPort;
             else
                 % The transport hook keeps packet tests independent of hardware.
@@ -56,7 +58,7 @@ classdef StreamReceiver < handle
 
         function [header, values] = receive(obj)
             %RECEIVE Return one decoded header and record-major single matrix.
-            if isa(obj.Socket, 'udpport')
+            if obj.NativeSocket
                 started = tic;
                 while obj.Socket.NumDatagramsAvailable < 1
                     if toc(started) >= obj.Timeout

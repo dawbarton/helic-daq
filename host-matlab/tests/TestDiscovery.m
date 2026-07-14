@@ -22,7 +22,9 @@ classdef TestDiscovery < matlab.unittest.TestCase
             cleanup = onCleanup(@() delete(server));
             configureCallback(server, 'datagram', 1, ...
                 @(source, event) TestDiscovery.respond(source, event));
-            devices = helicdaq.findDevices('Timeout', 0.2, ...
+            % Allow callback registration and toolbox initialisation to settle.
+            pause(0.05);
+            devices = helicdaq.findDevices('Timeout', 0.5, ...
                 'Port', server.LocalPort, 'Addresses', "127.0.0.1");
             configureCallback(server, 'off');
             testCase.verifyEqual(height(devices), 1);
