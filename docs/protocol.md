@@ -1,9 +1,9 @@
 # HELIC-DAQ wire protocol v2
 
 Authoritative specification. `helic-proto` implements the Rust codec used by
-the firmware; `host-python/helic_daq/protocol.py` and
-`host-julia/src/protocol.jl` implement the host codecs. All three are tested
-against the vectors below.
+the firmware; `host-python/helic_daq/protocol.py`,
+`host-julia/src/protocol.jl`, and `host-matlab/+helicdaq/Protocol.m` implement
+the host codecs. All four are tested against the vectors below.
 
 All multi-byte fields are little-endian.
 

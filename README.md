@@ -53,6 +53,7 @@ See [notes.md](notes.md) for the precise hardware-verification boundary.
 | `firmware/experiments/` | One binary, pin map and compile-time configuration per experiment |
 | `host-python/` | Python package `helic_daq`, simulator and `helic-daq` CLI |
 | `host-julia/` | Julia package `HelicDAQ` with a Tables.jl capture interface |
+| `host-matlab/` | MATLAB package `helicdaq` with native table captures |
 
 ## Build and test
 
@@ -61,11 +62,12 @@ cargo test
 cd firmware && cargo build --release --workspace
 cd ../host-python && PYTHONPATH=.:tests python3 -m unittest discover -s tests
 cd ../host-julia && julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+cd ../host-matlab && matlab -batch "runTests()"
 ```
 
 CI also gates both Rust workspaces with formatting and clippy warnings as
-errors, and tests both host-language packages. See the developer guide for the
-complete local check set.
+errors, and tests the Python and Julia packages. The MATLAB suite is currently
+local. See the developer guide for the complete check set.
 
 ## Flash and connect
 
@@ -86,6 +88,7 @@ pip install -e host-python
 helic-daq find
 helic-daq --host 192.168.1.235 status
 julia --project=host-julia -e 'using Pkg; Pkg.instantiate()'
+matlab -batch 'addpath("host-matlab"); helicdaq.findDevices()'
 ```
 
 The [user guide](docs/user_guide.md) covers BOOTSEL/UF2 flashing, all firmware

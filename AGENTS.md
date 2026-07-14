@@ -16,9 +16,9 @@ Embassy. HELIC-DAQ is the platform; CBC is one experiment under
 
 There is no deployed protocol v1. Do not add compatibility shims. Crates are
 `helic-core`, `helic-drivers` and `helic-proto`; the Python package is
-`helic_daq`, and the Julia package is `HelicDAQ`. The repository directory may
-still be named `cbc-daq`, but code and current documentation use HELIC-DAQ
-except where CBC is the experiment.
+`helic_daq`, the Julia package is `HelicDAQ`, and the MATLAB package is
+`helicdaq`. The repository directory may still be named `cbc-daq`, but code
+and current documentation use HELIC-DAQ except where CBC is the experiment.
 
 ## Architectural constraints
 
@@ -89,6 +89,8 @@ cd ../host-python
 PYTHONPATH=.:tests python3 -m unittest discover -s tests
 cd ../host-julia
 julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+cd ../host-matlab
+matlab -batch "runTests()"
 ```
 
 Software checks do not establish real-time, electrical, throughput or RF

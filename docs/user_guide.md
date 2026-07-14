@@ -132,6 +132,12 @@ using Pkg
 Pkg.develop(path="host-julia")
 ```
 
+For MATLAB, add the package directory to the path:
+
+```matlab
+addpath("host-matlab")
+```
+
 To exercise the host tools without hardware, start the protocol-v2 simulator
 in one terminal and connect to it from another:
 
@@ -207,6 +213,26 @@ end
 The cumulative device-side drop count and UDP packet loss remain metadata on
 the capture rather than being repeated in each row.
 
+MATLAB:
+
+```matlab
+device = helicdaq.Device("192.168.1.235");
+cleanup = onCleanup(@() delete(device));
+
+device.setParameter("freq", 10);
+coefficients = zeros(1, 33, "single");
+coefficients(18) = 1;                  % b1 with one-based indexing
+device.setParameter("forcing_coeffs", coefficients);
+
+data = device.capture(["adc0", "out"], 'Seconds', 2);
+mean(data.adc0)
+data.Properties.UserData
+```
+
+MATLAB captures are tables with `index` followed by the requested source
+variables. Units are in `Properties.VariableUnits`; cumulative device-side
+drops and UDP packet loss are in `Properties.UserData`.
+
 ### Arbitrary waveform tables
 
 Upload 2–4096 finite samples from Python or a NumPy `.npy` file:
@@ -220,6 +246,13 @@ In Julia, the corresponding call is:
 
 ```julia
 upload_table!(dev, Float32[0, 1, 0, -1]; duration=0.2, gain=1.5, mode=:loop)
+```
+
+In MATLAB:
+
+```matlab
+device.uploadTable(single([0, 1, 0, -1]), ...
+    'Duration', 0.2, 'Gain', 1.5, 'Mode', "loop");
 ```
 
 Free-running `loop` and `one-shot` modes use `table_freq`, set directly with

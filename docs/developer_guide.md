@@ -68,7 +68,7 @@ wire protocol and no compatibility layer.
 
 ## Repository layout
 
-Two Cargo workspaces plus Python and Julia packages:
+Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 
 | Path | What | Builds for |
 |---|---|---|
@@ -83,10 +83,11 @@ Two Cargo workspaces plus Python and Julia packages:
 | `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |
 | `host-python/` | Python package `helic_daq` + `helic-daq` CLI | host |
 | `host-julia/` | Julia package `HelicDAQ` + Tables.jl capture interface | host |
+| `host-matlab/` | MATLAB package `helicdaq` + native table capture interface | host |
 
 The split exists so that **everything with logic in it can be unit-tested on
-the host** (`cargo test` at the root plus `python3 -m unittest` in
-`host-python/` and `Pkg.test()` in `host-julia/`).
+the host** (`cargo test` at the root plus the language-specific suites in
+`host-python/`, `host-julia/`, and `host-matlab/`).
 The firmware crates are deliberately thin: pin wiring, task plumbing and
 glue.
 
@@ -247,7 +248,7 @@ common registry. Logic must remain in a host-testable crate: an experiment
 that grows algorithms rather than pin glue is the signal to move code out.
 
 Verify with the root host tests, a release build and clippy of the complete
-firmware workspace, and both host-language suites. Then flash the single new
+firmware workspace, and all host-language suites. Then flash the single new
 package and check its pins, tick rate, `loop_time_max`, overruns, discovery,
 source table and output fail-safe behaviour on hardware.
 
@@ -374,11 +375,14 @@ cd ../host-python
 PYTHONPATH=.:tests python3 -m unittest discover -s tests
 cd ../host-julia
 julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+cd ../host-matlab
+matlab -batch "runTests()"
 ```
 
 CI (GitHub Actions) runs fmt + clippy `-D warnings` + tests for the host
-crates, the firmware cross-build, and both host-language suites. The Rust,
-Python and Julia protocol implementations share known-answer vectors from
+crates, the firmware cross-build, and the Python and Julia suites. The MATLAB
+suite is run locally because CI has no MATLAB runner. The Rust, Python, Julia,
+and MATLAB protocol implementations share known-answer vectors from
 [protocol.md](protocol.md), so codec drift fails every implementation's tests.
 
 Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses probe-rs
