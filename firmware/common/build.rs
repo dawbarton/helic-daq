@@ -1,3 +1,8 @@
+//! Cargo build script which embeds the repository's git identity.
+//!
+//! It runs on the host and exports `HELIC_GIT_DESCRIBE` (defmt banner) and
+//! `HELIC_FIRMWARE_ID` (the 16-byte wire identity) as compile-time env vars.
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;

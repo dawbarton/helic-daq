@@ -1,3 +1,7 @@
+//! RP2350-specific plumbing shared by every HELIC-DAQ experiment: the
+//! parameter registry, real-time loop, tick sources, PIO transports,
+//! network transports, protocol servers and sample-rate presets.
+
 #![no_std]
 
 pub mod comms;
