@@ -49,6 +49,18 @@ jobs:
           version: "1.10"
       - run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 
+  matlab:
+    name: Host package (helicdaq)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: matlab-actions/setup-matlab@a0180c939fb1a28de13f44f7b778b912384ced1f # v3.0.1
+        with:
+          products: Instrument_Control_Toolbox
+      - uses: matlab-actions/run-command@bcd446a219949c24051c1d04a4b4e0274c42f23b # v3.2.0
+        with:
+          command: cd("host-matlab"); runTests();
+
   firmware:
     name: Firmware (thumbv8m.main-none-eabihf)
     runs-on: ubuntu-latest
