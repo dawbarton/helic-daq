@@ -1,8 +1,0 @@
-"""Host interface to the CBC-DAQ real-time control and DAQ platform."""
-
-from .device import Device, DeviceError, Parameter
-from .stream import StreamReceiver
-from . import protocol
-
-__all__ = ["Device", "DeviceError", "Parameter", "StreamReceiver", "protocol"]
-__version__ = "0.1.0"

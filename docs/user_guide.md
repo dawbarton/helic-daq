@@ -1,9 +1,10 @@
-# CBC-DAQ user guide
+# HELIC-DAQ user guide
 
-CBC-DAQ is a real-time control and data acquisition instrument for
-control-based continuation (CBC) experiments, built on a W5500-EVB-Pico2
-(RP2350) with an AD7609 8-channel 18-bit ADC, an AD5064 4-channel 16-bit
-DAC, and an optional Micro-Epsilon optoNCDT 1420 laser displacement sensor.
+HELIC-DAQ is a real-time control and data acquisition platform for laboratory
+control, signal generation and instrumentation. The current `cbc-rig`
+experiment targets control-based continuation (CBC), using a W5500-EVB-Pico2
+(RP2350), an AD7609 8-channel 18-bit ADC, an AD5064 4-channel 16-bit DAC, and
+an optional Micro-Epsilon optoNCDT 1420 laser displacement sensor.
 
 ## What it does
 
@@ -34,7 +35,7 @@ header, plus `cargo install probe-rs-tools`):
 
 ```sh
 cd firmware
-cargo run --release        # builds, flashes, and streams the device log
+cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
 ```
 
 The log shows a boot banner, the network address, and a once-a-second
@@ -44,10 +45,10 @@ status line (loop timing, overruns, laser reading).
 
 ```sh
 cd firmware
-cargo build --release
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/cbc-daq-firmware -t elf cbc-daq.uf2
+cargo build --release -p fw-cbc-rig
+picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf helic-daq.uf2
 # hold BOOTSEL while plugging in the USB cable, then:
-picotool load cbc-daq.uf2 && picotool reboot
+picotool load helic-daq.uf2 && picotool reboot
 ```
 
 ## Connecting to it
@@ -60,7 +61,7 @@ address on the same subnet (e.g. `192.168.1.10/24`), and check:
 ping 192.168.1.235
 ```
 
-To use a different address, edit `IP_ADDR` in `firmware/src/config.rs` and
+To use a different address, edit `IP_ADDR` in `firmware/experiments/cbc-rig/src/config.rs` and
 reflash. (Same for the sample rate, laser measuring range, and controller —
 see the table below.)
 
@@ -76,21 +77,21 @@ Command line (`--host <ip>` or `export CBC_DAQ_HOST=<ip>` if not the
 default):
 
 ```sh
-cbc-daq status                     # firmware version, sample rate, uptime
-cbc-daq list                       # all parameters and current values
-cbc-daq sine 10 1.0                # output a 10 Hz, 1 V sine (smoke test)
-cbc-daq get laser loop_time_max
-cbc-daq set freq 17.5
-cbc-daq set ctrl_kp 0.8            # PID gain (when the PID build is flashed)
-cbc-daq stream --sources adc0,out --seconds 2 -o capture.npz
-cbc-daq stream --sources adc0,target,out --seconds 1 --plot
-cbc-daq stop                       # zero the forcing and target
+helic-daq status                     # firmware version, sample rate, uptime
+helic-daq list                       # all parameters and current values
+helic-daq sine 10 1.0                # output a 10 Hz, 1 V sine (smoke test)
+helic-daq get laser loop_time_max
+helic-daq set freq 17.5
+helic-daq set ctrl_kp 0.8            # PID gain (when the PID build is flashed)
+helic-daq stream --sources adc0,out --seconds 2 -o capture.npz
+helic-daq stream --sources adc0,target,out --seconds 1 --plot
+helic-daq stop                       # zero the forcing and target
 ```
 
 Python:
 
 ```python
-from cbc_daq import Device
+from helic_daq import Device
 
 dev = Device("192.168.1.235")
 print(dev.status())
@@ -130,7 +131,7 @@ listens.
 
 ## Things you set at compile time
 
-Edit `firmware/src/config.rs` and reflash:
+Edit `firmware/experiments/cbc-rig/src/config.rs` and reflash:
 
 | Setting | Constant | Default |
 |---|---|---|
@@ -143,7 +144,7 @@ Edit `firmware/src/config.rs` and reflash:
 
 ## Health monitoring
 
-`cbc-daq list` shows the loop diagnostics at any time:
+`helic-daq list` shows the loop diagnostics at any time:
 
 - `loop_time_last` / `loop_time_max` — tick processing time in µs; must
   stay well under the sample period (125 µs at 8 kHz).

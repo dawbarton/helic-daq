@@ -1,0 +1,8 @@
+[package]
+name = "helic-proto"
+description = "Wire protocol shared between the HELIC-DAQ firmware and host: framing, message types, parameter type codes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

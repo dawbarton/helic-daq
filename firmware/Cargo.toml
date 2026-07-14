@@ -1,14 +1,17 @@
-[package]
-name = "cbc-daq-firmware"
-description = "CBC-DAQ firmware for the W5500-EVB-Pico2 (RP2350)"
+[workspace]
+resolver = "2"
+members = ["common", "experiments/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
-[dependencies]
-cbc-core = { path = "../cbc-core" }
-cbc-drivers = { version = "0.1.0", path = "../cbc-drivers" }
-cbc-proto = { path = "../cbc-proto" }
+[workspace.dependencies]
+helic-core = { path = "../helic-core" }
+helic-drivers = { version = "0.1.0", path = "../helic-drivers" }
+helic-proto = { path = "../helic-proto" }
+helic-fw-common = { path = "common" }
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 defmt = "1.1.1"

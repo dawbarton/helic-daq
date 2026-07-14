@@ -6,8 +6,8 @@ import unittest
 
 import numpy as np
 
-from cbc_daq import StreamReceiver
-from cbc_daq.protocol import StreamHeader, encode_stream_header
+from helic_daq import StreamReceiver
+from helic_daq.protocol import StreamHeader, encode_stream_header
 
 
 def make_packet(seq, first_index, values, decimation=1, dropped=0):

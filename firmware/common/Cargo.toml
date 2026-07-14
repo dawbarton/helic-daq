@@ -1,0 +1,23 @@
+[package]
+name = "helic-fw-common"
+description = "Experiment-independent firmware support for HELIC-DAQ"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+helic-core.workspace = true
+helic-drivers.workspace = true
+helic-proto.workspace = true
+defmt.workspace = true
+embassy-executor.workspace = true
+embassy-net.workspace = true
+embassy-net-wiznet.workspace = true
+embassy-rp.workspace = true
+embassy-sync.workspace = true
+embassy-time.workspace = true
+embedded-hal-bus.workspace = true
+embedded-io-async.workspace = true
+heapless.workspace = true
+rand_core.workspace = true
+static_cell.workspace = true

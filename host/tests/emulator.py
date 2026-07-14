@@ -1,4 +1,4 @@
-"""A minimal in-process CBC-DAQ emulator for testing the host package.
+"""A minimal in-process HELIC-DAQ emulator for testing the host package.
 
 Speaks protocol v1 over a localhost TCP socket with a small parameter table
 mirroring the firmware's registry shape. Not a simulator: parameter writes
@@ -11,8 +11,8 @@ import socket
 import struct
 import threading
 
-from cbc_daq import protocol
-from cbc_daq.protocol import MsgType
+from helic_daq import protocol
+from helic_daq.protocol import MsgType
 
 
 class EmulatedParam:
@@ -30,7 +30,7 @@ class EmulatedParam:
 
 def default_params():
     return [
-        EmulatedParam("firmware", "c", 16, False, b"cbc-daq emu\0\0\0\0\0"),
+        EmulatedParam("firmware", "c", 16, False, b"helic-daq emu\0\0\0\0\0"),
         EmulatedParam("sample_freq", "f", 1, False, (8000.0,)),
         EmulatedParam("ticks", "I", 1, False, (12345,)),
         EmulatedParam("freq", "f", 1, True, (0.0,)),

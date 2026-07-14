@@ -2,7 +2,7 @@
 
 import unittest
 
-from cbc_daq import Device, DeviceError
+from helic_daq import Device, DeviceError
 
 from emulator import Emulator
 
@@ -28,7 +28,7 @@ class TestDevice(unittest.TestCase):
         self.assertFalse(self.dev.params[0].writable)
 
     def test_get_scalar_and_string(self):
-        self.assertEqual(self.dev.get("firmware"), "cbc-daq emu")
+        self.assertEqual(self.dev.get("firmware"), "helic-daq emu")
         self.assertEqual(self.dev.get("sample_freq"), 8000.0)
         self.assertEqual(self.dev.get("ticks"), 12345)
 

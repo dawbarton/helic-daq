@@ -2,7 +2,7 @@
 
 Interim wiring reference for driving the existing **BBB-DAQ** analog board
 (from [github.com/dawbarton/rtc](https://github.com/dawbarton/rtc),
-`hardware/`) — an **AD7609** ADC + **AD5064** DAC — from the cbc-daq firmware
+`hardware/`) — an **AD7609** ADC + **AD5064** DAC — from the helic-daq firmware
 on the RP2350, until a purpose-built board is designed.
 
 Derived from the rtc schematics (`hardware/schematics/rtc-sheet{1,2}.sch`) and
@@ -26,7 +26,7 @@ are on the **left edge**, pins 4–20). Cape pins are BBB header P8/P9.
 ### Shared SPI (single RP2350 SPI1 bus → both converters)
 
 The rtc board put the ADC and DAC on **separate** BBB SPI ports (SCLK0/SCLK1),
-but the cbc-daq firmware drives one shared bus. So **jumper GP10 (SCK) to both**
+but the helic-daq firmware drives one shared bus. So **jumper GP10 (SCK) to both**
 converter clocks; MOSI goes only to the DAC, MISO only from the ADC.
 
 | RP2350 | Pico2 pin | Cape signal | Cape pin |
@@ -58,7 +58,7 @@ converter clocks; MOSI goes only to the DAC, MISO only from the ADC.
 | GP15 | 20 | ~LDAC           | P8&nbsp;7  |
 | —    | —  | **~CLR → tie 3V3** | P8&nbsp;8 |
 
-### Straps (BBB drove these; cbc-daq firmware does not)
+### Straps (BBB drove these; helic-daq firmware does not)
 
 - **STBY (P8 15) → 3V3.** AD7609 STBY is active-low; must be high for normal
   operation (low = standby).
@@ -114,5 +114,5 @@ The RT loop already drives CONVST continuously (that's the climbing
    `overruns` stay low once the ADC asserts/deasserts BUSY. First "alive" sign.
 2. Scope: CONVST on GP8/pin 11 = clean square wave at the sample rate; GP14/pin
    19 pulses high per RT tick (timing/load check).
-3. Stream over UDP (`cbc-daq` CLI) and check a known input voltage reads back
+3. Stream over UDP (`helic-daq` CLI) and check a known input voltage reads back
    correctly through the range/scale, and a DAC write appears at J4.

@@ -1,4 +1,4 @@
-# CBC-DAQ implementation plan
+# HELIC-DAQ implementation plan
 
 Informed by a review of the previous BeagleBone Black implementation
 ([dawbarton/rtc](https://github.com/dawbarton/rtc)); see §10 for what was
@@ -54,7 +54,7 @@ Sample-rate presets: **1 / 2 / 4 / 8 kHz**, selected by PWM divider constants. (
 ## 2. Workspace layout
 
 ```
-cbc-daq/
+helic-daq/
 ├── firmware/        # RP2350 Embassy binary (thumbv8m.main-none-eabihf)
 │   └── src/
 │       ├── main.rs            # core 0: net, protocol, laser
@@ -64,14 +64,14 @@ cbc-daq/
 │       ├── params.rs          # name-based parameter registry (§5a)
 │       ├── drivers/           # ad7609.rs, ad5064.rs, optoncdt.rs
 │       └── comms/             # tcp_server.rs, udp_stream.rs, (later usb.rs)
-├── cbc-core/        # no_std, no-alloc DSP library — host-testable with cargo test
+├── helic-core/        # no_std, no-alloc DSP library — host-testable with cargo test
 │   └── src/         # controllers, filters, generators, fourier, frame types
-├── cbc-proto/       # no_std wire protocol: message layouts, param IDs, framing
-├── host/            # Python package `cbc_daq` + CLI
+├── helic-proto/       # no_std wire protocol: message layouts, param IDs, framing
+├── host/            # Python package `helic_daq` + CLI
 └── docs/
 ```
 
-`cbc-core` and `cbc-proto` compile on std too, so all DSP and protocol logic gets ordinary unit tests on the host — the firmware crate stays thin.
+`helic-core` and `helic-proto` compile on std too, so all DSP and protocol logic gets ordinary unit tests on the host — the firmware crate stays thin.
 
 ## 3. Hardware abstraction & drivers
 
@@ -102,7 +102,7 @@ The W5500 occupies SPI0 (GP16 MISO, GP17 CSn, GP18 SCK, GP19 MOSI, GP20 RSTn, GP
 
 ADC and DAC share SPI1 with separate chip selects; transactions are sequential within a tick. If mode/baud reconfiguration between the two proves costly, the DAC moves to a PIO-based SPI (RP2350 has PIO to spare).
 
-## 5. Control & DSP (`cbc-core`)
+## 5. Control & DSP (`helic-core`)
 
 - **`trait Controller`**: `fn tick(&mut self, m: &Frame, r: &Reference) -> Outputs` plus parameter set/get hooks. The active implementation is chosen **at compile time** via a type alias in `config.rs` (optionally behind Cargo features). Built-ins: `PassThrough` (open loop), `Pid` (with derivative filtering and anti-windup); the structure documents how users add their own.
 - **Filters**: cascaded biquads (f32, Direct Form II transposed), coefficients host-settable.
@@ -144,7 +144,7 @@ registry.add("x_Kp", ParamRef::F32(&PID_KP), Access::ReadWrite)?;   // conceptua
 
 ## 6. Host communication
 
-### Protocol (`cbc-proto`, documented in `docs/protocol.md`)
+### Protocol (`helic-proto`, documented in `docs/protocol.md`)
 
 Hand-written fixed-layout little-endian binary (trivially parseable with Python `struct`; no serde dependency on the wire).
 
@@ -153,7 +153,7 @@ Hand-written fixed-layout little-endian binary (trivially parseable with Python 
 
 ### Python package (`host/`)
 
-`cbc_daq` package: `Device` class that performs registry discovery at connect and exposes attribute-style access with tab completion (`dev.par.x_Kp = 0.5`, as rtc's Python interface did), typed get/set from the discovered type codes, coefficient/array upload with commit; `StreamReceiver` (UDP → numpy arrays, drop accounting, capture-N-samples helper, capture-to-file); and a CLI (`cbc-daq list/get/set/stream/plot`) with basic live plotting via matplotlib. Framing constants mirrored from `cbc-proto` with a round-trip test; everything else is discovered, not hard-coded.
+`helic_daq` package: `Device` class that performs registry discovery at connect and exposes attribute-style access with tab completion (`dev.par.x_Kp = 0.5`, as rtc's Python interface did), typed get/set from the discovered type codes, coefficient/array upload with commit; `StreamReceiver` (UDP → numpy arrays, drop accounting, capture-N-samples helper, capture-to-file); and a CLI (`helic-daq list/get/set/stream/plot`) with basic live plotting via matplotlib. Framing constants mirrored from `helic-proto` with a round-trip test; everything else is discovered, not hard-coded.
 
 ## 7. Development setup recommendation
 
@@ -162,7 +162,7 @@ Buy a **Raspberry Pi Debug Probe** (~£12) and connect it to the Pico2's 3-pin S
 ## 8. Milestones
 
 1. **Scaffolding** — workspace, Embassy skeleton booting both cores, defmt logging, blink + tick GPIO, CI (fmt, clippy, host tests, firmware build).
-2. **`cbc-core` DSP** — generators, PID, biquads, Fourier estimator, all with host unit tests. *(No hardware needed; can run in parallel with 3.)*
+2. **`helic-core` DSP** — generators, PID, biquads, Fourier estimator, all with host unit tests. *(No hardware needed; can run in parallel with 3.)*
 3. **Drivers** — AD7609 (PWM CONVST + BUSY IRQ + SPI read), AD5064, OptoNCDT parser; verified with scope/loopback.
 4. **Real-time loop** — full tick pipeline on core 1, parameter mailbox, stream ring buffer; **measure jitter and CPU headroom** at 8 kHz via the debug pin; DAC-out → ADC-in loopback test.
 5. **Ethernet + protocol v1** — embassy-net-wiznet, static IP, TCP command server with registry discovery, UDP streamer.

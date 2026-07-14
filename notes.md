@@ -9,23 +9,23 @@ open/unresolved bug. Read this before re-deriving any of it from scratch.
 Six commits on `main`, one per milestone, all with passing tests
 (`8756433`, `3697b39`, `91ef234`, `955214b`, `deaaba6`, `151c3d3`):
 
-1. **Scaffolding** — Cargo workspace (`cbc-core`, `cbc-proto` build/test on
+1. **Scaffolding** — Cargo workspace (`helic-core`, `helic-proto` build/test on
    host; `firmware/` is its own workspace for `thumbv8m.main-none-eabihf`).
    Dual-core Embassy skeleton.
-2. **DSP library** (`cbc-core`) — phase accumulator, sine LUT, periodic
+2. **DSP library** (`helic-core`) — phase accumulator, sine LUT, periodic
    Fourier generator, arbitrary LUT generator, biquad filters, PID,
    `Controller` trait, Fourier estimator. 33 host tests.
-3. **Drivers** (`cbc-drivers`) — AD7609, AD5064, optoNCDT parser, generic
+3. **Drivers** (`helic-drivers`) — AD7609, AD5064, optoNCDT parser, generic
    over `embedded-hal` 1.0. 17 host tests.
-4. **Real-time loop** (`firmware/src/rt_loop.rs`) — PWM-timed CONVST
+4. **Real-time loop** (`firmware/experiments/cbc-rig/src/rt_loop.rs`) — PWM-timed CONVST
    (hardware-clocked sampling), BUSY-edge pipeline, generators + controller
    + DAC write, lock-free cross-core queues (`heapless::spsc`), diagnostics
    as atomics.
-5. **Ethernet + protocol** (`cbc-proto`, `firmware/src/comms/`,
-   `firmware/src/params.rs`) — framing/CRC/stream packet protocol
+5. **Ethernet + protocol** (`helic-proto`, `firmware/common/src/comms/`,
+   `firmware/common/src/params.rs`) — framing/CRC/stream packet protocol
    (`docs/protocol.md`), name-based parameter registry, W5500 bring-up via
    `embassy-net-wiznet`, TCP control server, UDP streamer.
-6. **Python host package** (`host/`) — `cbc_daq` package + `cbc-daq` CLI,
+6. **Python host package** (`host/`) — `helic_daq` package + `helic-daq` CLI,
    24 tests including an in-process protocol emulator.
 
 Plus `docs/user_guide.md`, `docs/developer_guide.md`, `docs/protocol.md`.
@@ -41,18 +41,18 @@ None — the working tree is clean. The 2026-07-10 bring-up changes and the
 the latter as `fix: harden parameter/DAC paths and stream control after
 code review`, touching:
 
-- `cbc-core/src/pid.rs` — manual `Default` for `Pid` (derived one skipped
+- `helic-core/src/pid.rs` — manual `Default` for `Pid` (derived one skipped
   the first-sample derivative-spike suppression); regression test.
-- `cbc-drivers/src/ad5064.rs` — `code_for_volts` maps non-finite inputs to
+- `helic-drivers/src/ad5064.rs` — `code_for_volts` maps non-finite inputs to
   the 0 V code (NaN previously cast to code 0 = negative full-scale on a
   bipolar channel); tests.
-- `firmware/src/params.rs` — `SetPar` rejects non-finite f32 values
+- `firmware/common/src/params.rs` — `SetPar` rejects non-finite f32 values
   (coefficient sets and controller params) with `BadValue`.
-- `firmware/src/comms/tcp.rs` — responses use `write_all` (short-write
+- `firmware/common/src/comms/tcp.rs` — responses use `write_all` (short-write
   hazard); `StreamSetup` while a stream is running returns `Busy`.
-- `host/cbc_daq/device.py` — socket closed if `__init__` fails after
+- `host/helic_daq/device.py` — socket closed if `__init__` fails after
   connect; `StreamReceiver` import moved to module top.
-- `host/cbc_daq/cli.py` — `sine --harmonic` bounds-checked; drop-counter
+- `host/helic_daq/cli.py` — `sine --harmonic` bounds-checked; drop-counter
   message reworded (it is cumulative since boot).
 - `host/tests/emulator.py` — accepts sequential connections.
 - `docs/protocol.md` — documents the StreamSetup busy rule, non-finite
@@ -68,7 +68,7 @@ All suites pass: `cargo test`, `cargo clippy -D warnings` + `cargo fmt
   target's 3-pin debug header. Enumerates as `Debugprobe on Pico (CMSIS-DAP)`.
 - **`probe-rs` 0.31.0** installed via `brew install probe-rs-tools` (was not
   present at session start).
-- Flash/run: `cd firmware && cargo run --release` (uses `probe-rs run
+- Flash/run: `cd firmware && cargo run --release -p fw-cbc-rig` (uses `probe-rs run
   --chip RP235x` per `firmware/.cargo/config.toml`).
 - **Target board**: W5500-EVB-Pico2. Confirmed genuinely alive via a
   BOOTSEL-mode mass-storage-device test (independent of SWD) early in the
@@ -82,7 +82,7 @@ All suites pass: `cargo test`, `cargo clippy -D warnings` + `cargo fmt
   has a pre-existing static `192.168.178.20/16`, which happens to cover
   `192.168.1.0/24` too) connected via a **direct cable, no switch/hub** to
   the target board's on-board W5500 RJ45 jack. Device's static IP is
-  `192.168.1.235/24` (`firmware/src/config.rs::IP_ADDR`).
+  `192.168.1.235/24` (`firmware/experiments/cbc-rig/src/config.rs::IP_ADDR`).
 - No ADC, DAC, or laser sensor physically connected to the target during
   this entire session — all hardware bring-up so far is MCU + on-board
   W5500 only.
@@ -95,7 +95,7 @@ All suites pass: `cargo test`, `cargo clippy -D warnings` + `cargo fmt
 to 3V3 (header pin 36)**, the first "proper fix option" listed below. This
 holds the disconnected/idle line in the UART mark (HIGH) state, so it no longer
 free-runs into the framing/break interrupt storm. `laser_task` is now spawned
-again ([main.rs](firmware/src/main.rs)); verified on hardware: core 0 stays
+again ([main.rs](firmware/experiments/cbc-rig/src/main.rs)); verified on hardware: core 0 stays
 alive (1 Hz status line ran continuously, ticks 3.3k→126k over 37 s, vs. silent
 after boot before), and the TCP control port still answered while `laser_task`
 ran — no starvation. `laser 0.0 mm` because no sensor is wired yet; with the
@@ -167,7 +167,7 @@ correct throughout). After moving the board off the direct-cable /
 USB-Ethernet-adapter link onto a known-good switch socket + cable — the Mac now
 reaches the device via `en8` (`192.168.1.10/16`), not the old `en7` — receive
 works. Confirmed with three independent proofs: (1) `arp -a` resolves
-`192.168.1.235` to `02:cb:cd:00:00:01` (device replied to a broadcast ARP
+`192.168.1.235` to `02:48:4c:00:00:01` (device replied to a broadcast ARP
 request → RX + TX); (2) firmware logged `net_probe: RX 14 bytes from
 192.168.1.10` (unicast UDP end-to-end through smoltcp); (3) TCP connect to the
 control port `2350` completed the 3-way handshake (`control: client connected`).
@@ -184,7 +184,7 @@ fault. Original investigation retained below for reference.
   100baseTX <full-duplex>` — both ends agree).
 - Static IP configuration works (`network up: 192.168.1.235/24` logged).
 - **Device→host transmit works**: added a temporary `net_beacon_task`
-  (`firmware/src/main.rs`, uncommitted, see §2) that broadcasts a 4-byte
+  (`firmware/experiments/cbc-rig/src/main.rs`, uncommitted, see §2) that broadcasts a 4-byte
   UDP packet to `255.255.255.255:9999` once/second. Confirmed via `sudo
   tcpdump -i en7 -n` on the Mac: packets arrive exactly on schedule,
   correctly formatted (`IP 192.168.1.235.9999 > 255.255.255.255.9999: UDP,
@@ -211,7 +211,7 @@ fault. Original investigation retained below for reference.
   passes broadcast packets (ARP requests are broadcast). Not the cause.
 - Wrong GPIO pin mapping for W5500 SPI/RST/INT: confirmed via web search
   against WIZnet's official W5500-EVB-Pico2 docs that GP16/17/18/19/20/21 =
-  MISO/CSn/SCK/MOSI/RSTn/INTn exactly matches `firmware/src/board.rs`'s
+  MISO/CSn/SCK/MOSI/RSTn/INTn exactly matches `firmware/experiments/cbc-rig/src/board.rs`'s
   `EthParts`. Not the cause.
 - Missing `bind_interrupts!` for GPIO edge interrupts: confirmed by reading
   `embassy-rp`'s `gpio.rs` that `IO_IRQ_BANK0` is registered automatically
@@ -293,8 +293,8 @@ the frequency setting, the 8 kHz clock, AC DAC output, and the whole UDP
 streamer/framing/decimation path.
 
 **macOS firewall / code-signing issue + workaround (this managed Mac):**
-- Symptom: `cbc-daq stream` (and any `cbc_daq` capture) **times out with zero
-  packets**, while `cbc-daq status`/`set`/`get` work fine.
+- Symptom: `helic-daq stream` (and any `helic_daq` capture) **times out with zero
+  packets**, while `helic-daq status`/`set`/`get` work fine.
 - Cause: the macOS Application Firewall is **enabled and MDM-locked** — it
   cannot be turned off or edited (`socketfilterfw` returns *"Firewall settings
   cannot be modified from command line on managed Mac computers"*, and the GUI
@@ -315,7 +315,7 @@ streamer/framing/decimation path.
     3. Decode offline (Homebrew python + numpy): per packet,
        `decode_stream_header(pkt)` then
        `np.frombuffer(pkt, '<f4', offset=STREAM_HEADER_LEN).reshape(n_records, n_sources)`.
-  The `cbc-daq` CLI's built-in `stream` will keep timing out here because it
+  The `helic-daq` CLI's built-in `stream` will keep timing out here because it
   receives in-process under Homebrew Python — this is a host security-policy
   limitation, not a firmware or protocol bug.
 

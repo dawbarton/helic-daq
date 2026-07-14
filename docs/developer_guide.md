@@ -1,4 +1,4 @@
-# CBC-DAQ developer guide
+# HELIC-DAQ developer guide
 
 How the code is organised, how the real-time architecture works, and how to
 extend it. Design rationale and the milestone roadmap live in
@@ -11,11 +11,12 @@ Two Cargo workspaces plus a Python package:
 
 | Path | What | Builds for |
 |---|---|---|
-| `cbc-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
-| `cbc-drivers/` | AD7609, AD5064, optoNCDT drivers over `embedded-hal` 1.0 traits | host + firmware |
-| `cbc-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
-| `firmware/` | The binary: board wiring, RT loop, registry, network servers | `thumbv8m.main-none-eabihf` only (own workspace, own `.cargo/config.toml`) |
-| `host/` | Python package `cbc_daq` + `cbc-daq` CLI | host |
+| `helic-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
+| `helic-drivers/` | AD7609, AD5064, optoNCDT drivers over `embedded-hal` 1.0 traits | host + firmware |
+| `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
+| `firmware/common/` | Experiment-independent firmware support | `thumbv8m.main-none-eabihf` only |
+| `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
+| `host/` | Python package `helic_daq` + `helic-daq` CLI | host |
 
 The split exists so that **everything with logic in it is unit-tested on
 the host** (`cargo test` at the root runs ~60 tests; `python -m unittest`
@@ -90,21 +91,23 @@ compiler-enforced).
 `embassy-net` (smoltcp) provides the IP stack with the static address from
 `config.rs`. Two server tasks:
 
-- `comms::tcp::control_task` — accepts one client, reads CRC-checked
-  frames, dispatches to `ParamStore`, replies. Framing errors drop the
+- `helic_fw_common::comms::tcp::control_run` — accepts one client, reads
+  CRC-checked frames, dispatches to `ParamStore`, replies. Framing errors drop the
   connection (no meaningful resync inside TCP). Disconnect stops streaming.
-- `comms::udp::stream_task` — every 5 ms drains the record ring; when a
-  session is active it packs the selected sources into ≤1472-byte packets.
-  Session config lives in `comms::STREAM` (a critical-section mutex shared
-  by the two tasks). `StreamStart` bumps a generation counter, which
+- `helic_fw_common::comms::udp::stream_task` — every 5 ms drains the record
+  ring; when a session is active it packs the selected sources into
+  ≤1472-byte packets. Session config lives in
+  `helic_fw_common::comms::STREAM`, a critical-section mutex shared by the two
+  tasks. `StreamStart` bumps a generation counter, which
   re-arms the streamer (sequence reset, finite-capture countdown).
 
 ### The parameter registry (`params.rs`)
 
 rtc-style discoverable registry: the host reads names/types/sizes at
 connect and uses indices thereafter, so **adding a parameter is a firmware-
-only change**. `ParamStore` serves reads from RT-loop atomics or from the
-shadow copies of writable values, and turns writes into `RtCommand`s.
+only change**. `helic_fw_common::params::ParamStore` serves reads from RT-loop
+atomics or from the shadow copies of writable values, and turns writes into
+`RtCommand`s.
 
 To add a platform parameter: append a `ParamDef` to `BASE_PARAMS`, add its
 index constant, and handle it in `get` (and `set` if writable). Controller
@@ -114,7 +117,7 @@ parameters need no registry work at all — see below.
 
 ### Writing a controller
 
-Implement `cbc_core::controller::Controller`:
+Implement `helic_core::controller::Controller`:
 
 ```rust
 pub struct MyController { /* gains, filters, state */ }
@@ -129,7 +132,7 @@ impl Controller for MyController {
 }
 ```
 
-Then point `firmware/src/config.rs` at it:
+Then point `firmware/experiments/cbc-rig/src/config.rs` at it:
 
 ```rust
 pub type ActiveController = MyController;
@@ -137,11 +140,11 @@ pub fn make_controller() -> ActiveController { ... }
 ```
 
 `param_names` entries appear automatically in the registry (and therefore
-in `cbc-daq list`) as writable f32 parameters; writes arrive via
+in `helic-daq list`) as writable f32 parameters; writes arrive via
 `set_param` at a sample boundary. The firmware currently supports up to
 eight controller parameters and fails at boot if the active controller exposes
 more, so an over-large controller configuration is caught before an
-experiment. Everything in `cbc-core` is available:
+experiment. Everything in `helic-core` is available:
 `SosFilter` biquad cascades, `Pid`, `FourierEstimator` (feed it the shared
 phase for phase-locked harmonic estimates), and the generators.
 
@@ -161,14 +164,14 @@ software-emulated).
 ### Swapping peripherals
 
 Drivers are generic over `embedded-hal` traits and the `AnalogIn` /
-`AnalogOut` traits in `cbc-drivers`. An AD7606B (SPI-configured) or AD5764
+`AnalogOut` traits in `helic-drivers`. An AD7606B (SPI-configured) or AD5764
 replacement implements the same trait and slots into `board.rs`; the RT
 loop does not change. Pin assignments live **only** in `board.rs`.
 
 ### Adding a stream source
 
 Stream sources are the fields of `rt_loop::Record`. Add the field, assign
-an id in `cbc_proto::source` (and `protocol.py`'s `SOURCES`), map it in
+an id in `helic_proto::source` (and `protocol.py`'s `SOURCES`), map it in
 `comms::udp::record_value`, and document it in `protocol.md`.
 
 ## Hardware bring-up notes
@@ -189,8 +192,8 @@ hardware** (interim rtc analog cape, 2026-07; details and gotchas in
 ## Testing and CI
 
 ```sh
-cargo test                                  # root: cbc-core/drivers/proto (~60 tests)
-cd firmware && cargo build --release        # firmware cross-build
+cargo test                                  # root: helic-core/drivers/proto (~60 tests)
+cd firmware && cargo build --release --workspace # all experiment binaries
 cd host && PYTHONPATH=.:tests python -m unittest discover -s tests
 ```
 
@@ -199,7 +202,7 @@ crates, the firmware cross-build, and the Python suite. The Rust and
 Python protocol implementations share known-answer vectors
 (`docs/protocol.md`) so codec drift fails tests on both sides.
 
-Flashing/debugging: `cargo run --release` in `firmware/` uses probe-rs
+Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses probe-rs
 (`--chip RP235x`) and streams defmt logs over RTT; `DEFMT_LOG` is set in
 `firmware/.cargo/config.toml`. Without a probe, build a UF2 with picotool
 (see the user guide).
@@ -213,7 +216,7 @@ Flashing/debugging: `cargo run --release` in `firmware/` uses probe-rs
   (needs the physical sensor). See `notes.md` §4.3/§5.
 - `SetBlock`/`Commit` are reserved in the protocol but unimplemented; they
   are the path for uploading arbitrary-signal tables (the
-  `ArbitraryGenerator` in cbc-core is ready but not wired into the loop).
+  `ArbitraryGenerator` in helic-core is ready but not wired into the loop).
 - USB serial as a second transport, flash-persisted configuration, laser
   TX (sensor configuration from firmware), and per-period Fourier
   statistics are planned extensions — see implementation_plan.md §8/§10.

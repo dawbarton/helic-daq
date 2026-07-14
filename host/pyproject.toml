@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cbc-daq"
+name = "helic-daq"
 version = "0.1.0"
-description = "Host interface for the CBC-DAQ real-time control and data acquisition platform"
+description = "Host interface for the HELIC-DAQ real-time control and data acquisition platform"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -16,7 +16,7 @@ dependencies = ["numpy"]
 plot = ["matplotlib"]
 
 [project.scripts]
-cbc-daq = "cbc_daq.cli:main"
+helic-daq = "helic_daq.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["cbc_daq*"]
+include = ["helic_daq*"]

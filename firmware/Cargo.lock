@@ -102,53 +102,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
-name = "cbc-core"
-version = "0.1.0"
-dependencies = [
- "libm",
-]
-
-[[package]]
-name = "cbc-daq-firmware"
-version = "0.1.0"
-dependencies = [
- "cbc-core",
- "cbc-drivers",
- "cbc-proto",
- "cortex-m",
- "cortex-m-rt",
- "defmt 1.1.1",
- "defmt-rtt",
- "embassy-embedded-hal",
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-net-wiznet",
- "embassy-rp",
- "embassy-sync",
- "embassy-time",
- "embedded-hal 1.0.0",
- "embedded-hal-bus",
- "embedded-io-async 0.7.0",
- "fixed",
- "heapless",
- "panic-probe",
- "rand_core 0.10.1",
- "static_cell",
-]
-
-[[package]]
-name = "cbc-drivers"
-version = "0.1.0"
-dependencies = [
- "embedded-hal 1.0.0",
-]
-
-[[package]]
-name = "cbc-proto"
-version = "0.1.0"
-
-[[package]]
 name = "cc"
 version = "1.2.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -783,6 +736,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c39754e157331b013978ec91992bde1ac089843443c49cbc7f46150b0fad0893"
 
 [[package]]
+name = "fw-cbc-rig"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.1.1",
+ "defmt-rtt",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-net-wiznet",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
+ "fixed",
+ "heapless",
+ "helic-core",
+ "helic-drivers",
+ "helic-fw-common",
+ "helic-proto",
+ "panic-probe",
+ "rand_core 0.10.1",
+ "static_cell",
+]
+
+[[package]]
 name = "generator"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -843,6 +826,45 @@ dependencies = [
  "hash32",
  "stable_deref_trait",
 ]
+
+[[package]]
+name = "helic-core"
+version = "0.1.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "helic-drivers"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
+name = "helic-fw-common"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.1.1",
+ "embassy-executor",
+ "embassy-net",
+ "embassy-net-wiznet",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
+ "heapless",
+ "helic-core",
+ "helic-drivers",
+ "helic-proto",
+ "rand_core 0.10.1",
+ "static_cell",
+]
+
+[[package]]
+name = "helic-proto"
+version = "0.1.0"
 
 [[package]]
 name = "ident_case"

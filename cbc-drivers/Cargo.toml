@@ -1,9 +1,0 @@
-[package]
-name = "cbc-drivers"
-description = "Peripheral drivers for CBC-DAQ (AD7609 ADC, AD5064 DAC, OptoNCDT laser sensor), generic over embedded-hal traits and host-testable"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-embedded-hal = "1"

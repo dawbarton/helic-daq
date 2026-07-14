@@ -1,15 +1,15 @@
 """Protocol codec tests, including the known-answer vectors shared with the
-Rust implementation (see docs/protocol.md and cbc-proto)."""
+Rust implementation (see docs/protocol.md and helic-proto)."""
 
 import unittest
 
-from cbc_daq import protocol
-from cbc_daq.protocol import MsgType, ProtocolError, StreamHeader
+from helic_daq import protocol
+from helic_daq.protocol import MsgType, ProtocolError, StreamHeader
 
 
 class TestCrc16(unittest.TestCase):
     def test_known_answers(self):
-        # Same vectors as cbc-proto/src/crc.rs.
+        # Same vectors as helic-proto/src/crc.rs.
         self.assertEqual(protocol.crc16(b"123456789"), 0x29B1)
         self.assertEqual(protocol.crc16(b""), 0xFFFF)
         self.assertEqual(protocol.crc16(bytes([0x00])), 0xE1F0)
@@ -18,9 +18,9 @@ class TestCrc16(unittest.TestCase):
 
 class TestFrame(unittest.TestCase):
     def test_known_answer_frame(self):
-        # Status request, seq 1, empty payload — same vector as cbc-proto.
+        # Status request, seq 1, empty payload — same vector as helic-proto.
         frame = protocol.encode_frame(MsgType.STATUS, 1)
-        self.assertEqual(frame, bytes([0xCD, 0xCB, 0x0A, 0x01, 0x00, 0x00, 0x5B, 0xDB]))
+        self.assertEqual(frame, bytes([0x48, 0x4C, 0x0A, 0x01, 0x00, 0x00, 0x5B, 0xDB]))
 
     def test_round_trip(self):
         frame = protocol.encode_frame(MsgType.GET_PAR, 7, b"\x01\x00\x02\x00")

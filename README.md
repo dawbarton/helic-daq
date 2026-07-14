@@ -1,8 +1,9 @@
-# CBC-DAQ
+# HELIC-DAQ
 
-A real-time control and data acquisition platform for control-based
-continuation, built on the RP2350 (W5500-EVB-Pico2) and the Rust Embassy
-framework. Successor to the BeagleBone Black-based
+A real-time control and data acquisition platform for laboratory control,
+signal generation and instrumentation, built on the RP2350
+(W5500-EVB-Pico2) and the Rust Embassy framework. Its first experiment is
+control-based continuation (CBC), succeeding the BeagleBone Black-based
 [rtc](https://github.com/dawbarton/rtc).
 
 - **User guide** (flashing, connecting, CLI/Python usage): [docs/user_guide.md](docs/user_guide.md)
@@ -16,9 +17,11 @@ framework. Successor to the BeagleBone Black-based
 
 | Directory | Contents |
 |---|---|
-| `cbc-core/` | Hardware-independent DSP (generators, controllers, filters, Fourier estimation) — `no_std`, host-testable |
-| `cbc-proto/` | Wire protocol shared between firmware and host |
-| `firmware/` | RP2350 firmware (own Cargo workspace, always builds for `thumbv8m.main-none-eabihf`) |
+| `helic-core/` | Hardware-independent DSP (generators, controllers, filters, Fourier estimation) — `no_std`, host-testable |
+| `helic-drivers/` | Host-testable peripheral drivers over `embedded-hal` traits |
+| `helic-proto/` | Wire protocol shared between firmware and host |
+| `firmware/common/` | Experiment-independent RP2350 firmware support |
+| `firmware/experiments/` | One firmware binary and pin map per physical experiment |
 | `host/` | Python host package + CLI (from milestone 6) |
 
 ## Building
@@ -33,7 +36,7 @@ Firmware (from `firmware/`; the target is configured automatically):
 
 ```sh
 cd firmware
-cargo build --release
+cargo build --release --workspace
 ```
 
 ## Flashing & logs
@@ -43,14 +46,14 @@ and [probe-rs](https://probe.rs) (`cargo install probe-rs-tools`):
 
 ```sh
 cd firmware
-cargo run --release   # flashes and streams defmt logs
+cargo run --release -p fw-cbc-rig   # flashes and streams defmt logs
 ```
 
 Without a probe, via the BOOTSEL USB bootloader:
 
 ```sh
 cd firmware
-cargo build --release
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/cbc-daq-firmware -t elf cbc-daq.uf2
-picotool load cbc-daq.uf2  # board in BOOTSEL mode
+cargo build --release -p fw-cbc-rig
+picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf helic-daq.uf2
+picotool load helic-daq.uf2  # board in BOOTSEL mode
 ```

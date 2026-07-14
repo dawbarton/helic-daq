@@ -1,7 +1,7 @@
-# CBC-DAQ wire protocol v1
+# HELIC-DAQ wire protocol v1
 
-Authoritative specification. Implemented by `cbc-proto` (Rust, used by the
-firmware) and `host/cbc_daq/protocol.py` (Python); both are unit-tested
+Authoritative specification. Implemented by `helic-proto` (Rust, used by the
+firmware) and `host/helic_daq/protocol.py` (Python); both are unit-tested
 against the known-answer vectors at the end of this document.
 
 All multi-byte fields are **little-endian**. The device listens on:
@@ -21,7 +21,7 @@ active stream.
 
 | offset | size | field |
 |---|---|---|
-| 0 | 2 | magic = `0xCBCD` |
+| 0 | 2 | magic = `0x4C48` (little-endian ASCII `HL`) |
 | 2 | 1 | type (message type) |
 | 3 | 1 | seq — chosen by the host, echoed in the response |
 | 4 | 2 | len — payload length (max 512) |
@@ -111,7 +111,7 @@ batched into packets of at most 1472 bytes and flushed at least every 5 ms.
 
 | offset | size | field |
 |---|---|---|
-| 0 | 2 | magic = `0xCBCD` |
+| 0 | 2 | magic = `0x4C48` (little-endian ASCII `HL`) |
 | 2 | 1 | version = 1 |
 | 3 | 1 | n_sources — values per record |
 | 4 | 4 | seq — packet counter (gaps = packets lost in transit) |
@@ -138,4 +138,4 @@ Within a packet, record i has sample index `first_index + i × decimation`.
 - `crc16("123456789") = 0x29B1`, `crc16("") = 0xFFFF`,
   `crc16([0x00]) = 0xE1F0`, `crc16([0x0A,0x01,0x00,0x00]) = 0xDB5B`
 - Status request, seq 1, empty payload encodes to
-  `CD CB 0A 01 00 00 5B DB`.
+  `48 4C 0A 01 00 00 5B DB`.
