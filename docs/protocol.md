@@ -140,8 +140,9 @@ Within a packet, record i has sample index
 
 This v2 extension is reserved for phase 9. The request is `magic u16, 0x01`.
 The response is `magic u16, 0x02, version u8, control_port u16, mac[6],
-experiment c×16, firmware c×16`. Until phase 9 firmware does not bind this
-port.
+experiment c×16, firmware c×16`. Until phase 9 hardware firmware does not
+bind this port; the host simulator responds now so discovery clients can be
+developed independently.
 
 ## Known-answer vectors
 

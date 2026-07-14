@@ -20,5 +20,12 @@ dev.par.freq = 10.0               # attribute-style access
 data = dev.capture(["adc0", "out"], seconds=2.0)
 ```
 
+For host-side development without hardware, run the protocol-v2 simulator:
+
+```sh
+python -m helic_daq.sim
+helic-daq --host 127.0.0.1 capture --sources adc0,out --samples 1000
+```
+
 See `docs/user_guide.md` in the repository for the full guide and
 `docs/protocol.md` for the wire protocol.

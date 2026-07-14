@@ -21,7 +21,7 @@ class StreamReceiver:
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
         self._sock.bind((bind, port))
         self._sock.settimeout(timeout)
-        self.port = port
+        self.port = self._sock.getsockname()[1]
         self.last_seq: int | None = None
         self.lost_packets = 0
 

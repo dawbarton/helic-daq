@@ -10,11 +10,12 @@ import argparse
 import os
 import sys
 
+from . import protocol
 from .device import Device, DeviceError
 
 
 def _connect(args) -> Device:
-    return Device(args.host)
+    return Device(args.host, args.port)
 
 
 def cmd_list(args) -> None:
@@ -130,6 +131,9 @@ def main(argv=None) -> int:
         "--host",
         default=os.environ.get("HELIC_DAQ_HOST", "192.168.1.235"),
         help="device IP address (default: $HELIC_DAQ_HOST or 192.168.1.235)",
+    )
+    parser.add_argument(
+        "--port", type=int, default=protocol.CONTROL_PORT, help="control TCP port"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

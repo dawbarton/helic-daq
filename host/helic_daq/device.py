@@ -137,7 +137,9 @@ class Device:
 
     def _param(self, name_or_index) -> Parameter:
         if isinstance(name_or_index, int):
-            return self.params[name_or_index]
+            if 0 <= name_or_index < len(self.params):
+                return self.params[name_or_index]
+            raise DeviceError(f"unknown parameter index {name_or_index}")
         try:
             return self._by_name[name_or_index]
         except KeyError:
@@ -219,9 +221,12 @@ class Device:
                 ids.append(source.index)
                 names.append(source.name)
             else:
+                index = int(s)
                 try:
-                    source = self.sources[int(s)]
-                except (IndexError, ValueError):
+                    if index < 0:
+                        raise IndexError
+                    source = self.sources[index]
+                except IndexError:
                     raise DeviceError(f"unknown source index {s!r}") from None
                 ids.append(source.index)
                 names.append(source.name)
@@ -256,7 +261,7 @@ class Device:
             samples = max(1, int(seconds * fs / decimation))
         names = self.stream_setup(sources, decimation=decimation, count=samples)
         with StreamReceiver(port=port) as rx:
-            self.stream_start(port)
+            self.stream_start(rx.port)
             try:
                 return rx.capture(samples, names)
             finally:

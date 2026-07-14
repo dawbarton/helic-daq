@@ -71,6 +71,17 @@ Install the Python package from the repository root:
 pip install -e host        # pip install -e "host[plot]" for plotting
 ```
 
+To exercise the host tools without hardware, start the protocol-v2 simulator
+in one terminal and connect to it from another:
+
+```sh
+python -m helic_daq.sim
+helic-daq --host 127.0.0.1 capture --sources adc0,out --samples 1000
+```
+
+The simulator exposes the same discoverable parameter/source tables, supports
+staged waveform uploads, and generates synthetic TCP-controlled UDP streams.
+
 ## Using it
 
 Command line (`--host <ip>` or `export HELIC_DAQ_HOST=<ip>` if not the

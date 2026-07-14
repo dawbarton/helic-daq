@@ -30,6 +30,9 @@ pub const CONTROL_PORT: u16 = 2350;
 /// `StreamStart`; this is the conventional choice).
 pub const STREAM_PORT: u16 = 2351;
 
+/// UDP port for device-discovery beacons.
+pub const DISCOVERY_PORT: u16 = 2352;
+
 /// Error codes carried in `MsgType::Error` responses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
