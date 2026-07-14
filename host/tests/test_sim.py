@@ -33,6 +33,7 @@ class TestSimulator(unittest.TestCase):
         self.dev.set("forcing_coeffs", coefficients)
         data = self.dev.capture(["forcing", "out"], samples=64, port=0)
         self.assertEqual(len(data["index"]), 64)
+        self.assertEqual(data["lost_packets"], 0)
         self.assertGreater(np.ptp(data["forcing"]), 0.1)
         np.testing.assert_allclose(data["forcing"], data["out"], atol=1e-6)
 

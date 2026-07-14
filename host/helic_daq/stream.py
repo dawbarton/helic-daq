@@ -55,8 +55,9 @@ class StreamReceiver:
 
     def capture(self, n_records: int, names: list[str]) -> dict:
         """Collect `n_records` records; returns ``{name: values}`` arrays
-        plus ``"index"`` (sample index of each record) and ``"dropped"``
-        (cumulative source-side drop counter at capture end)."""
+        plus ``"index"`` (sample index of each record), ``"dropped"``
+        (cumulative source-side drop counter at capture end), and
+        ``"lost_packets"`` (UDP sequence gaps during this capture)."""
         blocks, indices = [], []
         dropped = 0
         got = 0
@@ -72,4 +73,5 @@ class StreamReceiver:
         out = {name: data[:, i].copy() for i, name in enumerate(names)}
         out["index"] = index
         out["dropped"] = dropped
+        out["lost_packets"] = self.lost_packets
         return out

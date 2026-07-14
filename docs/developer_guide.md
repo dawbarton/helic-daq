@@ -3,7 +3,9 @@
 How the code is organised, how the real-time architecture works, and how to
 extend it. Design rationale and the milestone roadmap live in
 [implementation_plan.md](implementation_plan.md); the wire protocol in
-[protocol.md](protocol.md).
+[protocol.md](protocol.md). The completed multi-experiment restructure and
+its settled decisions are specified in
+[multi_experiment_plan.md](multi_experiment_plan.md).
 
 ## Repository layout
 
@@ -23,9 +25,9 @@ Two Cargo workspaces plus a Python package:
 | `host/` | Python package `helic_daq` + `helic-daq` CLI | host |
 
 The split exists so that **everything with logic in it is unit-tested on
-the host** (`cargo test` at the root runs ~60 tests; `python -m unittest`
-in `host/` another 24). The firmware crate is deliberately thin: pin
-wiring, task plumbing, and glue.
+the host** (`cargo test` at the root plus `python -m unittest` in `host/`).
+The firmware crates are deliberately thin: pin wiring, task plumbing and
+glue.
 
 `common::net` owns transport-independent static/DHCP configuration and stack
 resources. `common::net::wiznet` owns W5500 reset, SPI and runner tasks behind
@@ -144,6 +146,40 @@ parameters need no registry work at all — see below.
 
 ## Extending
 
+### Adding an experiment
+
+Start from the existing experiment whose peripherals and transport are
+closest. An experiment crate should contain only wiring, compile-time choices
+and task wrappers:
+
+1. Copy the crate under `firmware/experiments/`, rename its package to
+   `fw-<name>`, and select exactly one common network feature:
+   `net-wiznet` or `net-cyw43`.
+2. In `board.rs`, assign pins and construct unassembled peripheral parts.
+   Move real-time-owned parts to core 1; keep network and sensor tasks on
+   core 0. Put reusable driver logic in `helic-drivers`, not here.
+3. In `config.rs`, set `EXPERIMENT`, `SAMPLE_RATE`, `NET_CONFIG`, controller
+   alias/factory and rig-specific constants. Experiment names, parameter names
+   and source names must fit their protocol limits.
+4. Implement `Rig` for the assembled hardware. `INPUTS` and `measure` must
+   use the same order; choose a `TickSource`, implement `actuate`, and expose
+   rig controls through `param_names`, `param_defaults` and `set_param`.
+5. In `main.rs`, define atomic-backed `ExtraParam`s for read-only sensor and
+   diagnostic values, bind only the interrupts the board owns, and wrap the
+   common TCP, stream, beacon, laser and RT runners as needed.
+6. Keep `rt_loop.rs` as the thin concrete wrapper around `run_rt_loop`.
+
+Controller telemetry is appended after rig inputs, and the common loop then
+appends `target`, `forcing`, `table` and `out`; no experiment assigns those
+indices. Fourier and table parameters also arrive automatically through the
+common registry. Logic must remain in a host-testable crate: an experiment
+that grows algorithms rather than pin glue is the signal to move code out.
+
+Verify with the root host tests, a release build and clippy of the complete
+firmware workspace, and the Python suite. Then flash the single new package
+and check its pins, tick rate, `loop_time_max`, overruns, discovery, source
+table and output fail-safe behaviour on hardware.
+
 ### Writing a controller
 
 Implement `helic_core::controller::Controller`:
@@ -193,6 +229,25 @@ roughly half the period for the controller. Check `loop_time_max` and
 Avoid `f64` in the tick path (the M33 FPU is single-precision; doubles are
 software-emulated).
 
+For the worst-case 8 kHz rig, the design estimate is roughly 30 µs of the
+125 µs period. Treat that as an argument, not a measurement. After any RT-path
+change, clear/reboot the device, exercise the intended controller and table
+mode, then record:
+
+```sh
+helic-daq get loop_time_last loop_time_max overruns tick_timeouts records_dropped
+helic-daq sources
+helic-daq capture --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,encoder,target,forcing,table,out --seconds 30
+```
+
+At 8 kHz, require `loop_time_max < 125`, zero overruns/tick timeouts on a
+complete rig, and no unexpected record or packet-sequence loss. Repeat with
+all discovered sources for W5500 throughput; for Wi-Fi, sweep source count and
+decimation because occasional UDP loss is expected. The capture summary reports
+both source-ring drops and UDP sequence gaps. GP14 gives an independent
+scope measurement of the tick body. CI can prove code size, types and builds,
+but cannot establish these timing or RF results.
+
 ### Swapping peripherals
 
 Drivers are generic over `embedded-hal` traits and the `AnalogIn` /
@@ -227,7 +282,7 @@ hardware** (interim rtc analog cape, 2026-07; details and gotchas in
 ## Testing and CI
 
 ```sh
-cargo test                                  # root: helic-core/drivers/proto (~60 tests)
+cargo test                                  # root: helic-core/drivers/proto
 cd firmware && cargo build --release --workspace # all experiment binaries
 cd host && PYTHONPATH=.:tests python -m unittest discover -s tests
 ```
@@ -244,11 +299,12 @@ Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses prob
 
 ## Known gaps / next steps
 
-- End-to-end behaviour is **verified on hardware** (2026-07): networking, RT
+- The original `cbc-rig` behaviour is **verified on hardware** (2026-07): networking, RT
   loop, ADC read, DAC write, DAC→ADC loopback (DC + AC), signal generator, all
   four sample-rate presets, parameter round-trip, and closed-loop PID. The only
-  path not yet exercised is the **laser UART with a real optoNCDT sensor**
-  (needs the physical sensor). See `notes.md` §4.3/§5.
+  path not yet exercised there is the **laser UART with a real optoNCDT
+  sensor**. The new PWM, SSI encoder and Pico 2W/CYW43 paths have compile-time
+  and host-test verification only. See `notes.md` §4.3/§5.
 - Arbitrary table upload and playback are implemented and host-tested, but
   still require scope verification on hardware, including glitch-free
   re-commit and long phase-locked runs.

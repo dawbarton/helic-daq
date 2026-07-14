@@ -23,12 +23,13 @@ use crate::table;
 use crate::{SampleRate, HARMONICS};
 
 /// Firmware identification string, padded/truncated to 16 chars on the wire.
-pub const FIRMWARE_VERSION: &str = concat!(
+pub const FIRMWARE_BANNER: &str = concat!(
     "helic-daq ",
     env!("CARGO_PKG_VERSION"),
     " ",
     env!("HELIC_GIT_DESCRIBE")
 );
+pub const FIRMWARE_VERSION: &str = env!("HELIC_FIRMWARE_ID");
 
 /// Serialized size of a coefficient set: mean + a[K] + b[K].
 pub const COEFF_COUNT: u16 = (1 + 2 * HARMONICS) as u16;

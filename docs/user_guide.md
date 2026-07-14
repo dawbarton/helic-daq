@@ -22,7 +22,7 @@ signal generator on a Raspberry Pi Pico 2W over Wi-Fi.
   (16 harmonics by default) with µHz-resolution frequency control and
   glitch-free, phase-continuous updates — the core ingredient of CBC.
 - Lets a host computer **change parameters on the fly** (frequency, Fourier
-  coefficients, controller gains) over Ethernet, safely: updates take
+  coefficients, controller gains) over the network, safely: updates take
   effect atomically at a sample boundary.
 - **Streams live data** (any of the ADC channels, laser distance, reference,
   forcing, output) to the host over UDP, with optional decimation and
@@ -45,8 +45,8 @@ cargo run --release -p fw-encoder-rig # CBC rig plus SSI encoder
 cargo run --release -p fw-sig-gen-w # Pico 2W Wi-Fi signal generator
 ```
 
-The log shows a boot banner, the network address, and a once-a-second
-status line (loop timing, overruns, laser reading).
+The log shows a boot banner, network bring-up, and a once-a-second status
+line with loop timing and overruns.
 
 **Without a probe**, via the USB bootloader:
 
@@ -72,11 +72,12 @@ helic-daq find
 The wired experiments use static addresses by default: `192.168.1.235/24` for
 `cbc-rig`, `192.168.1.236/24` for `sig-gen`, and `192.168.1.237/24` for
 `pwm-rig`. `encoder-rig` uses `192.168.1.238/24`.
-Connect it to your machine directly or via a switch, give your machine an
-address on the same subnet (e.g. `192.168.1.10/24`), and check:
+Connect it to your machine directly or via a switch and give your machine an
+address on the same subnet, for example `192.168.1.10/24`. After installing
+the host package below, check the TCP control service:
 
 ```sh
-ping 192.168.1.235
+helic-daq --host 192.168.1.235 status
 ```
 
 To use a different address, edit `NET_CONFIG` in the selected experiment's

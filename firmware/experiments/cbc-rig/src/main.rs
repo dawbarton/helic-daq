@@ -89,7 +89,7 @@ fn main() -> ! {
         config::LASER_RANGE_MM.to_bits(),
         core::sync::atomic::Ordering::Relaxed,
     );
-    info!("helic-daq firmware boot: {}", params::FIRMWARE_VERSION);
+    info!("helic-daq firmware boot: {}", params::FIRMWARE_BANNER);
 
     let b = board::Board::new(p);
 

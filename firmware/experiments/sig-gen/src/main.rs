@@ -85,7 +85,7 @@ fn main() -> ! {
     info!(
         "helic-daq {} boot: {}",
         config::EXPERIMENT,
-        params::FIRMWARE_VERSION
+        params::FIRMWARE_BANNER
     );
 
     let board = board::Board::new(p);

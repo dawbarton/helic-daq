@@ -324,7 +324,8 @@ class Device:
         port: int = protocol.STREAM_PORT,
     ):
         """Capture a finite stream and return ``{name: ndarray}`` plus
-        ``"index"`` (sample indices) and ``"dropped"`` (source-side drops).
+        ``"index"`` (sample indices), ``"dropped"`` (source-side drops), and
+        ``"lost_packets"`` (UDP sequence gaps during the capture).
 
         Give either `samples` (records after decimation) or `seconds`.
         """

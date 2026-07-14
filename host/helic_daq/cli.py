@@ -108,7 +108,10 @@ def cmd_stream(args) -> None:
     n = len(data["index"])
     # `dropped` is the device's cumulative since-boot drop counter, not the
     # number of drops during this capture.
-    print(f"captured {n} records (source drop counter: {data['dropped']})")
+    print(
+        f"captured {n} records (source drops: {data['dropped']}, "
+        f"UDP packets lost: {data['lost_packets']})"
+    )
     if args.output:
         import numpy as np
 

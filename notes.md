@@ -380,3 +380,12 @@ Still unverified on hardware:
    UDP capture and the radio-controlled heartbeat LED. Confirm the 8 kHz RT
    tick remains stable while Wi-Fi is active. The backend and `sig-gen-w`
    currently have compile-time verification only.
+
+## 6. Phase 10 build-size audit (2026-07-14)
+
+Release ELF allocated-section totals from `objdump -h` are 124–136 KB flash
+and about 132 KB RAM for the four wired experiments. `fw-sig-gen-w` is 403 KB
+flash, including its embedded CYW43439 blobs, and 125 KB RAM. These are well
+inside the 2 MB flash / 520 KB SRAM design envelope. This is a linker-output
+check only; it does not replace the timing, throughput or RF measurements in
+§5.

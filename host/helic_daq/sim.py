@@ -134,12 +134,13 @@ class Simulator:
         self._closed.set()
         self._listener.close()
         self._beacon.close()
-        if self._connection is not None:
+        connection = self._connection
+        if connection is not None:
             try:
-                self._connection.shutdown(socket.SHUT_RDWR)
+                connection.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-            self._connection.close()
+            connection.close()
         self._thread.join(timeout=1.0)
         self._beacon_thread.join(timeout=1.0)
 

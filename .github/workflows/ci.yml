@@ -19,7 +19,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
 
   python:
@@ -50,7 +50,7 @@ jobs:
           targets: thumbv8m.main-none-eabihf
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: firmware
+          workspaces: firmware -> target
       - run: cargo fmt --all -- --check
       - run: cargo clippy --release --workspace -- -D warnings
       - run: cargo build --release --workspace

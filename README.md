@@ -10,6 +10,7 @@ Rust Embassy framework. It is the successor to the BeagleBone Black-based
 - **Developer guide** (architecture, extending, testing): [docs/developer_guide.md](docs/developer_guide.md)
 - Wire protocol: [docs/protocol.md](docs/protocol.md)
 - Requirements: [AGENTS.md](AGENTS.md)
+- Current multi-experiment plan: [docs/multi_experiment_plan.md](docs/multi_experiment_plan.md)
 - Design & roadmap: [docs/implementation_plan.md](docs/implementation_plan.md)
 - Periodic signal generator design: [docs/periodic_signal_generator.md](docs/periodic_signal_generator.md)
 

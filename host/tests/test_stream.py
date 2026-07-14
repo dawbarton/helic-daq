@@ -61,6 +61,7 @@ class TestStreamReceiver(unittest.TestCase):
         np.testing.assert_array_equal(data["out"], [0.0, 1.0, 2.0, 3.0, 4.0])
         np.testing.assert_array_equal(data["index"], [0, 2, 4, 6, 8])
         self.assertEqual(data["dropped"], 7)
+        self.assertEqual(data["lost_packets"], 0)
 
     def test_capture_truncates_to_requested_length(self):
         self.send(make_packet(0, 0, [[1.0], [2.0], [3.0], [4.0]]))

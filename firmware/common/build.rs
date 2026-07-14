@@ -19,7 +19,7 @@ fn main() {
 
     let describe = Command::new("git")
         .args(["describe", "--always", "--dirty"])
-        .current_dir(repo)
+        .current_dir(&repo)
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -28,4 +28,22 @@ fn main() {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unknown".to_owned());
     println!("cargo:rustc-env=HELIC_GIT_DESCRIBE={describe}");
+
+    let hash = Command::new("git")
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&repo)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_owned());
+    let version = env::var("CARGO_PKG_VERSION").unwrap();
+    let firmware_id = format!("{version} {hash}");
+    assert!(
+        firmware_id.len() <= 16,
+        "firmware wire identity exceeds c×16"
+    );
+    println!("cargo:rustc-env=HELIC_FIRMWARE_ID={firmware_id}");
 }

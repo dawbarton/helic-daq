@@ -79,7 +79,7 @@ The v2 base registry is:
 
 | name | type | access | meaning |
 |---|---|---|---|
-| firmware | c×16 | ro | firmware identification |
+| firmware | c×16 | ro | `<version> <7-char git hash>` build identity |
 | experiment | c×16 | ro | compiled experiment name |
 | sample_freq | f | ro | sample rate, Hz |
 | ticks | I | ro | RT-loop tick count |
@@ -152,6 +152,8 @@ The request is `magic u16, 0x01`.
 The response is `magic u16, 0x02, version u8, control_port u16, mac[6],
 experiment c×16, firmware c×16`. Both hardware firmware and the host simulator
 respond. Requests and responses are fixed-size and carry no control-frame CRC.
+Hardware uses the same compact firmware identity as the parameter registry;
+the defmt boot banner retains the full `helic-daq <version> <git describe>`.
 
 ## Known-answer vectors
 
