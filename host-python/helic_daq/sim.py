@@ -64,7 +64,7 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("table_phase", "f", 1, True, 0.0),
         SimParam("table_trigger", "I", 1, True, 0),
         SimParam("laser", "f", 1, False, 25.0),
-        SimParam("adc_errors", "I", 1, False, 0),
+        SimParam("cmd_backlog_max", "I", 1, False, 0),
         SimParam("rig_laser_range", "f", 1, True, 50.0),
         SimParam("rig_out_channel", "f", 1, True, 0.0),
     ]
