@@ -270,6 +270,12 @@ pub const BASE_PARAMS: &[ParamDef] = &[
         count: 1,
         writable: true,
     },
+    ParamDef {
+        name: "cmd_backlog_max",
+        ty: ParamType::U32,
+        count: 1,
+        writable: false,
+    },
 ];
 
 const IDX_FREQ: usize = 10;
@@ -290,6 +296,7 @@ const IDX_T_MEASURE_MAX: usize = 24;
 const IDX_T_ACTUATE_MAX: usize = 25;
 const IDX_T_REST_MAX: usize = 26;
 const IDX_DIAG_RESET: usize = 27;
+const IDX_COMMAND_BACKLOG_MAX: usize = 28;
 
 /// Maximum number of controller parameters supported.
 pub const MAX_CTRL_PARAMS: usize = 8;
@@ -541,6 +548,11 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 out.copy_from_slice(&rt_loop::T_REST_MAX_US.load(Ordering::Relaxed).to_le_bytes())
             }
             IDX_DIAG_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
+            IDX_COMMAND_BACKLOG_MAX => out.copy_from_slice(
+                &rt_loop::COMMAND_BACKLOG_MAX
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes(),
+            ),
             i if i < BASE_PARAMS.len() + self.extras.len() => {
                 self.extras[i - BASE_PARAMS.len()].get(out)
             }

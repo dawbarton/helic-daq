@@ -35,6 +35,12 @@ pub enum RtCommand {
 }
 
 pub const COMMAND_QUEUE_LEN: usize = 32;
+/// Maximum number of host commands applied at one sample boundary.
+///
+/// A finite queue alone is not a useful 125 µs WCET bound: draining a burst of
+/// coefficient sets could consume the whole period. Remaining commands stay in
+/// FIFO order for the next tick and are observable through the backlog maximum.
+pub const COMMANDS_PER_TICK: usize = 2;
 pub type CommandProducer = Producer<'static, RtCommand>;
 pub type CommandConsumer = Consumer<'static, RtCommand>;
 
@@ -56,6 +62,7 @@ pub static CLOCK_JITTER_US: AtomicU32 = AtomicU32::new(0);
 pub static TICK_TIMEOUTS: AtomicU32 = AtomicU32::new(0);
 pub static RECORDS_DROPPED: AtomicU32 = AtomicU32::new(0);
 pub static TICKS: AtomicU32 = AtomicU32::new(0);
+pub static COMMAND_BACKLOG_MAX: AtomicU32 = AtomicU32::new(0);
 
 // Phase-resolved timing diagnostics. The wake phase is measured against the
 // hardware sample clock (CONVST PWM counter), so it separates "the tick body
@@ -81,6 +88,7 @@ pub fn reset_diagnostics() {
     T_MEASURE_MAX_US.store(0, Ordering::Relaxed);
     T_ACTUATE_MAX_US.store(0, Ordering::Relaxed);
     T_REST_MAX_US.store(0, Ordering::Relaxed);
+    COMMAND_BACKLOG_MAX.store(0, Ordering::Relaxed);
 }
 
 static SIN_LUT: StaticCell<SinLut> = StaticCell::new();
@@ -135,7 +143,11 @@ fn run_rt_tick<R: Rig>(
     }
     *last_tick = Some(t0);
 
-    while let Some(command) = commands.dequeue() {
+    COMMAND_BACKLOG_MAX.fetch_max(commands.len() as u32, Ordering::Relaxed);
+    for _ in 0..COMMANDS_PER_TICK {
+        let Some(command) = commands.dequeue() else {
+            break;
+        };
         match command {
             RtCommand::SetIncrement(increment) => phase.set_increment(increment),
             RtCommand::SetTargetCoeffs(coeffs) => *target_coeffs = coeffs,
@@ -209,20 +221,37 @@ fn run_rt_tick<R: Rig>(
     TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Run the bounded pipeline on a core dedicated to real-time work.
-///
-/// The runner, [`TickSource`], and raw peripheral transfers execute from SRAM,
-/// so core-0 traffic cannot evict the hot path from the shared XIP cache. Core
-/// 1 has no executor: introducing async waits here would also reintroduce the
-/// cross-core critical sections and lost-edge behaviour which caused overruns.
-#[unsafe(link_section = ".data.ram_func")]
+struct RtLoopState<R: Rig, T: TickSource> {
+    rig: R,
+    tick: T,
+    controller: R::Ctrl,
+    sample_rate: SampleRate,
+    dt: f32,
+    commands: CommandConsumer,
+    records: RecordProducer,
+    lut: &'static SinLut,
+    phase: PhaseAccumulator,
+    target_coeffs: FourierCoeffs<HARMONICS>,
+    forcing_coeffs: FourierCoeffs<HARMONICS>,
+    table_player: TablePlayer,
+    active_table: &'static WaveTable,
+    index: u32,
+    last_tick: Option<u32>,
+    n_inputs: usize,
+    n_telemetry: usize,
+    n_sources: usize,
+}
+
+/// Perform all fallible, logging, and Embassy-dependent setup in flash before
+/// entering the SRAM hot loop. Keeping this boundary explicit makes it harder
+/// for future initialisation work to become reachable from a sample tick.
 pub fn run_rt_loop<R: Rig, T: TickSource>(
     mut rig: R,
-    mut tick: T,
-    mut controller: R::Ctrl,
+    tick: T,
+    controller: R::Ctrl,
     sample_rate: SampleRate,
-    mut commands: CommandConsumer,
-    mut records: RecordProducer,
+    commands: CommandConsumer,
+    records: RecordProducer,
 ) -> ! {
     let n_inputs = R::INPUTS.len();
     let n_telemetry = R::Ctrl::TELEMETRY.len();
@@ -231,15 +260,6 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
 
     rig.init();
     let lut = SIN_LUT.init(SinLut::new());
-    let mut phase = PhaseAccumulator::new();
-    let mut target_coeffs = FourierCoeffs::<HARMONICS>::zero();
-    let mut forcing_coeffs = FourierCoeffs::<HARMONICS>::zero();
-    let mut table_player = TablePlayer::new();
-    let mut active_table = table::active();
-    let dt = sample_rate.dt();
-    let mut index = 0u32;
-    let mut last_tick: Option<u32> = None;
-
     info!(
         "core 1: SRAM RT loop running at {} Hz, {} harmonics, {} sources",
         sample_rate.hz(),
@@ -247,28 +267,55 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
         n_sources
     );
 
+    run_hot_loop(RtLoopState {
+        rig,
+        tick,
+        controller,
+        sample_rate,
+        dt: sample_rate.dt(),
+        commands,
+        records,
+        lut,
+        phase: PhaseAccumulator::new(),
+        target_coeffs: FourierCoeffs::zero(),
+        forcing_coeffs: FourierCoeffs::zero(),
+        table_player: TablePlayer::new(),
+        active_table: table::active(),
+        index: 0,
+        last_tick: None,
+        n_inputs,
+        n_telemetry,
+        n_sources,
+    })
+}
+
+/// The only infinite core-1 loop. Everything it calls per tick must remain in
+/// SRAM and must not use Embassy, logging, allocation, or critical sections.
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn run_hot_loop<R: Rig, T: TickSource>(mut state: RtLoopState<R, T>) -> ! {
     loop {
-        if !tick.wait() {
+        if !state.tick.wait() {
             TICK_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
         }
         run_rt_tick::<R>(
-            &mut rig,
-            &mut controller,
-            sample_rate,
-            dt,
-            &mut commands,
-            &mut records,
-            lut,
-            &mut phase,
-            &mut target_coeffs,
-            &mut forcing_coeffs,
-            &mut table_player,
-            &mut active_table,
-            &mut index,
-            &mut last_tick,
-            n_inputs,
-            n_telemetry,
-            n_sources,
+            &mut state.rig,
+            &mut state.controller,
+            state.sample_rate,
+            state.dt,
+            &mut state.commands,
+            &mut state.records,
+            state.lut,
+            &mut state.phase,
+            &mut state.target_coeffs,
+            &mut state.forcing_coeffs,
+            &mut state.table_player,
+            &mut state.active_table,
+            &mut state.index,
+            &mut state.last_tick,
+            state.n_inputs,
+            state.n_telemetry,
+            state.n_sources,
         );
     }
 }
@@ -278,7 +325,7 @@ pub async fn status_run() -> ! {
     loop {
         ticker.next().await;
         info!(
-            "ticks {} | loop {}/{} us | jitter {} us | overruns {} | tick timeouts {} | dropped {}",
+            "ticks {} | loop {}/{} us | jitter {} us | overruns {} | tick timeouts {} | dropped {} | cmd backlog {}",
             TICKS.load(Ordering::Relaxed),
             LOOP_TIME_LAST_US.load(Ordering::Relaxed),
             LOOP_TIME_MAX_US.load(Ordering::Relaxed),
@@ -286,6 +333,7 @@ pub async fn status_run() -> ! {
             OVERRUNS.load(Ordering::Relaxed),
             TICK_TIMEOUTS.load(Ordering::Relaxed),
             RECORDS_DROPPED.load(Ordering::Relaxed),
+            COMMAND_BACKLOG_MAX.load(Ordering::Relaxed),
         );
     }
 }

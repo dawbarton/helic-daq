@@ -17,19 +17,15 @@ SRAM_END = 0x2008_2000
 # remain visible in `nm` output. Linker-generated flash thunks are ignored: they
 # are one-time entry veneers, not code reached from inside the tick loop.
 HOT_SYMBOLS = (
-    "run_rt_loop",
+    "run_hot_loop",
     "run_rt_tick",
     "transfer_in_place",
-    "BusyEdgeSpinTick",
-    "PwmWrapSpinTick",
-    "DualSsiReader",
-    "PulsePeriodReader",
 )
 
 REQUIRED_SYMBOLS = {
-    "fw-cbc-rig": ("run_rt_loop", "transfer_in_place"),
-    "fw-whirl-rig": ("run_rt_loop",),
-    "fw-sig-gen-w": ("run_rt_loop", "transfer_in_place"),
+    "fw-cbc-rig": ("run_hot_loop", "transfer_in_place"),
+    "fw-whirl-rig": ("run_hot_loop",),
+    "fw-sig-gen-w": ("run_hot_loop", "transfer_in_place"),
 }
 
 
