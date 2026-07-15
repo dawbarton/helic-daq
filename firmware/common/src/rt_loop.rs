@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use defmt::info;
 use embassy_rp::pac;
 use embassy_time::{Duration, Ticker};
-use heapless::spsc::{Consumer, Producer};
+use heapless::spsc::{Consumer, Producer, Queue};
 use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
@@ -54,6 +54,33 @@ pub struct Record {
 pub const RECORD_QUEUE_LEN: usize = 256;
 pub type RecordProducer = Producer<'static, Record>;
 pub type RecordConsumer = Consumer<'static, Record>;
+
+static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
+static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
+
+/// The four uniquely owned queue endpoints connecting the two cores.
+pub struct RtChannels {
+    pub command_tx: CommandProducer,
+    pub command_rx: CommandConsumer,
+    pub record_tx: RecordProducer,
+    pub record_rx: RecordConsumer,
+}
+
+/// Initialise the platform's single pair of cross-core queues.
+///
+/// Keeping storage here makes capacities and direction part of the reusable
+/// runtime. The returned SPSC endpoint types still make it impossible for an
+/// experiment to use one producer or consumer from both cores.
+pub fn init_channels() -> RtChannels {
+    let (command_tx, command_rx) = COMMAND_QUEUE.init(Queue::new()).split();
+    let (record_tx, record_rx) = RECORD_QUEUE.init(Queue::new()).split();
+    RtChannels {
+        command_tx,
+        command_rx,
+        record_tx,
+        record_rx,
+    }
+}
 
 pub static LOOP_TIME_LAST_US: AtomicU32 = AtomicU32::new(0);
 pub static LOOP_TIME_MAX_US: AtomicU32 = AtomicU32::new(0);

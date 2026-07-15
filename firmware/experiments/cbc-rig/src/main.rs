@@ -27,7 +27,6 @@ use embassy_rp::multicore::{spawn_core1, Stack as CoreStack};
 use embassy_rp::peripherals::{DMA_CH1, DMA_CH2, DMA_CH3, UART0};
 use embassy_rp::uart;
 use embassy_time::Timer;
-use heapless::spsc::Queue;
 use helic_fw_common::comms;
 use helic_fw_common::net;
 use helic_fw_common::net::wiznet::EthernetParts;
@@ -44,7 +43,6 @@ mod telemetry;
 
 use board::LaserParts;
 use rig::CbcRig;
-use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 type Store = ParamStore<config::ActiveController, CbcRig>;
 // This unnamed compile-time assertion fails the build if the chosen rig and
@@ -72,8 +70,6 @@ bind_interrupts!(pub struct Irqs {
 // a heap allocator. Queue capacities are fixed for the same reason.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
-static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
-static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -91,11 +87,10 @@ fn main() -> ! {
     // `split` creates a producer and consumer with Rust types that prevent
     // either SPSC endpoint being used from both cores. Commands flow 0 -> 1;
     // sample records flow 1 -> 0.
-    let (cmd_tx, cmd_rx) = COMMAND_QUEUE.init(Queue::new()).split();
-    let (rec_tx, rec_rx) = RECORD_QUEUE.init(Queue::new()).split();
+    let channels = shared_rt::init_channels();
     let controller = config::make_controller();
     let store = Store::new(
-        cmd_tx,
+        channels.command_tx,
         config::SAMPLE_RATE,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
@@ -108,7 +103,7 @@ fn main() -> ! {
     // Core 1 runs the loop directly with no executor, so nothing on the core
     // can suspend the tick or pull Embassy scheduling into its hot path.
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::run(b.rt, controller, cmd_rx, rec_tx)
+        rt_loop::run(b.rt, controller, channels.command_rx, channels.record_tx)
     });
 
     // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without it
@@ -124,7 +119,12 @@ fn main() -> ! {
     // tasks whenever interrupts or timers make progress possible.
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
-        spawner.spawn(unwrap!(core0_main(spawner, b.eth, store, rec_rx)));
+        spawner.spawn(unwrap!(core0_main(
+            spawner,
+            b.eth,
+            store,
+            channels.record_rx
+        )));
         spawner.spawn(unwrap!(blink(b.led)));
         spawner.spawn(unwrap!(laser_task(b.laser)));
         spawner.spawn(unwrap!(status_task()));

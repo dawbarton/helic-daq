@@ -8,8 +8,6 @@ use helic_fw_common::rt_loop::{CommandConsumer, RecordProducer};
 use crate::board::CbcParts;
 use crate::config;
 
-pub use helic_fw_common::rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
-
 /// Assemble the hardware after it has moved to core 1, then run forever.
 pub fn run(
     parts: CbcParts,

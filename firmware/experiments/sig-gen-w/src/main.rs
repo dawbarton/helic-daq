@@ -18,7 +18,6 @@ use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, PIO1, UART0};
 use embassy_rp::pio;
 use embassy_rp::uart;
 use embassy_time::Timer;
-use heapless::spsc::Queue;
 use helic_fw_common::comms;
 use helic_fw_common::net;
 use helic_fw_common::net::cyw43::WifiParts;
@@ -35,7 +34,6 @@ mod telemetry;
 
 use board::LaserParts;
 use rig::PicoDacRig;
-use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 type Store = ParamStore<config::ActiveController, PicoDacRig>;
 // Reject an over-large discovered source table during compilation.
@@ -60,8 +58,6 @@ bind_interrupts!(pub struct Irqs {
 // StaticCell supplies permanent task and queue storage without a heap.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
-static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
-static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -79,11 +75,10 @@ fn main() -> ! {
 
     let board = board::Board::new(p);
     // Commands flow to core 1; non-blocking sample records flow back to core 0.
-    let (cmd_tx, cmd_rx) = COMMAND_QUEUE.init(Queue::new()).split();
-    let (rec_tx, rec_rx) = RECORD_QUEUE.init(Queue::new()).split();
+    let channels = shared_rt::init_channels();
     let controller = config::make_controller();
     let store = Store::new(
-        cmd_tx,
+        channels.command_tx,
         config::SAMPLE_RATE,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
@@ -92,14 +87,24 @@ fn main() -> ! {
 
     // `move` gives the RT core exclusive ownership of its hardware and state.
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::run(board.rt, controller, cmd_rx, rec_tx)
+        rt_loop::run(
+            board.rt,
+            controller,
+            channels.command_rx,
+            channels.record_tx,
+        )
     });
 
     helic_fw_common::time_watchdog::start();
 
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
-        spawner.spawn(unwrap!(core0_main(spawner, board.wifi, store, rec_rx,)));
+        spawner.spawn(unwrap!(core0_main(
+            spawner,
+            board.wifi,
+            store,
+            channels.record_rx,
+        )));
         // A disconnected optoNCDT RX line needs the same external 10k pull-up
         // to 3V3 as cbc-rig, preventing UART break interrupts from starving
         // the network executor.
