@@ -20,6 +20,12 @@ There is no deployed protocol v1. Do not add compatibility shims. Crates are
 `helicdaq`. The repository directory may still be named `cbc-daq`, but code
 and current documentation use HELIC-DAQ except where CBC is the experiment.
 
+The supported production firmware set is exactly `cbc-rig`, `whirl-rig` and
+`pico2w-rig`. Do not restore retired experiment crates. Adding a genuinely new
+experiment also requires updating the firmware workspace, CI, the real-time
+layout checker, the regression-tool profiles, the user/developer guides and
+`notes.md`.
+
 ## Architectural constraints
 
 - Keep logic host-testable. DSP belongs in `helic-core`, portable peripheral
@@ -28,6 +34,12 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
   belongs in `firmware/common`; experiment crates keep an auditable `board.rs`
   pin/ownership map, compile-time configuration, telemetry declarations and a
   thin experiment-local `Rig` implementation.
+- Keep every experiment crate predictable: `board.rs` owns only pins and
+  unassembled peripheral parts; `config.rs` owns compile-time choices;
+  `telemetry.rs` owns atomic-backed declarations; `rig.rs` assembles core-1
+  hardware and implements `Rig`; and `main.rs` binds interrupts, assigns cores
+  and composes common runners. Move reusable mechanisms out rather than adding
+  experiment-local framework wrappers.
 - Keep the real-time path bounded: no allocation, blocking cross-core locks or
   `f64`. At 8 kHz, core 1 has 125 µs per tick and the Cortex-M33 only
   accelerates single-precision floating point.
@@ -60,7 +72,16 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
   arrives.
 - Core 0 and core 1 communicate only through fixed-capacity SPSC queues and
   atomics. Parameter changes and waveform-buffer swaps take effect at sample
-  boundaries. Streaming drops and counts records rather than blocking core 1.
+  boundaries. Apply at most `COMMANDS_PER_TICK` commands (currently two) at a
+  boundary; do not drain an arbitrary host burst inside one tick. Preserve
+  `cmd_backlog_max` so queue pressure remains observable. Streaming drops and
+  counts records rather than blocking core 1.
+- Keep raw-register access behind ownership-preserving common types. Derive PIO
+  blocks and GPIO numbers from typed Embassy owners instead of accepting free
+  numeric identifiers. `RawSpiDevice::new` is unsafe because Embassy erases
+  chip-select types; construct it once beside the audited experiment pin map,
+  document the exclusivity invariant and expose only safe bound operations to
+  the tick path.
 - Controllers are selected statically through each experiment's
   `ActiveController` alias. Reusable controllers implement
   `helic_core::controller::Controller`; do not add runtime dispatch to the
@@ -68,10 +89,39 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
 - Parameters and stream sources are discovered by name on connection. Never
   hard-code registry or source indices in host code. New controller and rig
   parameters and controller telemetry use their trait hooks rather than wire
-  protocol changes.
+  protocol changes. Keep the fixed platform schema in `params/schema.rs`, and
+  use the typed `ExtraParam::f32`/`u32` constructors for atomic-backed
+  experiment telemetry; do not reintroduce free-form type/getter pairs that
+  can disagree with storage.
 - Network transport is selected per experiment behind `embassy_net::Stack`.
   The W5500 is the full-rate path; CYW43439 Wi-Fi is station-mode and should
-  use decimation for heavier streams.
+  use decimation for heavier streams. Pico 2W credentials come only from the
+  `HELIC_WIFI_SSID` and `HELIC_WIFI_PASSWORD` build environment; never commit
+  real credentials or placeholder fallbacks.
+
+## Safety rails and regression helpers
+
+- `firmware/tools/check_rt_layout.py` is the static hot-path gate. Build the
+  complete release workspace immediately before running it; it checks all
+  three production ELFs and must continue to require `run_hot_loop`, the ARM
+  EABI copy/clear helpers and each applicable analogue transfer symbol in
+  SRAM. Treat it as a minimum named-symbol guard, not a complete call-graph
+  proof. Inspect new compiler-generated calls after material tick-path changes.
+- `firmware/tools/rt_regression.py` is the sequential hardware runner. It
+  flashes one profile, checks identity, measures idle/TCP-poll/capture phases,
+  verifies counters, rate, wake-phase spread and capture continuity, then
+  quiets outputs. CBC additionally gates `loop_time_max <= 60 µs`; the current
+  W5500 reference is 32–34 µs (38 µs during complete coefficient replacement).
+  Do not relax an acceptance limit to accommodate a new regression.
+- For record/network changes, run the CBC profile once with
+  `--capture-sources all --capture-samples 8000`, then once with
+  `--no-flash --capture-samples 60000`. For core-0 timer/network changes, also
+  disconnect for at least five minutes, reconnect and prove the drain/watchdog
+  counters stayed healthy. Record exact firmware identity and results in
+  `notes.md`.
+- Software checks, ELF addresses and successful streaming do not establish
+  electrical, RF or real-time behaviour. Do not promote whirl, Pico 2W or
+  W6100 paths from software-only status without ordered physical evidence.
 
 ## Hardware constraints worth preserving
 
@@ -114,6 +164,9 @@ cd firmware
 cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings
 cargo build --release --workspace
+python3 tools/check_rt_layout.py
+cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100
+cargo build --release -p fw-whirl-rig --no-default-features --features board-w6100
 cd ../host-python
 PYTHONPATH=.:tests python3 -m unittest discover -s tests
 cd ../host-julia
