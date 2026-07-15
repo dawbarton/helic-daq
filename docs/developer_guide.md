@@ -138,8 +138,9 @@ the 150 MHz system clock (`config.rs::SampleRate::pwm_params`).
 The software pipeline is edge-triggered on the BUSY falling edge
 (conversion complete). CBC uses the synchronous `rt-sync` runner (default;
 see "Real-time isolation" below), which spin-polls the IO bank's raw
-edge-detect latch from SRAM; the async runner used by the other experiments
-awaits the same edge through the embassy GPIO future. Each tick then runs
+edge-detect latch from SRAM. The ADC-free whirl rig uses the same runner with
+the PWM peripheral's latched wrap flag; the other ADC-free rigs currently use
+the asynchronous PWM-wrap runner. Each tick then runs
 
 1. SPI read of the 144-bit frame (~12 µs at 12 MHz) and scaling to volts;
 2. drain of the command mailbox (parameter updates land here, at a sample
@@ -173,18 +174,24 @@ re-arms the edge interrupt per wait. The per-tick embassy machinery
 cross-core critical section, GPIO IRQ dispatch) added wake-up jitter of up
 to a full period.
 
-`rt-sync` (default for `fw-cbc-rig`) removes flash and embassy from the
-hot path entirely. Core 1 runs `run_rt_loop_sync` — a plain loop, no
-executor — with:
+`rt-sync` (default for `fw-cbc-rig` and `fw-whirl-rig`) removes flash and
+embassy from the hot path entirely. Core 1 runs `run_rt_loop_sync` — a plain
+loop, no executor — with:
 
 - `BusyEdgeSpinTick`: an SRAM spin on the IO bank's raw edge-low latch.
   The latch stays armed during the body, so an edge that arrives while a
   tick overruns is caught up, not lost; a 2-period timeout still increments
   `tick_timeouts` when no ADC is attached.
+- `PwmWrapSpinTick`: the ADC-free equivalent, spinning on the PWM
+  peripheral's raw wrap latch while the PWM slice continues to own the 2 kHz
+  whirl sample instant. The processor-facing PWM interrupt remains disabled.
 - `helic_fw_common::analog_spi`: register-level blocking SPI transfers in
   `.data.ram_func` with precomputed clock/format configs. The embassy
   drivers still perform one-time init; only the per-tick data path bypasses
   them.
+- raw PIO FIFO access for the whirl rig's SSI and optical-period state
+  machines. Embassy retains ownership and performs one-time PIO setup, while
+  per-tick FIFO reads and writes use PAC registers from SRAM.
 - The tick body, DSP helpers and drivers' pure functions placed in
   `.data.ram_func` via the `diag-rt-sram` feature (implied by `rt-sync`),
   and raw `TIMER0` reads for the timing diagnostics.
@@ -222,9 +229,12 @@ so "it still streams" proves nothing.
 **1. Static check — hot path is in SRAM** (no hardware needed):
 
 ```sh
-cd firmware && cargo build --release -p fw-cbc-rig
+cd firmware
+cargo build --release -p fw-cbc-rig -p fw-whirl-rig
 nm target/thumbv8m.main-none-eabihf/release/fw-cbc-rig \
   | grep -E 'run_rt_loop_sync|transfer_in_place|run_rt_tick'
+nm target/thumbv8m.main-none-eabihf/release/fw-whirl-rig \
+  | grep -E 'run_rt_loop_sync|run_rt_tick|PwmWrapSpinTick|DualSsiReader|PulsePeriodReader'
 ```
 
 `run_rt_loop_sync` and `transfer_in_place` must have `2000xxxx` (SRAM)
@@ -294,10 +304,11 @@ Core 0 never touches loop state. Four mechanisms keep communication bounded:
   without sharing live loop state between cores.
 
 In `whirl-rig`, PIO0 SM0 drives a shared SSI clock and samples the contiguous
-pitch and yaw pins with one `in pins, 2` instruction. Each 2 kHz tick consumes
-the previous pair and starts the next, fixing both channels at the same sample
-instant with one-sample latency. PIO0 SM1 measures rising-edge intervals from
-the optical revolution pulse independently of core load.
+pitch and yaw pins with one `in pins, 2` instruction. Each hardware-latched
+2 kHz PWM tick consumes the previous pair and starts the next through raw
+SRAM-resident FIFO access, fixing both channels at the same sample instant
+with one-sample latency. PIO0 SM1 measures rising-edge intervals from the
+optical revolution pulse independently of core load.
 
 The analogue SPI bus (SPI1: ADC + DAC chip selects) belongs to core 1
 exclusively. `board.rs` hands the unassembled `AnalogParts` to core 1,

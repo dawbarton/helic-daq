@@ -34,6 +34,8 @@ impl RpmEstimator {
         }
     }
 
+    #[inline]
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn observe(&mut self, period_s: f32) -> bool {
         if !period_s.is_finite() || period_s < self.min_period_s || period_s >= self.stale_after_s {
             return false;
@@ -51,6 +53,8 @@ impl RpmEstimator {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn tick(&mut self, dt_s: f32) {
         self.age_s += dt_s;
         if self.age_s >= self.stale_after_s {

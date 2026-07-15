@@ -7,9 +7,14 @@ license.workspace = true
 
 [features]
 # Select exactly one physical WIZnet chip. The default matches current boards.
-default = ["board-w5500"]
+default = ["board-w5500", "rt-sync"]
 board-w5500 = ["helic-fw-common/net-wiznet-w5500"]
 board-w6100 = ["helic-fw-common/net-wiznet-w6100"]
+diag-rt-sram = ["helic-fw-common/diag-rt-sram"]
+# Synchronous SRAM real-time loop on core 1: no executor, raw PWM-wrap latch
+# and register-level PIO FIFO access. Implies SRAM placement of the shared
+# tick, signal-processing and encoder helpers.
+rt-sync = ["diag-rt-sram"]
 
 [dependencies]
 # Workspace inheritance keeps all firmware crates on the same pinned versions.

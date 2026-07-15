@@ -9,11 +9,13 @@ use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::peripherals::{CORE1, PIN_22, PIN_26, PIN_27, PIN_28, PIO0, PWM_SLICE4, SPI0};
 use embassy_rp::pio::Pio;
 use embassy_rp::spi::{self, Async, Spi};
-use embassy_rp::{Peri, Peripherals};
+use embassy_rp::{pac, Peri, Peripherals};
 use helic_core::rpm::RpmEstimator;
 use helic_drivers::ssi::{deinterleave_pair, SsiFormat, SsiScale};
 use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::pulse_pio::PulsePeriodReader;
+#[cfg(feature = "rt-sync")]
+use helic_fw_common::rig::PwmWrapSpinTick;
 use helic_fw_common::rig::{PwmWrapTick, Rig};
 use helic_fw_common::ssi_pio::DualSsiReader;
 use helic_fw_common::SampleRate;
@@ -52,13 +54,19 @@ pub struct WhirlRig {
     encoder_scale: SsiScale,
     positions: [f32; 2],
     rpm: RpmEstimator,
+    pwm_divider: u32,
 }
 
+#[cfg(feature = "rt-sync")]
+pub type Tick = PwmWrapSpinTick;
+#[cfg(not(feature = "rt-sync"))]
+pub type Tick = PwmWrapTick;
+
 impl SensorParts {
-    pub fn build(self, sample_rate: SampleRate) -> (WhirlRig, PwmWrapTick) {
-        let tick = PwmWrapTick::new(self.tick_slice, sample_rate);
+    pub fn build(self, sample_rate: SampleRate) -> (WhirlRig, Tick) {
         let mut pio = Pio::new(self.pio, crate::Irqs);
         let encoders = DualSsiReader::new(
+            pac::PIO0,
             &mut pio.common,
             pio.sm0,
             self.ssi_clock,
@@ -68,6 +76,7 @@ impl SensorParts {
             ENCODER_BIT_RATE_HZ,
         );
         let pulse = PulsePeriodReader::new(
+            pac::PIO0,
             &mut pio.common,
             pio.sm1,
             self.revolution_pulse,
@@ -86,7 +95,14 @@ impl SensorParts {
             },
             positions: [0.0; 2],
             rpm: RpmEstimator::new(RPM_TAU_S, RPM_STALE_AFTER_S, RPM_MIN_PERIOD_S),
+            pwm_divider: sample_rate.pwm_params().0 as u32,
         };
+        // Start the sample clock only after both PIO state machines are fully
+        // configured, so the first latched wrap cannot pre-date sensor setup.
+        #[cfg(feature = "rt-sync")]
+        let tick = PwmWrapSpinTick::new(self.tick_slice, sample_rate);
+        #[cfg(not(feature = "rt-sync"))]
+        let tick = PwmWrapTick::new(self.tick_slice, sample_rate);
         (rig, tick)
     }
 }
@@ -110,6 +126,7 @@ impl Rig for WhirlRig {
         }
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn measure(&mut self, values: &mut [f32]) {
         if let Some(raw) = self.encoders.read() {
             match deinterleave_pair(raw, ENCODER_BITS).and_then(|words| {
@@ -152,26 +169,33 @@ impl Rig for WhirlRig {
         }
 
         let estimate = self.rpm.estimate();
-        values.copy_from_slice(&[
-            self.positions[0],
-            self.positions[1],
-            estimate.period_s,
-            estimate.rpm,
-            if new_period { 1.0 } else { 0.0 },
-            if estimate.valid { 1.0 } else { 0.0 },
-        ]);
+        values[0] = self.positions[0];
+        values[1] = self.positions[1];
+        values[2] = estimate.period_s;
+        values[3] = estimate.rpm;
+        values[4] = if new_period { 1.0 } else { 0.0 };
+        values[5] = if estimate.valid { 1.0 } else { 0.0 };
         PITCH_VALUE.store(self.positions[0].to_bits(), Ordering::Relaxed);
         YAW_VALUE.store(self.positions[1].to_bits(), Ordering::Relaxed);
         REV_PERIOD_VALUE.store(estimate.period_s.to_bits(), Ordering::Relaxed);
         RPM_VALUE.store(estimate.rpm.to_bits(), Ordering::Relaxed);
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn actuate(&mut self, _out: f32) {}
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn tick_start(&mut self) {
         self.tick_pin.set_high();
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    fn tick_phase_us(&self) -> Option<u32> {
+        let ctr = pac::PWM.ch(4).ctr().read().ctr() as u32;
+        Some(ctr * self.pwm_divider / 150)
+    }
+
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn tick_end(&mut self) {
         self.tick_pin.set_low();
     }

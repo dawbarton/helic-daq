@@ -61,7 +61,14 @@ Wired packages target the W5500-EVB-Pico2 by default. Select the pin-compatible
 W6100-EVB-Pico2 explicitly:
 
 ```sh
-cargo run --release -p fw-cbc-rig --no-default-features --features board-w6100
+cargo run --release -p fw-cbc-rig --no-default-features --features board-w6100,rt-sync
+```
+
+For `cbc-rig` and `whirl-rig`, retain their synchronous SRAM real-time path
+when disabling default features:
+
+```sh
+cargo run --release -p fw-whirl-rig --no-default-features --features board-w6100,rt-sync
 ```
 
 The log shows a boot banner, network bring-up, and a once-a-second status
@@ -77,9 +84,9 @@ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf 
 picotool load helic-daq.uf2 && picotool reboot
 ```
 
-Add `--no-default-features --features board-w6100` to the build command for a
-W6100 image. The resulting executable has the same filename, so convert or
-copy it before building the other board variant.
+Add `--no-default-features --features board-w6100,rt-sync` to the CBC or whirl
+build command for a W6100 image. The resulting executable has the same
+filename, so convert or copy it before building the other board variant.
 
 Substitute another `fw-*` experiment package in the build and output filename
 to flash it.
@@ -123,8 +130,10 @@ RMB20SC12BC96 encoders use 12-bit natural-binary SSI at 1 MHz and share one
 clock, so PIO samples both data inputs on the same instruction. The optical
 input exposes `rev_period`, EWMA `rpm`, `rev_pulse` and `rpm_valid`. The
 estimate uses a 250 ms time constant and becomes invalid after 100 ms without
-an accepted pulse. `ssi_errors`, `pulse_count`, `pulse_glitches` and
-`pulse_errors` provide transport diagnostics.
+an accepted pulse. Its default `rt-sync` build polls the hardware PWM-wrap
+latch and accesses both PIO FIFOs from SRAM without an executor on core 1.
+`ssi_errors`, `pulse_count`, `pulse_glitches` and `pulse_errors` provide
+transport diagnostics.
 
 Install the Python package from the repository root:
 

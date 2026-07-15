@@ -227,6 +227,59 @@ impl Drop for PwmWrapTick {
     }
 }
 
+/// Synchronous PWM-wrap tick for an ADC-free rig on a dedicated core.
+///
+/// The PWM peripheral owns the sample instant. Its raw wrap flag remains
+/// latched while the tick body runs, so polling it from SRAM avoids the
+/// executor, interrupt dispatch, waker and cross-core critical section used
+/// by [`PwmWrapTick`].
+pub struct PwmWrapSpinTick {
+    _pwm: Pwm<'static>,
+    mask: u32,
+    timeout_us: u32,
+}
+
+impl PwmWrapSpinTick {
+    pub fn new<T: Slice>(slice: Peri<'static, T>, sample_rate: SampleRate) -> Self {
+        let mask = 1 << slice.number();
+        let (divider, top) = sample_rate.pwm_params();
+        let mut config = pwm::Config::default();
+        config.divider = divider.to_fixed();
+        config.top = top;
+        let pwm = Pwm::new_free(slice, config);
+
+        // The synchronous path consumes the raw flag directly; leave the
+        // processor-facing PWM interrupt disabled and discard any startup
+        // wrap before beginning the loop.
+        pac::PWM.irq0_inte().modify(|w| w.0 &= !mask);
+        pac::PWM.intr().write(|w| w.0 = mask);
+
+        Self {
+            _pwm: pwm,
+            mask,
+            timeout_us: 2 * sample_rate.period_us() as u32,
+        }
+    }
+}
+
+impl SyncTickSource for PwmWrapSpinTick {
+    #[unsafe(link_section = ".data.ram_func")]
+    fn wait(&mut self) -> bool {
+        let start = pac::TIMER0.timerawl().read();
+        loop {
+            if pac::PWM.intr().read().0 & self.mask != 0 {
+                // The raw wrap flag is write-one-to-clear and remains latched
+                // while the previous tick body is running.
+                pac::PWM.intr().write(|w| w.0 = self.mask);
+                return true;
+            }
+            if pac::TIMER0.timerawl().read().wrapping_sub(start) > self.timeout_us {
+                return false;
+            }
+        }
+    }
+}
+
 pub trait Rig {
     const INPUTS: &'static [(&'static str, &'static str)];
 

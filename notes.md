@@ -68,7 +68,10 @@ intentionally matches it.
 - Long phase-locked arbitrary table operation.
 - `fw-sig-gen`, `fw-pwm-rig`, `fw-whirl-rig` and `fw-sig-gen-w`. They build
   with the firmware workspace and their portable logic has host tests, but
-  none has been exercised as a complete physical experiment.
+  none has been exercised as a complete physical experiment. The whirl
+  default now uses the same synchronous SRAM core-1 architecture as CBC,
+  adapted to the raw PWM-wrap latch and PIO FIFOs; this has static ELF and
+  cross-build evidence only, not real SSI, optical-input or timing evidence.
 - W6100 Ethernet on every wired experiment. The W6100 variants cross-build,
   but no W6100-EVB-Pico2 has been exercised. Verify link, static addressing,
   DHCP, discovery, TCP control and sustained UDP streaming before treating it

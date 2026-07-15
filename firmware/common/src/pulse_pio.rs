@@ -6,15 +6,24 @@
 use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::gpio::Pull;
 use embassy_rp::pio::{Common, Direction, FifoJoin, Instance, PioPin, StateMachine};
-use embassy_rp::Peri;
+use embassy_rp::{pac, Peri};
 use fixed::traits::ToFixed;
 
 pub struct PulsePeriodReader<'d, PIO: Instance, const SM: usize> {
-    sm: StateMachine<'d, PIO, SM>,
+    /// Retains Embassy's ownership and one-time state-machine configuration.
+    _sm: StateMachine<'d, PIO, SM>,
+    /// Matching raw PIO register block for the SRAM-resident FIFO hot path.
+    raw: pac::pio::Pio,
 }
 
 impl<'d, PIO: Instance + 'd, const SM: usize> PulsePeriodReader<'d, PIO, SM> {
+    /// Configure an edge-period state machine.
+    ///
+    /// `raw` must address the same PIO block represented by `common` and
+    /// `sm`. The typed Embassy state machine retains ownership; the duplicate
+    /// PAC handle is used only for bounded FIFO access from the SRAM hot path.
     pub fn new(
+        raw: pac::pio::Pio,
         common: &mut Common<'d, PIO>,
         mut sm: StateMachine<'d, PIO, SM>,
         input: Peri<'d, impl PioPin + 'd>,
@@ -57,14 +66,24 @@ impl<'d, PIO: Instance + 'd, const SM: usize> PulsePeriodReader<'d, PIO, SM> {
         sm.set_config(&config);
         sm.set_pin_dirs(Direction::In, &[&input]);
         sm.set_enable(true);
-        Self { sm }
+        Self { _sm: sm, raw }
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn read(&mut self) -> Option<u32> {
-        self.sm.rx().try_pull()
+        if self.raw.fstat().read().rxempty() & (1 << SM) != 0 {
+            return None;
+        }
+        Some(self.raw.rxf(SM).read())
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn stalled(&mut self) -> bool {
-        self.sm.rx().stalled()
+        let fdebug = self.raw.fdebug();
+        let stalled = fdebug.read().rxstall() & (1 << SM) != 0;
+        if stalled {
+            fdebug.write(|w| w.set_rxstall(1 << SM));
+        }
+        stalled
     }
 }

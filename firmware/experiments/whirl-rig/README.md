@@ -14,7 +14,9 @@ pin-compatible W6100-EVB-Pico2 through the `board-w6100` feature.
   measures rising-edge intervals with 1 µs resolution.
 - W5500 or W6100 Ethernet on SPI0, plus the GP14 tick-timing output.
 
-The real-time loop runs from a PWM-wrap tick at 2 kHz. SSI acquisition is
+The default `rt-sync` real-time loop runs synchronously from the raw PWM-wrap
+latch at 2 kHz, with no Embassy executor on core 1. The loop and its PIO FIFO,
+SSI decoding and RPM-estimator path execute from SRAM. SSI acquisition is
 pipelined with fixed one-sample latency. The raw optical period and a 250 ms
 time-normalised EWMA RPM estimate are streamed with pulse and validity flags.
 RPM becomes stale after 100 ms without an accepted pulse.

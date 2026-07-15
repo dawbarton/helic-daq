@@ -3,16 +3,26 @@
 use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::gpio::Level;
 use embassy_rp::pio::{Common, Direction, Instance, PioPin, ShiftDirection, StateMachine};
-use embassy_rp::Peri;
+use embassy_rp::{pac, Peri};
 use fixed::traits::ToFixed;
 
 pub struct DualSsiReader<'d, PIO: Instance, const SM: usize> {
-    sm: StateMachine<'d, PIO, SM>,
+    /// Retains Embassy's ownership and one-time state-machine configuration.
+    _sm: StateMachine<'d, PIO, SM>,
+    /// Matching raw PIO register block for the SRAM-resident FIFO hot path.
+    raw: pac::pio::Pio,
     bit_count: u32,
 }
 
 impl<'d, PIO: Instance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
+    /// Configure a dual-input SSI state machine.
+    ///
+    /// `raw` must address the same PIO block represented by `common` and
+    /// `sm`. The typed Embassy state machine retains ownership; the duplicate
+    /// PAC handle is used only for bounded FIFO access from the SRAM hot path.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        raw: pac::pio::Pio,
         common: &mut Common<'d, PIO>,
         mut sm: StateMachine<'d, PIO, SM>,
         clock: Peri<'d, impl PioPin + 'd>,
@@ -63,18 +73,28 @@ impl<'d, PIO: Instance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
         sm.set_enable(true);
 
         Self {
-            sm,
+            _sm: sm,
+            raw,
             bit_count: u32::from(bits - 1),
         }
     }
 
     /// Begin one transaction. A successful call never waits for the encoder.
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn start(&mut self) -> bool {
-        self.sm.tx().try_push(self.bit_count)
+        if self.raw.fstat().read().txfull() & (1 << SM) != 0 {
+            return false;
+        }
+        self.raw.txf(SM).write_value(self.bit_count);
+        true
     }
 
     /// Return the completed word, or `None` while the transaction is running.
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn read(&mut self) -> Option<u32> {
-        self.sm.rx().try_pull()
+        if self.raw.fstat().read().rxempty() & (1 << SM) != 0 {
+            return None;
+        }
+        Some(self.raw.rxf(SM).read())
     }
 }
