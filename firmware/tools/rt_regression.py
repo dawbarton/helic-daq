@@ -49,11 +49,18 @@ class RigProfile:
     default_host: str | None
     capture_sources: tuple[str, ...]
     wired: bool
+    max_loop_us: int | None
 
 
 RIGS = {
     "cbc": RigProfile(
-        "fw-cbc-rig", "cbc-rig", 8_000, "192.168.1.235", ("adc0", "out"), True
+        "fw-cbc-rig",
+        "cbc-rig",
+        8_000,
+        "192.168.1.235",
+        ("adc0", "out"),
+        True,
+        60,
     ),
     "whirl": RigProfile(
         "fw-whirl-rig",
@@ -62,9 +69,16 @@ RIGS = {
         "192.168.1.238",
         ("pitch", "yaw", "rpm"),
         True,
+        None,
     ),
     "pico2w": RigProfile(
-        "fw-pico2w-rig", "pico2w-rig", 8_000, None, ("laser", "out"), False
+        "fw-pico2w-rig",
+        "pico2w-rig",
+        8_000,
+        None,
+        ("laser", "out"),
+        False,
+        None,
     ),
 }
 
@@ -160,7 +174,7 @@ def measure_phase(device: Device, seconds: float, poll_interval: float | None) -
     return result
 
 
-def acceptance_errors(result: dict[str, object], expected_hz: int) -> list[str]:
+def acceptance_errors(result: dict[str, object], profile: RigProfile) -> list[str]:
     errors: list[str] = []
     for phase_name in ("idle", "poll", "capture"):
         phase = result[phase_name]
@@ -169,9 +183,27 @@ def acceptance_errors(result: dict[str, object], expected_hz: int) -> list[str]:
         for counter in ("overruns", "tick_timeouts", "records_dropped", "clock_jitter"):
             if phase[counter] != 0:
                 errors.append(f"{phase_name}: {counter}={phase[counter]}")
-        rate = float(phase["ticks_per_s"])
-        if not expected_hz * 0.98 <= rate <= expected_hz * 1.02:
-            errors.append(f"{phase_name}: ticks_per_s={rate:.1f}, expected {expected_hz}")
+        # Capture setup and teardown are deliberately inside its measurement
+        # window, so only the fixed-duration phases are suitable rate checks.
+        if phase_name != "capture":
+            rate = float(phase["ticks_per_s"])
+            if not (
+                profile.sample_rate_hz * 0.98
+                <= rate
+                <= profile.sample_rate_hz * 1.02
+            ):
+                errors.append(
+                    f"{phase_name}: ticks_per_s={rate:.1f}, "
+                    f"expected {profile.sample_rate_hz}"
+                )
+        if (
+            profile.max_loop_us is not None
+            and phase["loop_time_max"] > profile.max_loop_us
+        ):
+            errors.append(
+                f"{phase_name}: loop_time_max={phase['loop_time_max']} us, "
+                f"limit {profile.max_loop_us} us"
+            )
         timing = phase["phase"]
         if isinstance(timing, dict) and timing["wake_phase_max"] - timing["wake_phase_min"] > 2:
             errors.append(f"{phase_name}: wake phase spread exceeds 2 us")
@@ -241,7 +273,7 @@ def main() -> int:
         result["capture"] = captured
         quiet_outputs(device)
 
-    errors = acceptance_errors(result, profile.sample_rate_hz)
+    errors = acceptance_errors(result, profile)
     result["acceptance_errors"] = errors
     print(json.dumps(result, indent=2))
     return 1 if errors else 0
