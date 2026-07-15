@@ -38,7 +38,7 @@ Install [`rustup`](https://rustup.rs/), then open a new terminal and initialise
 the repository's required stable toolchain, components and RP2350 target:
 
 ```sh
-cd cbc-daq
+cd helic-daq
 rustup show
 ```
 
