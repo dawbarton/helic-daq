@@ -135,8 +135,11 @@ output. The sampling instant is therefore crystal-timed; software load
 cannot move it. Sample-rate presets map to exact divider/wrap pairs from
 the 150 MHz system clock (`config.rs::SampleRate::pwm_params`).
 
-The software pipeline is edge-triggered: `rt_loop` awaits the BUSY falling
-edge (conversion complete), then runs
+The software pipeline is edge-triggered on the BUSY falling edge
+(conversion complete). CBC uses the synchronous `rt-sync` runner (default;
+see "Real-time isolation" below), which spin-polls the IO bank's raw
+edge-detect latch from SRAM; the async runner used by the other experiments
+awaits the same edge through the embassy GPIO future. Each tick then runs
 
 1. SPI read of the 144-bit frame (~12 µs at 12 MHz) and scaling to volts;
 2. drain of the command mailbox (parameter updates land here, at a sample
@@ -153,7 +156,58 @@ with no ADC attached, so bench bring-up works; such ticks increment
 `tick_timeouts`.
 
 GP14 is high for the duration of the tick body. Put a scope on it to see
-processing time and jitter directly.
+processing time and jitter directly. Without a scope, the phase-resolved
+diagnostic parameters (`wake_phase_min`/`wake_phase_max` from the CONVST
+PWM counter, `t_measure_max`, `t_actuate_max`, `t_rest_max`; reset by
+writing `diag_reset`) separate late wake-up from long body per phase.
+
+### Real-time isolation (`rt-sync`)
+
+The RP2350's XIP cache is shared between cores. When core 0 serves network
+traffic it sweeps enough flash through the cache that core-1 instruction
+fetches miss; on the original async loop this stretched every tick phase
+roughly tenfold (a ~13 µs ADC read was measured exceeding a whole 125 µs
+period) and silently skipped BUSY edges, because the async `InputFuture`
+re-arms the edge interrupt per wait. The per-tick embassy machinery
+(executor poll, `with_timeout` timer-queue churn under the global
+cross-core critical section, GPIO IRQ dispatch) added wake-up jitter of up
+to a full period.
+
+`rt-sync` (default for `fw-cbc-rig`) removes flash and embassy from the
+hot path entirely. Core 1 runs `run_rt_loop_sync` — a plain loop, no
+executor — with:
+
+- `BusyEdgeSpinTick`: an SRAM spin on the IO bank's raw edge-low latch.
+  The latch stays armed during the body, so an edge that arrives while a
+  tick overruns is caught up, not lost; a 2-period timeout still increments
+  `tick_timeouts` when no ADC is attached.
+- `helic_fw_common::analog_spi`: register-level blocking SPI transfers in
+  `.data.ram_func` with precomputed clock/format configs. The embassy
+  drivers still perform one-time init; only the per-tick data path bypasses
+  them.
+- The tick body, DSP helpers and drivers' pure functions placed in
+  `.data.ram_func` via the `diag-rt-sram` feature (implied by `rt-sync`),
+  and raw `TIMER0` reads for the timing diagnostics.
+
+Measured effect (see `docs/overrun_handoff.md`): overruns under TCP polling
+and UDP capture went from ~120–500/s to zero, wake phase is constant at
+36 µs with no measurable spread, and captures are index-contiguous at the
+full 8 kHz under all tested load.
+
+### embassy-time alarm watchdog (core 0)
+
+The embassy-rp time driver can lose its TIMER0 alarm to a sub-microsecond
+arm-vs-match race (embassy-rs/embassy#3758 class; the pico-sdk fixed the
+same hazard in its alarm pool by verifying the ARMED bit). When that
+happens every timer-waiting task on core 0 sleeps until unrelated traffic
+schedules a fresh deadline — observed on hardware as the record drain,
+status log and TCP timeouts freezing for minutes. It surfaced once core 1
+stopped re-arming the shared queue 8000×/s, which had been masking it.
+`helic_fw_common::time_watchdog` arms the unused TIMER0 alarm 1 as a 50 ms
+heartbeat that re-pends `TIMER0_IRQ_0`, so the driver re-checks its queue
+and any lost alarm is recovered within 50 ms. Experiments bind
+`TimeWatchdogHandler` to `TIMER0_IRQ_1` and call `time_watchdog::start()`
+on core 0.
 
 ### Cross-core rules
 

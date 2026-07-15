@@ -31,7 +31,20 @@ rtc analogue cape:
   `Busy`, and a non-finite `freq` write with `BadValue` while preserving the
   previous finite value;
 - a disconnected laser UART no longer starves core 0 when GP1 has the fitted
-  external pull-up.
+  external pull-up;
+- the `rt-sync` synchronous SRAM real-time loop (now the `fw-cbc-rig`
+  default): zero overruns, zero clock jitter and a constant 36 µs wake
+  phase at 8 kHz under idle, TCP polling, 1000-record capture, 8000-record
+  all-13-source capture and a sustained 60000-record capture, all with
+  index-contiguous records and zero UDP loss. The previous async loop
+  stretched tick phases ~10× under core-0 network load through the shared
+  XIP cache and silently skipped up to 13 % of BUSY edges (see
+  `docs/overrun_handoff.md`);
+- the phase-resolved timing diagnostics (`wake_phase_*`, `t_*_max`,
+  `diag_reset`) and the TIMER0 alarm-1 time watchdog. A lost embassy-time
+  alarm was observed freezing all core-0 timers (drain, status log, TCP
+  timeouts) for ~4 minutes; the watchdog bounds that class of stall to
+  50 ms.
 
 The default firmware was returned to `PassThrough` after PID testing. The
 current analogue cape is all-unipolar, and the CBC `DAC_POLARITY` array
