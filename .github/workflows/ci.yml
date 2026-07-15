@@ -79,9 +79,9 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --release --workspace -- -D warnings
       - run: cargo build --release --workspace
+      - name: Check real-time symbols are SRAM-resident
+        run: python3 tools/check_rt_layout.py
       - name: Build W6100 wired variants
         run: |
-          cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100
-          cargo build --release -p fw-whirl-rig --no-default-features --features board-w6100
-          cargo build --release -p fw-pwm-rig --no-default-features --features board-w6100
-          cargo build --release -p fw-sig-gen --no-default-features --features board-w6100
+          cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100,rt-sync
+          cargo build --release -p fw-whirl-rig --no-default-features --features board-w6100,rt-sync
