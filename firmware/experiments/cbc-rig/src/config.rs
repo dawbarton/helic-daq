@@ -57,4 +57,7 @@ pub fn make_controller() -> ActiveController {
 
 /// Selected sample-rate preset. The preset supplies exact PWM divider values;
 /// do not replace the hardware-timed clock with a software timer.
+#[cfg(feature = "diag-sample-4k")]
+pub const SAMPLE_RATE: SampleRate = SampleRate::Hz4000;
+#[cfg(not(feature = "diag-sample-4k"))]
 pub const SAMPLE_RATE: SampleRate = SampleRate::Hz8000;

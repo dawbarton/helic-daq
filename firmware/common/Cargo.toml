@@ -11,6 +11,7 @@ net-cyw43 = ["dep:cyw43", "dep:cyw43-firmware", "dep:cyw43-pio", "dep:cyw43-setu
 net-wiznet = ["dep:embassy-net-wiznet", "dep:embedded-hal-bus"]
 net-wiznet-w5500 = ["net-wiznet"]
 net-wiznet-w6100 = ["net-wiznet"]
+diag-skip-record-enqueue = []
 
 [dependencies]
 helic-core.workspace = true

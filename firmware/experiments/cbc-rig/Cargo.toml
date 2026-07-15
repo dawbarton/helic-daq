@@ -11,6 +11,13 @@ license.workspace = true
 default = ["board-w5500"]
 board-w5500 = ["helic-fw-common/net-wiznet-w5500"]
 board-w6100 = ["helic-fw-common/net-wiznet-w6100"]
+diag-no-status-log = []
+diag-no-udp = []
+diag-sample-4k = []
+diag-skip-adc = []
+diag-skip-dac = []
+diag-skip-record-enqueue = ["helic-fw-common/diag-skip-record-enqueue"]
+diag-wiznet-10mhz = []
 
 [dependencies]
 # Versions are inherited from the firmware workspace so all experiment

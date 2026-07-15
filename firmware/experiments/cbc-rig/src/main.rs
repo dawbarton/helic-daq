@@ -198,7 +198,10 @@ async fn core0_main(
     // the independent real-time executor running on core 1.
     let stack = net::wiznet::init(spawner, eth, config::MAC_ADDR, config::NET_CONFIG).await;
     spawner.spawn(unwrap!(control_task(stack, store)));
+    #[cfg(not(feature = "diag-no-udp"))]
     spawner.spawn(unwrap!(comms::udp::stream_task(stack, records)));
+    #[cfg(feature = "diag-no-udp")]
+    let _ = records;
     spawner.spawn(unwrap!(comms::beacon::beacon_task(
         stack,
         config::MAC_ADDR,
@@ -234,5 +237,11 @@ async fn laser_task(parts: LaserParts) -> ! {
 /// Core 0: 1 Hz diagnostics over defmt.
 #[embassy_executor::task]
 async fn status_task() -> ! {
+    #[cfg(feature = "diag-no-status-log")]
+    {
+        core::future::pending::<()>().await;
+        unreachable!()
+    }
+    #[cfg(not(feature = "diag-no-status-log"))]
     shared_rt::status_run().await
 }

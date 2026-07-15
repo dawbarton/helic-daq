@@ -38,6 +38,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use fixed::traits::ToFixed;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
 use helic_drivers::ad7609::{Ad7609, ConfigPins};
+#[cfg(not(feature = "diag-skip-adc"))]
 use helic_drivers::AnalogIn;
 use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::rig::{BusyEdgeTick, Rig};
@@ -45,7 +46,9 @@ use helic_fw_common::SampleRate;
 use static_cell::StaticCell;
 
 use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
-use crate::{ADC_ERRORS, LASER_RANGE_MM, LASER_VALUE};
+#[cfg(not(feature = "diag-skip-adc"))]
+use crate::ADC_ERRORS;
+use crate::{LASER_RANGE_MM, LASER_VALUE};
 
 /// DAC reference voltage (ADR-series reference on the analog board).
 pub const DAC_VREF: f32 = 4.096;
@@ -223,10 +226,13 @@ impl Rig for RtAnalog {
     fn measure(&mut self, values: &mut [f32]) {
         // This method is on the bounded RT path. It performs no allocation and
         // uses f32 so arithmetic is accelerated by the Cortex-M33 FPU.
-        match self.adc.read_frame() {
-            Ok(frame) => self.adc_last = frame,
-            Err(_) => {
-                ADC_ERRORS.fetch_add(1, Ordering::Relaxed);
+        #[cfg(not(feature = "diag-skip-adc"))]
+        {
+            match self.adc.read_frame() {
+                Ok(frame) => self.adc_last = frame,
+                Err(_) => {
+                    ADC_ERRORS.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
         for (value, raw) in values[..8].iter_mut().zip(self.adc_last) {
@@ -238,6 +244,9 @@ impl Rig for RtAnalog {
     fn actuate(&mut self, out: f32) {
         // The driver clamps or maps according to this channel's declared
         // polarity. DAC_POLARITY must match the fitted output stage.
+        #[cfg(feature = "diag-skip-dac")]
+        let _ = out;
+        #[cfg(not(feature = "diag-skip-dac"))]
         let _ = self.dac.write_volts(self.output_channel, out);
     }
 
@@ -313,7 +322,14 @@ impl Board {
         // 0 while the WIZnet controller is active.
         let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi::Config::default());
         let mut eth_config = spi::Config::default();
-        eth_config.frequency = 40_000_000;
+        #[cfg(feature = "diag-wiznet-10mhz")]
+        {
+            eth_config.frequency = 10_000_000;
+        }
+        #[cfg(not(feature = "diag-wiznet-10mhz"))]
+        {
+            eth_config.frequency = 40_000_000;
+        }
         let eth_spi: Spi<'static, _, Async> = Spi::new(
             p.SPI0,
             p.PIN_18,

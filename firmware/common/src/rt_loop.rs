@@ -66,6 +66,9 @@ pub async fn run_rt_loop<R: Rig>(
     mut commands: CommandConsumer,
     mut records: RecordProducer,
 ) -> ! {
+    #[cfg(feature = "diag-skip-record-enqueue")]
+    let _ = &mut records;
+
     let n_inputs = R::INPUTS.len();
     let n_telemetry = R::Ctrl::TELEMETRY.len();
     let n_sources = source_count::<R>();
@@ -139,16 +142,21 @@ pub async fn run_rt_loop<R: Rig>(
         values[generated + 1] = forcing;
         values[generated + 2] = table_out;
         values[generated + 3] = out;
+        #[cfg(feature = "diag-skip-record-enqueue")]
+        let _ = &values;
 
-        if records
-            .enqueue(Record {
-                index,
-                n: n_sources as u8,
-                values,
-            })
-            .is_err()
+        #[cfg(not(feature = "diag-skip-record-enqueue"))]
         {
-            RECORDS_DROPPED.fetch_add(1, Ordering::Relaxed);
+            if records
+                .enqueue(Record {
+                    index,
+                    n: n_sources as u8,
+                    values,
+                })
+                .is_err()
+            {
+                RECORDS_DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
         }
         index = index.wrapping_add(1);
         rig.tick_end();
