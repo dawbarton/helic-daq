@@ -196,7 +196,9 @@ fn run_rt_tick<R: Rig>(
     T_MEASURE_MAX_US.fetch_max(measure_us, Ordering::Relaxed);
     T_ACTUATE_MAX_US.fetch_max(actuate_us, Ordering::Relaxed);
     T_REST_MAX_US.fetch_max(
-        elapsed.saturating_sub(measure_us).saturating_sub(actuate_us),
+        elapsed
+            .saturating_sub(measure_us)
+            .saturating_sub(actuate_us),
         Ordering::Relaxed,
     );
     LOOP_TIME_LAST_US.store(elapsed, Ordering::Relaxed);

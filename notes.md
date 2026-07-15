@@ -46,6 +46,17 @@ rtc analogue cape:
   timeouts) for ~4 minutes; the watchdog bounds that class of stall to
   50 ms.
 
+Independent re-verification on 2026-07-15 used the release `rt-sync` image
+from `4828b79` after formatting-only cleanup. Five-second idle and TCP-poll
+phases sustained approximately 8000 ticks/s with zero overruns, timeouts,
+record drops, ADC errors or clock jitter; wake phase stayed at exactly 36 us,
+and loop maxima were 45 us and 47 us respectively. An 8000-record all-source
+capture and a 60000-record `adc0,out` capture had contiguous indices, zero UDP
+loss, zero device drops and loop maxima of 41 us and 44 us. After a further
+300 s with no host connected, reconnection succeeded without a reset: ticks
+advanced by 2400146, while overruns, timeouts, record drops and ADC errors all
+remained zero.
+
 The default firmware was returned to `PassThrough` after PID testing. The
 current analogue cape is all-unipolar, and the CBC `DAC_POLARITY` array
 intentionally matches it.

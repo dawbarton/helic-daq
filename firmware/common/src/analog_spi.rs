@@ -72,12 +72,18 @@ impl SioOutPin {
 
     #[inline(always)]
     fn set_low(self) {
-        pac::SIO.gpio_out(self.bank).value_clr().write_value(self.mask);
+        pac::SIO
+            .gpio_out(self.bank)
+            .value_clr()
+            .write_value(self.mask);
     }
 
     #[inline(always)]
     fn set_high(self) {
-        pac::SIO.gpio_out(self.bank).value_set().write_value(self.mask);
+        pac::SIO
+            .gpio_out(self.bank)
+            .value_set()
+            .write_value(self.mask);
     }
 }
 

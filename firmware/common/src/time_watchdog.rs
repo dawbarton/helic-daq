@@ -41,10 +41,7 @@ const ALARM_BIT: u8 = 1 << ALARM_N;
 /// (If it fired during arming, INTR is latched and the IRQ re-arms anyway.)
 fn arm_kick() {
     loop {
-        let target = pac::TIMER0
-            .timerawl()
-            .read()
-            .wrapping_add(KICK_INTERVAL_US);
+        let target = pac::TIMER0.timerawl().read().wrapping_add(KICK_INTERVAL_US);
         pac::TIMER0.alarm(ALARM_N).write_value(target);
         let now = pac::TIMER0.timerawl().read();
         let still_ahead = (target.wrapping_sub(now) as i32) > 0;

@@ -275,7 +275,12 @@ impl Rig for RtAnalog {
             // 18 zero bytes out, 8 × 18-bit frame back; register-level
             // transfers cannot fail, so there is no error arm here.
             let mut raw = [0u8; 18];
-            transfer_in_place(embassy_rp::pac::SPI1, self.adc_raw, self.adc_cs_raw, &mut raw);
+            transfer_in_place(
+                embassy_rp::pac::SPI1,
+                self.adc_raw,
+                self.adc_cs_raw,
+                &mut raw,
+            );
             self.adc_last = helic_drivers::ad7609::decode_frame(&raw);
         }
         #[cfg(all(not(feature = "diag-skip-adc"), not(feature = "rt-sync")))]
@@ -311,7 +316,12 @@ impl Rig for RtAnalog {
                 self.output_channel as u8,
                 code,
             );
-            transfer_in_place(embassy_rp::pac::SPI1, self.dac_raw, self.dac_cs_raw, &mut word);
+            transfer_in_place(
+                embassy_rp::pac::SPI1,
+                self.dac_raw,
+                self.dac_cs_raw,
+                &mut word,
+            );
         }
         #[cfg(all(not(feature = "diag-skip-dac"), not(feature = "rt-sync")))]
         let _ = self.dac.write_volts(self.output_channel, out);

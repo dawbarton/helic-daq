@@ -504,9 +504,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
-            IDX_T_REST_MAX => out.copy_from_slice(
-                &rt_loop::T_REST_MAX_US.load(Ordering::Relaxed).to_le_bytes(),
-            ),
+            IDX_T_REST_MAX => {
+                out.copy_from_slice(&rt_loop::T_REST_MAX_US.load(Ordering::Relaxed).to_le_bytes())
+            }
             IDX_DIAG_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
             i if i < BASE_PARAMS.len() + self.extras.len() => {
                 (self.extras[i - BASE_PARAMS.len()].get)(out)
