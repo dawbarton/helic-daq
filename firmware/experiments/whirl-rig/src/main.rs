@@ -27,7 +27,6 @@ use static_cell::StaticCell;
 mod board;
 mod config;
 mod rig;
-mod rt_loop;
 mod telemetry;
 
 use rig::WhirlRig;
@@ -67,7 +66,15 @@ fn main() -> ! {
     );
 
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::run(b.rt, controller, channels.command_rx, channels.record_tx)
+        let (rig, tick) = b.rt.build(config::SAMPLE_RATE);
+        shared_rt::run_rt_loop(
+            rig,
+            tick,
+            controller,
+            config::SAMPLE_RATE,
+            channels.command_rx,
+            channels.record_tx,
+        )
     });
 
     helic_fw_common::time_watchdog::start();

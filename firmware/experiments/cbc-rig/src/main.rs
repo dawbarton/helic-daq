@@ -38,7 +38,6 @@ use static_cell::StaticCell;
 mod board;
 mod config;
 mod rig;
-mod rt_loop;
 mod telemetry;
 
 use board::LaserParts;
@@ -103,7 +102,15 @@ fn main() -> ! {
     // Core 1 runs the loop directly with no executor, so nothing on the core
     // can suspend the tick or pull Embassy scheduling into its hot path.
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::run(b.rt, controller, channels.command_rx, channels.record_tx)
+        let (rig, tick) = b.rt.build(config::SAMPLE_RATE);
+        shared_rt::run_rt_loop(
+            rig,
+            tick,
+            controller,
+            config::SAMPLE_RATE,
+            channels.command_rx,
+            channels.record_tx,
+        )
     });
 
     // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without it

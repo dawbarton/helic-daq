@@ -29,7 +29,6 @@ use static_cell::StaticCell;
 mod board;
 mod config;
 mod rig;
-mod rt_loop;
 mod telemetry;
 
 use board::LaserParts;
@@ -87,9 +86,12 @@ fn main() -> ! {
 
     // `move` gives the RT core exclusive ownership of its hardware and state.
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::run(
-            board.rt,
+        let (rig, tick) = board.rt.build(config::SAMPLE_RATE);
+        shared_rt::run_rt_loop(
+            rig,
+            tick,
             controller,
+            config::SAMPLE_RATE,
             channels.command_rx,
             channels.record_tx,
         )
