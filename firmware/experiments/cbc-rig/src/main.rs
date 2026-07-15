@@ -111,6 +111,7 @@ bind_interrupts!(pub struct Irqs {
     // Bind only peripherals owned by this experiment.
     UART0_IRQ => uart::InterruptHandler<UART0>;
     PWM_IRQ_WRAP_0 => helic_fw_common::rig::PwmWrapInterruptHandler;
+    TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH1>,
         embassy_rp::dma::InterruptHandler<DMA_CH2>,
         embassy_rp::dma::InterruptHandler<DMA_CH3>;
@@ -121,6 +122,7 @@ bind_interrupts!(pub struct Irqs {
 // a heap allocator. Queue capacities are fixed for the same reason.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
+#[cfg(not(feature = "rt-sync"))]
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
 static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
@@ -155,6 +157,7 @@ fn main() -> ! {
     // `move` transfers ownership of the analogue peripherals, controller and
     // queue endpoints into core 1. Core 0 cannot use them afterwards, which
     // enforces the architecture at compile time.
+    #[cfg(not(feature = "rt-sync"))]
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         executor1.run(|spawner| {
@@ -163,6 +166,12 @@ fn main() -> ! {
             )))
         });
     });
+    // `rt-sync`: core 1 runs the loop directly with no executor, so nothing
+    // on the core can suspend the tick or pull embassy code into its path.
+    #[cfg(feature = "rt-sync")]
+    spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
+        rt_loop::rt_loop_sync(b.analog, controller, cmd_rx, rec_tx)
+    });
 
     // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without it
     // the floating line free-runs into a UART framing/break interrupt storm
@@ -170,6 +179,9 @@ fn main() -> ! {
     // the idle (mark) state so a disconnected/quiet sensor just parks in
     // `rx.read().await`. See docs/developer_guide.md known gaps.
     //
+    // Bounded self-healing for lost embassy-time alarms; see `time_watchdog`.
+    helic_fw_common::time_watchdog::start();
+
     // `Executor::run` never returns. Embassy polls these cooperative async
     // tasks whenever interrupts or timers make progress possible.
     let executor0 = EXECUTOR0.init(Executor::new());

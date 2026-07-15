@@ -104,6 +104,17 @@ The v2 base registry is:
 | table_mult | I | rw | locked integer frequency multiplier, at least 1 |
 | table_phase | f | rw | locked phase offset in turns, in [0,1) |
 | table_trigger | I | rw | write non-zero to arm/start a one-shot |
+| wake_phase_min | I | ro | min µs from conversion trigger to tick body start |
+| wake_phase_max | I | ro | max µs from conversion trigger to tick body start |
+| t_measure_max | I | ro | maximum measure (ADC read) phase time, µs |
+| t_actuate_max | I | ro | maximum actuate (DAC write) phase time, µs |
+| t_rest_max | I | ro | maximum remaining tick body time, µs |
+| diag_reset | I | rw | write non-zero to reset timing diagnostics and event counters |
+
+`wake_phase_*` read 4294967295/0 until the rig reports a sample-clock
+phase. `diag_reset` clears the `*_max`/`*_min` diagnostics along with
+`loop_time_max`, `clock_jitter`, `overruns`, `tick_timeouts` and
+`records_dropped`; total counters such as `ticks` keep running.
 
 Experiment read-only values, rig parameters and controller parameters follow
 the base registry. For `cbc-rig`, these include `laser`, `adc_errors`,

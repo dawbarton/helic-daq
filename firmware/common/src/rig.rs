@@ -107,6 +107,66 @@ impl TickSource for BusyEdgeTick {
     }
 }
 
+/// Synchronous (busy-polling) tick source for a dedicated real-time core.
+///
+/// Unlike [`TickSource`], waiting spins in SRAM instead of suspending an
+/// executor task: no interrupt dispatch, no waker registration, no timer
+/// queue and no cross-core critical section is involved, so a tick's start
+/// time cannot be disturbed by core-0 activity. Appropriate when the core
+/// runs nothing but the real-time loop.
+pub trait SyncTickSource {
+    /// Block until the next hardware tick. Returns `false` if the tick had
+    /// to be forced by timeout because no edge arrived.
+    fn wait(&mut self) -> bool;
+}
+
+/// [`SyncTickSource`] on the BUSY falling edge, using the IO bank's raw
+/// edge-detect latch. Because the latch is armed continuously (not re-armed
+/// per wait as the async `InputFuture` is), an edge that arrives while the
+/// previous tick body is still running is not lost: the next wait returns
+/// immediately and the loop catches up instead of silently skipping samples.
+pub struct BusyEdgeSpinTick {
+    /// Keeps the pin configured (pull-down so a missing ADC reads idle).
+    _busy: Input<'static>,
+    pin: u8,
+    timeout_us: u32,
+}
+
+impl BusyEdgeSpinTick {
+    /// `pin` must be the GPIO number of `busy`.
+    pub fn new(busy: Input<'static>, pin: u8, sample_rate: SampleRate) -> Self {
+        let this = Self {
+            _busy: busy,
+            pin,
+            timeout_us: 2 * sample_rate.period_us() as u32,
+        };
+        // Discard any edge latched before the loop starts.
+        pac::IO_BANK0
+            .intr((this.pin / 8) as usize)
+            .write(|w| w.set_edge_low((this.pin % 8) as usize, true));
+        this
+    }
+}
+
+impl SyncTickSource for BusyEdgeSpinTick {
+    #[unsafe(link_section = ".data.ram_func")]
+    fn wait(&mut self) -> bool {
+        let intr = pac::IO_BANK0.intr((self.pin / 8) as usize);
+        let group = (self.pin % 8) as usize;
+        let start = pac::TIMER0.timerawl().read();
+        loop {
+            if intr.read().edge_low(group) {
+                // The edge latch is write-one-to-clear.
+                intr.write(|w| w.set_edge_low(group, true));
+                return true;
+            }
+            if pac::TIMER0.timerawl().read().wrapping_sub(start) > self.timeout_us {
+                return false;
+            }
+        }
+    }
+}
+
 static PWM_WRAP_WAKER: AtomicWaker = AtomicWaker::new();
 static PWM_WRAP_MASK: AtomicU32 = AtomicU32::new(0);
 static PWM_WRAP_EVENTS: AtomicU32 = AtomicU32::new(0);
@@ -179,6 +239,13 @@ pub trait Rig {
 
     fn tick_start(&mut self) {}
     fn tick_end(&mut self) {}
+
+    /// Phase of the hardware sample clock in microseconds since the
+    /// conversion trigger, if the rig can report it. Used by the loop's
+    /// wake-latency diagnostics; `None` disables them.
+    fn tick_phase_us(&self) -> Option<u32> {
+        None
+    }
 
     fn param_names() -> &'static [&'static str]
     where

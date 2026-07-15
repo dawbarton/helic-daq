@@ -4,6 +4,7 @@
 
 #![no_std]
 
+pub mod analog_spi;
 pub mod comms;
 pub mod laser;
 pub mod net;
@@ -13,6 +14,7 @@ pub mod rig;
 pub mod rt_loop;
 pub mod ssi_pio;
 pub mod table;
+pub mod time_watchdog;
 
 /// Number of harmonics in the periodic target and forcing generators.
 pub const HARMONICS: usize = 16;

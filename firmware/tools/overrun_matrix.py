@@ -35,6 +35,16 @@ COUNTERS = (
     "adc_errors",
 )
 
+# Phase-resolved diagnostics (post-85511be firmware). Absolute maxima since
+# the last diag_reset, read at the end of each test condition.
+PHASE_COUNTERS = (
+    "wake_phase_min",
+    "wake_phase_max",
+    "t_measure_max",
+    "t_actuate_max",
+    "t_rest_max",
+)
+
 
 @dataclass(frozen=True)
 class Variant:
@@ -53,6 +63,7 @@ VARIANTS = (
     Variant("skip_record_enqueue", ("diag-skip-record-enqueue",), capture=False),
     Variant("rt_sram", ("diag-rt-sram",)),
     Variant("wiznet_10mhz", ("diag-wiznet-10mhz",)),
+    Variant("rt_sync", ("rt-sync",)),
 )
 
 
@@ -105,6 +116,21 @@ def snapshot(dev: Device) -> dict[str, int]:
     return dict(zip(COUNTERS, dev.get(*COUNTERS)))
 
 
+def has_phase_diagnostics(dev: Device) -> bool:
+    return any(p.name == "diag_reset" for p in dev.params)
+
+
+def reset_diagnostics(dev: Device) -> None:
+    if has_phase_diagnostics(dev):
+        dev.set("diag_reset", 1)
+
+
+def phase_snapshot(dev: Device) -> dict[str, int] | None:
+    if not has_phase_diagnostics(dev):
+        return None
+    return dict(zip(PHASE_COUNTERS, dev.get(*PHASE_COUNTERS)))
+
+
 def delta(before: dict[str, int], after: dict[str, int], elapsed_s: float) -> dict[str, float]:
     ticks = after["ticks"] - before["ticks"]
     overruns = after["overruns"] - before["overruns"]
@@ -144,12 +170,15 @@ def measure_variant(args: argparse.Namespace, variant: Variant) -> dict[str, obj
         result["firmware"] = dev.get("firmware")
         quiet_outputs(dev)
 
+        reset_diagnostics(dev)
         start = snapshot(dev)
         t0 = time.monotonic()
         time.sleep(args.idle_seconds)
         idle_end = snapshot(dev)
         result["idle"] = delta(start, idle_end, time.monotonic() - t0)
+        result["idle"]["phase"] = phase_snapshot(dev)
 
+        reset_diagnostics(dev)
         poll_start = snapshot(dev)
         t0 = time.monotonic()
         end = t0 + args.poll_seconds
@@ -161,9 +190,11 @@ def measure_variant(args: argparse.Namespace, variant: Variant) -> dict[str, obj
         poll_end = snapshot(dev)
         poll_delta = delta(poll_start, poll_end, time.monotonic() - t0)
         poll_delta["polls"] = polls
+        poll_delta["phase"] = phase_snapshot(dev)
         result["poll"] = poll_delta
 
         if variant.capture:
+            reset_diagnostics(dev)
             capture_start = snapshot(dev)
             t0 = time.monotonic()
             data = dev.capture(["adc0", "out"], samples=args.capture_samples, port=protocol.STREAM_PORT)
@@ -172,6 +203,7 @@ def measure_variant(args: argparse.Namespace, variant: Variant) -> dict[str, obj
             capture_delta["records"] = int(len(data["index"]))
             capture_delta["lost_packets"] = int(data["lost_packets"])
             capture_delta["capture_dropped"] = int(data["dropped"])
+            capture_delta["phase"] = phase_snapshot(dev)
             result["capture"] = capture_delta
         else:
             result["capture"] = None

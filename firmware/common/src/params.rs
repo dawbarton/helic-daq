@@ -197,6 +197,42 @@ pub const BASE_PARAMS: &[ParamDef] = &[
         count: 1,
         writable: true,
     },
+    ParamDef {
+        name: "wake_phase_min",
+        ty: ParamType::U32,
+        count: 1,
+        writable: false,
+    },
+    ParamDef {
+        name: "wake_phase_max",
+        ty: ParamType::U32,
+        count: 1,
+        writable: false,
+    },
+    ParamDef {
+        name: "t_measure_max",
+        ty: ParamType::U32,
+        count: 1,
+        writable: false,
+    },
+    ParamDef {
+        name: "t_actuate_max",
+        ty: ParamType::U32,
+        count: 1,
+        writable: false,
+    },
+    ParamDef {
+        name: "t_rest_max",
+        ty: ParamType::U32,
+        count: 1,
+        writable: false,
+    },
+    ParamDef {
+        name: "diag_reset",
+        ty: ParamType::U32,
+        count: 1,
+        writable: true,
+    },
 ];
 
 const IDX_FREQ: usize = 10;
@@ -211,6 +247,12 @@ const IDX_TABLE_MODE: usize = 18;
 const IDX_TABLE_MULT: usize = 19;
 const IDX_TABLE_PHASE: usize = 20;
 const IDX_TABLE_TRIGGER: usize = 21;
+const IDX_WAKE_PHASE_MIN: usize = 22;
+const IDX_WAKE_PHASE_MAX: usize = 23;
+const IDX_T_MEASURE_MAX: usize = 24;
+const IDX_T_ACTUATE_MAX: usize = 25;
+const IDX_T_REST_MAX: usize = 26;
+const IDX_DIAG_RESET: usize = 27;
 
 /// Maximum number of controller parameters supported.
 pub const MAX_CTRL_PARAMS: usize = 8;
@@ -442,6 +484,30 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             IDX_TABLE_MULT => out.copy_from_slice(&self.table_mult.to_le_bytes()),
             IDX_TABLE_PHASE => out.copy_from_slice(&self.table_phase.to_le_bytes()),
             IDX_TABLE_TRIGGER => out.copy_from_slice(&0u32.to_le_bytes()),
+            IDX_WAKE_PHASE_MIN => out.copy_from_slice(
+                &rt_loop::WAKE_PHASE_MIN_US
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes(),
+            ),
+            IDX_WAKE_PHASE_MAX => out.copy_from_slice(
+                &rt_loop::WAKE_PHASE_MAX_US
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes(),
+            ),
+            IDX_T_MEASURE_MAX => out.copy_from_slice(
+                &rt_loop::T_MEASURE_MAX_US
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes(),
+            ),
+            IDX_T_ACTUATE_MAX => out.copy_from_slice(
+                &rt_loop::T_ACTUATE_MAX_US
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes(),
+            ),
+            IDX_T_REST_MAX => out.copy_from_slice(
+                &rt_loop::T_REST_MAX_US.load(Ordering::Relaxed).to_le_bytes(),
+            ),
+            IDX_DIAG_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
             i if i < BASE_PARAMS.len() + self.extras.len() => {
                 (self.extras[i - BASE_PARAMS.len()].get)(out)
             }
@@ -557,6 +623,14 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                     return Ok(());
                 }
                 (RtCommand::TriggerTable, ShadowUpdate::None)
+            }
+            IDX_DIAG_RESET => {
+                // Resets are applied directly: the diagnostics are atomics
+                // maintained by core 1 but safely writable from here.
+                if u32::from_le_bytes(data.try_into().unwrap()) != 0 {
+                    rt_loop::reset_diagnostics();
+                }
+                return Ok(());
             }
             i if (BASE_PARAMS.len() + self.extras.len()
                 ..BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len())

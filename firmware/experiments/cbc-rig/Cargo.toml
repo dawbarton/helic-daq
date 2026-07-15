@@ -8,7 +8,7 @@ license.workspace = true
 [features]
 # Select exactly one physical WIZnet chip. Features configure common network
 # plumbing at compile time and do not create run-time transport dispatch.
-default = ["board-w5500"]
+default = ["board-w5500", "rt-sync"]
 board-w5500 = ["helic-fw-common/net-wiznet-w5500"]
 board-w6100 = ["helic-fw-common/net-wiznet-w6100"]
 diag-no-status-log = []
@@ -19,6 +19,10 @@ diag-skip-dac = []
 diag-skip-record-enqueue = ["helic-fw-common/diag-skip-record-enqueue"]
 diag-rt-sram = ["helic-fw-common/diag-rt-sram"]
 diag-wiznet-10mhz = []
+# Synchronous SRAM real-time loop on core 1: no executor, busy-polled BUSY
+# edge, register-level SRAM SPI transfers. Implies the SRAM placement of the
+# shared tick helpers.
+rt-sync = ["diag-rt-sram"]
 
 [dependencies]
 # Versions are inherited from the firmware workspace so all experiment
