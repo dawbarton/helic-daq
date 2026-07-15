@@ -22,7 +22,7 @@ use static_cell::StaticCell;
 
 use crate::board::CbcParts;
 use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
-use crate::{LASER_RANGE_MM, LASER_VALUE};
+use crate::telemetry::{LASER_RANGE_MM, LASER_VALUE};
 
 /// DAC reference voltage fitted to the interim analogue board.
 pub const DAC_VREF: f32 = 4.096;

@@ -22,9 +22,8 @@ use heapless::spsc::Queue;
 use helic_fw_common::comms;
 use helic_fw_common::net;
 use helic_fw_common::net::cyw43::WifiParts;
-use helic_fw_common::params::{self, ExtraParam, ParamDef, ParamStore};
+use helic_fw_common::params::{self, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
-use helic_proto::ParamType;
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -32,6 +31,7 @@ mod board;
 mod config;
 mod rig;
 mod rt_loop;
+mod telemetry;
 
 use board::LaserParts;
 use rig::PicoDacRig;
@@ -42,31 +42,6 @@ type Store = ParamStore<config::ActiveController, PicoDacRig>;
 const _: () = assert!(
     helic_fw_common::rig::source_count::<PicoDacRig>() <= helic_fw_common::rig::MAX_SOURCES
 );
-
-pub(crate) static LASER_VALUE: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-pub(crate) static LASER_RANGE_MM: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
-
-// AtomicU32 carries an f32's exact bits between cores without locking.
-fn get_laser(out: &mut [u8]) {
-    out.copy_from_slice(
-        &LASER_VALUE
-            .load(core::sync::atomic::Ordering::Relaxed)
-            .to_le_bytes(),
-    );
-}
-
-// Extra values extend the discovered registry, not the wire protocol.
-const EXTRA_PARAMS: &[ExtraParam] = &[ExtraParam {
-    def: ParamDef {
-        name: "laser",
-        ty: ParamType::F32,
-        count: 1,
-        writable: false,
-    },
-    get: get_laser,
-}];
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -92,7 +67,7 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 fn main() -> ! {
     // Board::new consumes every peripheral once and groups it by core/task.
     let p = embassy_rp::init(Default::default());
-    LASER_RANGE_MM.store(
+    telemetry::LASER_RANGE_MM.store(
         config::LASER_RANGE_MM.to_bits(),
         core::sync::atomic::Ordering::Relaxed,
     );
@@ -111,7 +86,7 @@ fn main() -> ! {
         cmd_tx,
         config::SAMPLE_RATE,
         config::EXPERIMENT,
-        EXTRA_PARAMS,
+        telemetry::EXTRA_PARAMS,
         &controller,
     );
 
@@ -184,7 +159,7 @@ async fn laser_task(parts: LaserParts) -> ! {
     let mut config = uart::Config::default();
     config.baudrate = 921_600;
     let rx = uart::UartRx::new(parts.uart, parts.rx, Irqs, parts.rx_dma, config);
-    helic_fw_common::laser::laser_run(rx, &LASER_RANGE_MM, &LASER_VALUE).await
+    helic_fw_common::laser::laser_run(rx, &telemetry::LASER_RANGE_MM, &telemetry::LASER_VALUE).await
 }
 
 #[embassy_executor::task]

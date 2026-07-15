@@ -6,8 +6,6 @@
 #![no_std]
 #![no_main]
 
-use core::sync::atomic::{AtomicU32, Ordering};
-
 use defmt::{info, unwrap};
 use defmt_rtt as _;
 use embassy_executor::{Executor, Spawner};
@@ -22,9 +20,8 @@ use heapless::spsc::Queue;
 use helic_fw_common::comms;
 use helic_fw_common::net;
 use helic_fw_common::net::wiznet::EthernetParts;
-use helic_fw_common::params::{self, ExtraParam, ParamDef, ParamStore};
+use helic_fw_common::params::{self, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
-use helic_proto::ParamType;
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -32,6 +29,7 @@ mod board;
 mod config;
 mod rig;
 mod rt_loop;
+mod telemetry;
 
 use rig::WhirlRig;
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
@@ -39,126 +37,6 @@ use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 type Store = ParamStore<config::ActiveController, WhirlRig>;
 const _: () =
     assert!(helic_fw_common::rig::source_count::<WhirlRig>() <= helic_fw_common::rig::MAX_SOURCES);
-
-pub(crate) static PITCH_VALUE: AtomicU32 = AtomicU32::new(0);
-pub(crate) static YAW_VALUE: AtomicU32 = AtomicU32::new(0);
-pub(crate) static REV_PERIOD_VALUE: AtomicU32 = AtomicU32::new(0);
-pub(crate) static RPM_VALUE: AtomicU32 = AtomicU32::new(0);
-pub(crate) static SSI_ERRORS: AtomicU32 = AtomicU32::new(0);
-pub(crate) static PULSE_COUNT: AtomicU32 = AtomicU32::new(0);
-pub(crate) static PULSE_GLITCHES: AtomicU32 = AtomicU32::new(0);
-pub(crate) static PULSE_ERRORS: AtomicU32 = AtomicU32::new(0);
-
-fn write_atomic(value: &AtomicU32, out: &mut [u8]) {
-    out.copy_from_slice(&value.load(Ordering::Relaxed).to_le_bytes());
-}
-
-fn get_pitch(out: &mut [u8]) {
-    write_atomic(&PITCH_VALUE, out);
-}
-
-fn get_yaw(out: &mut [u8]) {
-    write_atomic(&YAW_VALUE, out);
-}
-
-fn get_rev_period(out: &mut [u8]) {
-    write_atomic(&REV_PERIOD_VALUE, out);
-}
-
-fn get_rpm(out: &mut [u8]) {
-    write_atomic(&RPM_VALUE, out);
-}
-
-fn get_ssi_errors(out: &mut [u8]) {
-    write_atomic(&SSI_ERRORS, out);
-}
-
-fn get_pulse_count(out: &mut [u8]) {
-    write_atomic(&PULSE_COUNT, out);
-}
-
-fn get_pulse_glitches(out: &mut [u8]) {
-    write_atomic(&PULSE_GLITCHES, out);
-}
-
-fn get_pulse_errors(out: &mut [u8]) {
-    write_atomic(&PULSE_ERRORS, out);
-}
-
-const EXTRA_PARAMS: &[ExtraParam] = &[
-    ExtraParam {
-        def: ParamDef {
-            name: "pitch",
-            ty: ParamType::F32,
-            count: 1,
-            writable: false,
-        },
-        get: get_pitch,
-    },
-    ExtraParam {
-        def: ParamDef {
-            name: "yaw",
-            ty: ParamType::F32,
-            count: 1,
-            writable: false,
-        },
-        get: get_yaw,
-    },
-    ExtraParam {
-        def: ParamDef {
-            name: "rev_period",
-            ty: ParamType::F32,
-            count: 1,
-            writable: false,
-        },
-        get: get_rev_period,
-    },
-    ExtraParam {
-        def: ParamDef {
-            name: "rpm",
-            ty: ParamType::F32,
-            count: 1,
-            writable: false,
-        },
-        get: get_rpm,
-    },
-    ExtraParam {
-        def: ParamDef {
-            name: "ssi_errors",
-            ty: ParamType::U32,
-            count: 1,
-            writable: false,
-        },
-        get: get_ssi_errors,
-    },
-    ExtraParam {
-        def: ParamDef {
-            name: "pulse_count",
-            ty: ParamType::U32,
-            count: 1,
-            writable: false,
-        },
-        get: get_pulse_count,
-    },
-    ExtraParam {
-        def: ParamDef {
-            name: "pulse_glitches",
-            ty: ParamType::U32,
-            count: 1,
-            writable: false,
-        },
-        get: get_pulse_glitches,
-    },
-    ExtraParam {
-        def: ParamDef {
-            name: "pulse_errors",
-            ty: ParamType::U32,
-            count: 1,
-            writable: false,
-        },
-        get: get_pulse_errors,
-    },
-];
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -189,7 +67,7 @@ fn main() -> ! {
         cmd_tx,
         config::SAMPLE_RATE,
         config::EXPERIMENT,
-        EXTRA_PARAMS,
+        telemetry::EXTRA_PARAMS,
         &controller,
     );
 

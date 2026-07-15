@@ -9,7 +9,7 @@
 //! — coefficient sets travel by value, so a tick never sees a torn array.
 
 use core::marker::PhantomData;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
@@ -42,10 +42,47 @@ pub struct ParamDef {
     pub writable: bool,
 }
 
+/// One experiment-owned, read-only scalar backed by an atomic word.
+///
+/// Separate constructors make it impossible to declare an unsupported size,
+/// a writable value without a setter, or a definition whose byte count does
+/// not match the storage read by the registry.
 #[derive(Clone, Copy)]
 pub struct ExtraParam {
-    pub def: ParamDef,
-    pub get: fn(&mut [u8]),
+    name: &'static str,
+    ty: ParamType,
+    value: &'static AtomicU32,
+}
+
+impl ExtraParam {
+    pub const fn f32(name: &'static str, value: &'static AtomicU32) -> Self {
+        Self {
+            name,
+            ty: ParamType::F32,
+            value,
+        }
+    }
+
+    pub const fn u32(name: &'static str, value: &'static AtomicU32) -> Self {
+        Self {
+            name,
+            ty: ParamType::U32,
+            value,
+        }
+    }
+
+    const fn def(self) -> ParamDef {
+        ParamDef {
+            name: self.name,
+            ty: self.ty,
+            count: 1,
+            writable: false,
+        }
+    }
+
+    fn get(self, out: &mut [u8]) {
+        out.copy_from_slice(&self.value.load(Ordering::Relaxed).to_le_bytes());
+    }
 }
 
 pub trait ParamRegistry {
@@ -327,10 +364,6 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             "controller exposes more parameters than ParamStore can shadow"
         );
         assert!(
-            extras.iter().all(|extra| !extra.def.writable),
-            "ExtraParam does not provide a setter and must be read-only"
-        );
-        assert!(
             extras.len() <= MAX_EXTRA_PARAMS,
             "experiment exposes more extra parameters than supported"
         );
@@ -412,7 +445,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         if index < BASE_PARAMS.len() {
             Some(BASE_PARAMS[index])
         } else if index < BASE_PARAMS.len() + self.extras.len() {
-            Some(self.extras[index - BASE_PARAMS.len()].def)
+            Some(self.extras[index - BASE_PARAMS.len()].def())
         } else if index < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() {
             Self::rig_names()
                 .get(index - BASE_PARAMS.len() - self.extras.len())
@@ -509,7 +542,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             }
             IDX_DIAG_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
             i if i < BASE_PARAMS.len() + self.extras.len() => {
-                (self.extras[i - BASE_PARAMS.len()].get)(out)
+                self.extras[i - BASE_PARAMS.len()].get(out)
             }
             i if i < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() => out
                 .copy_from_slice(

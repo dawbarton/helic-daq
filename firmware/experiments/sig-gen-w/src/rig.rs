@@ -16,7 +16,7 @@ use helic_fw_common::SampleRate;
 
 use crate::board::PicoDacParts;
 use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
-use crate::{LASER_RANGE_MM, LASER_VALUE};
+use crate::telemetry::{LASER_RANGE_MM, LASER_VALUE};
 
 const DAC_VREF: f32 = 4.096;
 const DAC_CS_PIN: u8 = 9;

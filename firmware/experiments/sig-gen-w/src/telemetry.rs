@@ -1,0 +1,10 @@
+//! Pico 2W scalar state shared by the laser task and real-time rig.
+
+use core::sync::atomic::AtomicU32;
+
+use helic_fw_common::params::ExtraParam;
+
+pub static LASER_VALUE: AtomicU32 = AtomicU32::new(0);
+pub static LASER_RANGE_MM: AtomicU32 = AtomicU32::new(0);
+
+pub const EXTRA_PARAMS: &[ExtraParam] = &[ExtraParam::f32("laser", &LASER_VALUE)];
