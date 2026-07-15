@@ -38,6 +38,16 @@ classdef TestStream < matlab.unittest.TestCase
             testCase.verifyError(@() receiver.receive(), 'helicdaq:StreamTimeout');
         end
 
+        function primeUsesTransport(testCase)
+            transport = FakeDatagramTransport();
+            receiver = helicdaq.StreamReceiver('Timeout', 1, ...
+                'Transport', transport);
+            cleanup = onCleanup(@() delete(receiver));
+            receiver.prime("127.0.0.1", 9999);
+            testCase.verifyEqual(transport.PrimeHost, "127.0.0.1");
+            testCase.verifyEqual(transport.PrimePort, 9999);
+        end
+
         function nativeUdpLoopback(testCase)
             testCase.assumeTrue(exist('udpport', 'file') == 2, ...
                 'Instrument Control Toolbox is not installed.');

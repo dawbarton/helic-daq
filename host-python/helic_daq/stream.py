@@ -9,6 +9,8 @@ import numpy as np
 from . import protocol
 from .protocol import ProtocolError, StreamHeader
 
+PRIMER_PAYLOAD = b"helic-daq-stream-prime"
+
 
 class StreamReceiver:
     """Receives HELIC-DAQ stream packets on a UDP port.
@@ -28,6 +30,10 @@ class StreamReceiver:
     def close(self) -> None:
         self._sock.close()
 
+    def prime(self, host: str, port: int = protocol.STREAM_PORT) -> None:
+        """Send a small datagram from this receive socket to open stateful firewalls."""
+        self._sock.sendto(PRIMER_PAYLOAD, (host, port))
+
     def __enter__(self) -> "StreamReceiver":
         return self
 
@@ -40,7 +46,10 @@ class StreamReceiver:
         Raises ``socket.timeout`` if nothing arrives; tracks lost packets
         via the header sequence numbers in :attr:`lost_packets`.
         """
-        data, _addr = self._sock.recvfrom(2048)
+        while True:
+            data, _addr = self._sock.recvfrom(2048)
+            if data != PRIMER_PAYLOAD:
+                break
         header = protocol.decode_stream_header(data)
         expected = protocol.STREAM_HEADER_LEN + 4 * header.n_sources * header.n_records
         if len(data) != expected:

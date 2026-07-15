@@ -73,6 +73,17 @@ end
 Base.close(receiver::StreamReceiver) = close(receiver.socket)
 Base.isopen(receiver::StreamReceiver) = isopen(receiver.socket)
 
+const STREAM_PRIMER_PAYLOAD = collect(codeunits("helic-daq-stream-prime"))
+
+"""Send a small datagram from this receiver to open stateful UDP firewalls."""
+function prime!(receiver::StreamReceiver, host; port::Integer = Protocol.STREAM_PORT)
+    1 <= port <= typemax(UInt16) ||
+        throw(ArgumentError("port must be between 1 and $(typemax(UInt16))"))
+    address = host isa IPAddr ? host : getaddrinfo(host)
+    send(receiver.socket, address, port, STREAM_PRIMER_PAYLOAD)
+    return receiver
+end
+
 function Base.open(f::Function, ::Type{StreamReceiver}; kwargs...)
     receiver = StreamReceiver(; kwargs...)
     try
@@ -108,7 +119,11 @@ Throws [`StreamTimeout`](@ref) and closes the receiver if nothing arrives
 within the receiver's timeout.
 """
 function receive(receiver::StreamReceiver)
-    _, packet = _recvfrom_timeout(receiver.socket, receiver.timeout)
+    local packet
+    while true
+        _, packet = _recvfrom_timeout(receiver.socket, receiver.timeout)
+        packet == STREAM_PRIMER_PAYLOAD || break
+    end
     header = Protocol.decode_stream_header(packet)
     expected = Protocol.STREAM_HEADER_LEN +
         4 * Int(header.n_sources) * Int(header.n_records)

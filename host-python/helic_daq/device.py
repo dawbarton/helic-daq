@@ -343,6 +343,7 @@ class Device:
             samples = max(1, int(seconds * fs / decimation))
         names = self.stream_setup(sources, decimation=decimation, count=samples)
         with StreamReceiver(port=port) as rx:
+            rx.prime(self.host)
             self.stream_start(rx.port)
             try:
                 return rx.capture(samples, names)

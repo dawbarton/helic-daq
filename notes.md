@@ -19,6 +19,9 @@ rtc analogue cape:
   commanded 100 Hz sine;
 - closed-loop PID on ADC0 with live gain tuning. A 2 V to 3 V step settled to
   2% in approximately 39 ms in the test loopback;
+- hardware protocol rejection of `StreamSetup` while a stream is active with
+  `Busy`, and a non-finite `freq` write with `BadValue` while preserving the
+  previous finite value;
 - a disconnected laser UART no longer starves core 0 when GP1 has the fitted
   external pull-up.
 
@@ -42,9 +45,6 @@ intentionally matches it.
   packet loss and core-0 load under unrelated broadcast traffic.
 - Full 24-source W5500 throughput and CYW43439 throughput, latency and RF
   behaviour.
-- On hardware, the protocol edge cases that reject `StreamSetup` while a
-  stream is active with `Busy`, and non-finite parameter writes with
-  `BadValue`. Both are covered by software tests.
 
 The `fw-whirl-rig` constants match RMB20SC12BC96: 12-bit natural binary,
 4096 positions per revolution, 1 MHz SSI below the 4 MHz limit, and more than
@@ -149,8 +149,10 @@ After that rule, a 1000-sample `adc0,out` baseline capture and a 4000-sample
 10 Hz, 1 V sine capture both completed with zero UDP packet loss. With the
 unipolar analogue board, `out` reported ±1 V while `adc0` showed the clipped
 positive half-cycle from approximately 0 to 1 V. If TCP control works but
-capture times out on this machine, first check this firewall rule and verify
-UDP 2351 with `tcpdump`.
+capture times out on this machine, first verify UDP 2351 with `tcpdump`.
+Current host libraries send a small UDP primer before `StreamStart`, so
+stateful firewall rules that accept established return traffic may no longer
+need a persistent explicit UDP 2351 allow rule.
 
 ## Resource audit
 

@@ -337,7 +337,11 @@ If something looks wrong, the same numbers appear once a second in the
 debug-probe log, along with connection events.
 
 **If `capture` times out with no data** while `status`/`get`/`set` work, check
-whether a host firewall is blocking inbound UDP on stream port 2351. Control
-uses outbound TCP and can remain functional. On the managed macOS machine used
-for bring-up, the Application Firewall silently dropped UDP to an unsigned
-Homebrew Python executable; [../notes.md](../notes.md) records the workaround.
+whether a host firewall is blocking inbound UDP on the stream port. The host
+libraries send a small UDP primer from the receive socket before starting the
+stream, which lets ordinary stateful firewalls classify stream packets as
+return traffic. Managed firewall policies can still drop those packets.
+Control uses outbound TCP and can remain functional. On the managed macOS
+machine used for bring-up, the Application Firewall silently dropped UDP to an
+unsigned Homebrew Python executable; [../notes.md](../notes.md) records host
+specific workarounds.

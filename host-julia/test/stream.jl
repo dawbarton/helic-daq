@@ -31,6 +31,23 @@ end
     end
 end
 
+@testset "stream receiver primer" begin
+    receiver = StreamReceiver(; port = 0, bind_address = ip"127.0.0.1")
+    sink = UDPSocket()
+    try
+        bind(sink, ip"127.0.0.1", 0)
+        sink_port = HelicDAQ._bound_port(sink)
+        prime!(receiver, ip"127.0.0.1"; port = sink_port)
+        address, packet = recvfrom(sink)
+        @test address.host == ip"127.0.0.1"
+        @test address.port == receiver.port
+        @test String(packet) == "helic-daq-stream-prime"
+    finally
+        close(sink)
+        isopen(receiver) && close(receiver)
+    end
+end
+
 @testset "stream receiver and Tables.jl" begin
     receiver = StreamReceiver(; port = 0, bind_address = ip"127.0.0.1", timeout = 1)
     port = Int(receiver.port)

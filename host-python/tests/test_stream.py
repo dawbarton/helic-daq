@@ -68,6 +68,18 @@ class TestStreamReceiver(unittest.TestCase):
         data = self.rx.capture(2, ["adc0"])
         self.assertEqual(len(data["adc0"]), 2)
 
+    def test_prime_sends_from_receive_socket(self):
+        sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sink.bind(("127.0.0.1", 0))
+            sink.settimeout(1.0)
+            self.rx.prime("127.0.0.1", sink.getsockname()[1])
+            data, address = sink.recvfrom(64)
+            self.assertEqual(data, b"helic-daq-stream-prime")
+            self.assertEqual(address[1], self.port)
+        finally:
+            sink.close()
+
 
 if __name__ == "__main__":
     unittest.main()

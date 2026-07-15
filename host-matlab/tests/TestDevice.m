@@ -45,6 +45,9 @@ classdef TestDevice < matlab.unittest.TestCase
             receiver = FakeCaptureReceiver();
             data = device.capture(["adc0", "out"], 'Samples', 4, ...
                 'Decimation', 2, 'Timeout', 1, 'Receiver', receiver);
+            testCase.verifyEqual(receiver.PrimeHost, "test");
+            testCase.verifyEqual(receiver.PrimePort, ...
+                double(helicdaq.Protocol.STREAM_PORT));
             testCase.verifyEqual(data.index, uint64([100; 102; 104; 106]));
             testCase.verifyEqual(data.adc0, single([0; 1; 2; 3]));
             testCase.verifyEqual(data.out, single([0; 2; 4; 6]));

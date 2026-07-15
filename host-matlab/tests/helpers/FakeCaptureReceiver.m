@@ -2,9 +2,16 @@
 classdef FakeCaptureReceiver < handle
     properties
         Port = 2351
+        PrimeHost = ""
+        PrimePort = []
     end
 
     methods
+        function prime(obj, host, port)
+            obj.PrimeHost = string(host);
+            obj.PrimePort = double(port);
+        end
+
         function data = capture(~, nRecords, names)
             indices = uint64(100 + 2 * (0:nRecords - 1).');
             values = zeros(nRecords, numel(names), 'single');

@@ -259,6 +259,9 @@ classdef Device < handle
                 % An injected receiver separates capture orchestration from UDP tests.
                 receiver = options.Receiver;
             end
+            if ismethod(receiver, 'prime')
+                receiver.prime(obj.Host, helicdaq.Protocol.STREAM_PORT);
+            end
             obj.startStream(receiver.Port);
             streamCleanup = onCleanup(@() obj.stopStreamSafely());
             data = receiver.capture(nRecords, resolved.Name);

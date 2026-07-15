@@ -372,6 +372,7 @@ function capture(
     receiver = StreamReceiver(; port, timeout)
     started = false
     try
+        prime!(receiver, device.host)
         start_stream!(device, receiver.port)
         started = true
         return capture(receiver, samples, (source.name for source in resolved))

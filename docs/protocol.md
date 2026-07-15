@@ -133,6 +133,13 @@ The device sends packets to the TCP peer address and the port supplied in
 StreamStart. Selected per-tick values are batched into datagrams no larger
 than 1472 bytes and flushed at least every 5 ms.
 
+Before sending StreamStart, hosts should bind their UDP receive socket and
+send a small UDP datagram from that socket to the device stream port. The
+datagram payload is ignored and has no wire-level meaning; it exists to let
+stateful host firewalls and NATs classify the subsequent device-to-host
+stream packets as return traffic. The UDP primer must use the same local port
+that will be supplied in StreamStart.
+
 | offset | size | field |
 |---|---|---|
 | 0 | 2 | magic = `0x4C48` |

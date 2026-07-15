@@ -3,6 +3,8 @@ classdef FakeDatagramTransport < handle
     properties
         Port = 2351
         Timeout = 1
+        PrimeHost = ""
+        PrimePort = []
     end
 
     properties (Access = private)
@@ -22,6 +24,11 @@ classdef FakeDatagramTransport < handle
             end
             data = obj.Packets{1};
             obj.Packets(1) = [];
+        end
+
+        function prime(obj, host, port)
+            obj.PrimeHost = string(host);
+            obj.PrimePort = double(port);
         end
     end
 end

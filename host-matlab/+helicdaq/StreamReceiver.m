@@ -56,6 +56,21 @@ classdef StreamReceiver < handle
             obj.Socket = [];
         end
 
+        function prime(obj, host, port)
+            %PRIME Send one datagram to open stateful UDP firewalls.
+            if nargin < 3
+                port = helicdaq.Protocol.STREAM_PORT;
+            end
+            validateattributes(port, {'numeric'}, ...
+                {'scalar', 'integer', 'positive', '<=', 65535});
+            if obj.NativeSocket
+                write(obj.Socket, obj.primerPayload(), ...
+                    'uint8', char(string(host)), double(port));
+            elseif ismethod(obj.Socket, 'prime')
+                obj.Socket.prime(host, port);
+            end
+        end
+
         function [header, values] = receive(obj)
             %RECEIVE Return one decoded header and record-major single matrix.
             if obj.NativeSocket
@@ -72,6 +87,23 @@ classdef StreamReceiver < handle
                 packet = reshape(uint8(datagram.Data), 1, []);
             else
                 packet = obj.Socket.receive();
+            end
+            while isequal(packet, obj.primerPayload())
+                if obj.NativeSocket
+                    started = tic;
+                    while obj.Socket.NumDatagramsAvailable < 1
+                        if toc(started) >= obj.Timeout
+                            error('helicdaq:StreamTimeout', ...
+                                'No HELIC-DAQ stream packet arrived within %.3g seconds.', ...
+                                obj.Timeout);
+                        end
+                        pause(min(0.005, obj.Timeout / 20));
+                    end
+                    datagram = read(obj.Socket, 1, 'uint8');
+                    packet = reshape(uint8(datagram.Data), 1, []);
+                else
+                    packet = obj.Socket.receive();
+                end
             end
             header = helicdaq.Protocol.decodeStreamHeader(packet);
             expected = helicdaq.Protocol.STREAM_HEADER_LENGTH + ...
@@ -138,6 +170,12 @@ classdef StreamReceiver < handle
             data = addvars(data, indices, 'Before', 1, 'NewVariableNames', 'index');
             data.Properties.UserData = struct('Dropped', dropped, ...
                 'LostPackets', obj.LostPackets - initialLost);
+        end
+    end
+
+    methods (Access = private)
+        function payload = primerPayload(~)
+            payload = uint8('helic-daq-stream-prime');
         end
     end
 end
