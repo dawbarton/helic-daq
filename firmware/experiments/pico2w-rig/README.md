@@ -18,15 +18,15 @@ control and streaming while a dedicated core drives the DAC.
 ## Control and network
 
 `ActiveController` is currently `PassThrough`; the common RT loop adds forcing
-and arbitrary-table signals before DAC actuation. The default `rt-sync` build
-runs the tick body and raw SPI1 DAC transaction from SRAM with no executor on
-core 1. Wi-Fi uses station mode and DHCP by default. Set `WIFI_SSID` and
-`WIFI_PASSWORD` in
-[`src/config.rs`](src/config.rs) before building, without committing real
-credentials.
+and arbitrary-table signals before DAC actuation. The mandatory tick body and
+raw SPI1 DAC transaction run from SRAM with no executor on core 1. Wi-Fi uses
+station mode and DHCP by default. Supply `HELIC_WIFI_SSID` and
+`HELIC_WIFI_PASSWORD` in the build environment; no tracked source edit is
+required.
 
-[`src/board.rs`](src/board.rs) contains the Pico 2W resource assignment and
-`Rig` implementation.
+[`src/board.rs`](src/board.rs) contains the Pico 2W resource assignment;
+[`src/rig.rs`](src/rig.rs) contains DAC behaviour; and
+[`src/telemetry.rs`](src/telemetry.rs) declares shared laser state.
 
 Build with `cargo build --release -p fw-pico2w-rig` from `firmware/`. Use the
 wired CBC or whirl rigs for sustained full-rate multi-source streaming; see

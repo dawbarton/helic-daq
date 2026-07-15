@@ -110,15 +110,17 @@ The v2 base registry is:
 | t_actuate_max | I | ro | maximum actuate (DAC write) phase time, µs |
 | t_rest_max | I | ro | maximum remaining tick body time, µs |
 | diag_reset | I | rw | write non-zero to reset timing diagnostics and event counters |
+| cmd_backlog_max | I | ro | maximum queued host commands observed at a tick boundary |
 
 `wake_phase_*` read 4294967295/0 until the rig reports a sample-clock
 phase. `diag_reset` clears the `*_max`/`*_min` diagnostics along with
-`loop_time_max`, `clock_jitter`, `overruns`, `tick_timeouts` and
-`records_dropped`; total counters such as `ticks` keep running.
+`loop_time_max`, `clock_jitter`, `overruns`, `tick_timeouts`,
+`records_dropped` and `cmd_backlog_max`; total counters such as `ticks` keep
+running.
 
 Experiment read-only values, rig parameters and controller parameters follow
-the base registry. For `cbc-rig`, these include `laser`, `adc_errors`,
-`rig_laser_range` and `rig_out_channel`. Controller names depend on the
+the base registry. For `cbc-rig`, these include `laser`, `rig_laser_range` and
+`rig_out_channel`. Controller names depend on the
 compile-time selected controller.
 
 Fourier coefficients use `[mean, a_1..a_K, b_1..b_K]`, representing

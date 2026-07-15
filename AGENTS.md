@@ -25,12 +25,14 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
 - Keep logic host-testable. DSP belongs in `helic-core`, portable peripheral
   logic in `helic-drivers`, and codecs in `helic-proto`. These crates are
   `no_std` and tested at the repository root. RP2350-specific shared plumbing
-  belongs in `firmware/common`; experiment crates contain pins, constants,
-  interrupt bindings, task wrappers and a thin `Rig` implementation.
+  belongs in `firmware/common`; experiment crates keep an auditable `board.rs`
+  pin/ownership map, compile-time configuration, telemetry declarations and a
+  thin experiment-local `Rig` implementation.
 - Keep the real-time path bounded: no allocation, blocking cross-core locks or
   `f64`. At 8 kHz, core 1 has 125 µs per tick and the Cortex-M33 only
   accelerates single-precision floating point.
-- Keep the `rt-sync` tick path SRAM-resident and embassy-free. Everything
+- Keep the mandatory core-1 tick path SRAM-resident and Embassy-free. There is
+  deliberately no async fallback. Everything
   reachable per tick on core 1 must carry
   `#[unsafe(link_section = ".data.ram_func")]` (or inline into a function
   that does) and must not call into the embassy executor, `embassy-time`,
@@ -46,8 +48,8 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
   that arrive while a tick body runs; the latch is what makes a late tick
   catch up instead of skipping a sample.
 - Preserve hardware-timed sampling. ADC experiments use PWM-driven CONVST and
-  the BUSY falling edge; ADC-free experiments use a PWM-wrap interrupt. Do not
-  replace either with software timing.
+  the latched BUSY falling edge; ADC-free experiments poll the raw PWM-wrap
+  latch. Do not replace either with software timing or an interrupt future.
 - Keep `helic_fw_common::time_watchdog` bound to `TIMER0_IRQ_1` and started
   on core 0 in every experiment that uses embassy-time. The embassy-rp time
   driver can lose its alarm (`docs/embassy_time_alarm_loss.md`); without the
@@ -71,7 +73,7 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
 ## Hardware constraints worth preserving
 
 - The current CBC build configures all AD5064 channels as unipolar for the
-  interim analogue board. `DAC_POLARITY` in `cbc-rig/board.rs` must match the
+  interim analogue board. `DAC_POLARITY` in `cbc-rig/rig.rs` must match the
   fitted output stages before hardware use.
 - The optoNCDT UART input needs an idle-high line. The current rig uses an
   external 10 kΩ pull-up on GP1; without it, a disconnected sensor can cause

@@ -13,8 +13,9 @@ and fixed; see "Resolution" at the end of this document. In short:
   and `t_*_max` parameters) showed every tick phase stretching ~10× under
   TCP load, and the tick rate silently dropping to ~6980 ticks/s during
   captures (missed BUSY edges).
-- The fix is the `rt-sync` feature (now default for `fw-cbc-rig`): core 1
-  runs a synchronous loop with no executor, busy-polls the BUSY edge-detect
+- The fix was introduced as the `rt-sync` feature and is now the only supported
+  core-1 architecture: core 1 runs a synchronous loop with no executor,
+  busy-polls the BUSY edge-detect
   latch, uses register-level SRAM SPI transfers, and keeps the entire
   per-tick instruction stream in `.data.ram_func`. Result: 0 overruns under
   idle, TCP polling and capture; wake phase constant at 36 µs with no
@@ -23,14 +24,15 @@ and fixed; see "Resolution" at the end of this document. In short:
   alarms (embassy-rs/embassy#3758 class) could freeze all core-0 timers for
   minutes. `helic_fw_common::time_watchdog` bounds this to 50 ms.
 
-This document summarises the current timing-overrun investigation for the
+The remainder of this document is a historical snapshot of the timing-overrun
+investigation for the
 `fw-cbc-rig` W5500 setup with the older all-unipolar rtc analogue cape. The
 DAQ is physically configured with AD5064 outputs looped back into AD7609
 inputs. Treat all DAQ communication as single-client and sequential: do not
 run parallel host clients, overlapping scripts, or parallel processes against
 the hardware.
 
-## Current State
+## Historical state before resolution
 
 - Standard firmware has been restored after diagnostics.
 - Last verified device firmware: `0.1.0 85511be`.
@@ -65,8 +67,9 @@ increase in the final capture tests noted below.
 - During the overrun investigation, `tick_timeouts`, `adc_errors`, and new
   `records_dropped` generally stayed at zero even when `overruns` increased.
 
-The captures are functionally valid. The unresolved issue is real-time timing
-margin under host/network traffic.
+At this point in the investigation, the captures were functionally valid but
+real-time timing margin under host/network traffic remained unresolved. The
+resolution above supersedes this state.
 
 ## Symptom
 
@@ -226,10 +229,10 @@ Run these in order, keeping DAQ access sequential.
 
 ## Useful Commands
 
-Note (post-resolution): `rt-sync` is now in the default feature set, so
-"standard" firmware is plain `cargo run --release -p fw-cbc-rig`. The
-command below now selects the historical async loop (useful only for
-reproducing the baseline measurements).
+Post-resolution note: the async runner and the `rt-sync`/`diag-rt-sram`
+features have since been removed. Commands below which select historical
+diagnostic variants are retained as investigation evidence and require the
+corresponding historical commit; they do not describe the current tree.
 
 Restore standard W5500 firmware:
 
@@ -300,10 +303,10 @@ GPIO IRQ dispatch, cross-core critical sections in `AtomicWaker` and
 `with_timeout`), as the cause. The earlier `diag-rt-sram` variant did not
 help because the dominant flash footprint was embassy code it never moved.
 
-### Fix: `rt-sync` (default for `fw-cbc-rig`)
+### Fix: synchronous SRAM isolation
 
-Core 1 now runs `run_rt_loop_sync`: a plain synchronous loop with no
-executor. The BUSY falling edge is taken from the IO bank's raw edge-detect
+Core 1 enters `run_hot_loop`: a plain synchronous SRAM loop with no executor.
+The BUSY falling edge is taken from the IO bank's raw edge-detect
 latch by an SRAM spin loop (`BusyEdgeSpinTick`) — the latch stays armed
 through the body, so a late tick catches up instead of skipping samples.
 ADC/DAC transfers use register-level SRAM SPI routines
@@ -341,5 +344,5 @@ Consider reporting upstream.
   the network drain task spawns. It stops as soon as `stream_task` starts.
 - `records_dropped` from earlier sessions was reset by reflashing; new runs
   stay at the startup burst value indefinitely.
-- The async runner (`run_rt_loop`) remains for the other experiments; they
-  have not been migrated to `rt-sync` and are unverified on hardware.
+- The same mandatory synchronous SRAM architecture now builds for CBC, whirl,
+  and Pico 2W. Whirl and Pico 2W still require complete hardware verification.

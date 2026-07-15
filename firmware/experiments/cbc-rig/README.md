@@ -25,10 +25,10 @@ controller; forcing and arbitrary-table signals are then added by the common
 RT loop. Replace both `ActiveController` and `make_controller()` to use another
 controller.
 
-[`src/board.rs`](src/board.rs) contains the complete pin map and `Rig`
-implementation. [`src/main.rs`](src/main.rs) assigns tasks and cores, while
-[`src/rt_loop.rs`](src/rt_loop.rs) is the concrete Embassy wrapper around the
-shared real-time loop.
+[`src/board.rs`](src/board.rs) is the complete pin and ownership map;
+[`src/rig.rs`](src/rig.rs) contains CBC assembly and behaviour;
+[`src/telemetry.rs`](src/telemetry.rs) declares shared scalar state; and
+[`src/main.rs`](src/main.rs) assigns tasks and cores.
 
 Build with `cargo build --release -p fw-cbc-rig` from `firmware/`. See the
 [user guide](../../../docs/user_guide.md) for operation and the

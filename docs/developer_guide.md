@@ -23,8 +23,8 @@ implementation details:
    choices, so extension does not introduce virtual dispatch in the tick.
 4. **Logic is portable; wiring is local.** DSP, codecs and peripheral logic
    live in host-testable `no_std` crates. `firmware/common` contains reusable
-   RP2350 plumbing. An experiment contains only wiring, constants and concrete
-   task wrappers.
+   RP2350 plumbing. An experiment keeps wiring, constants, telemetry and its
+   thin physical `Rig` adaptation; reusable mechanisms do not live there.
 5. **Host-visible state is discoverable.** Parameter and source names, types,
    sizes and units come from the connected firmware. Adding an experiment,
    rig parameter or controller signal must not require hard-coded host
@@ -42,8 +42,10 @@ implementation details:
 
 The fixed capacities make memory and packet costs explicit: at most 24 stream
 sources, a 256-record SPSC queue, 16 Fourier harmonics and two 4096-sample
-waveform buffers. Changing them requires rechecking SRAM, discovery payload,
-UDP throughput and the 125 µs worst-case tick budget.
+waveform buffers. The command queue holds 32 entries, but the loop applies at
+most two per tick so a control burst cannot consume an unbounded fraction of
+the 125 µs period. Changing any capacity or per-tick budget requires rechecking
+SRAM, discovery payload, UDP throughput and worst-case tick time.
 
 ### Design lineage
 
@@ -78,7 +80,7 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | `firmware/common/` | Experiment-independent firmware support | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |
-| `firmware/experiments/sig-gen-w/` | Pico 2W Wi-Fi signal generator, DAC and laser logger | `thumbv8m.main-none-eabihf` only |
+| `firmware/experiments/pico2w-rig/` | Pico 2W Wi-Fi signal generator, DAC and laser logger | `thumbv8m.main-none-eabihf` only |
 | `host-python/` | Python package `helic_daq` + `helic-daq` CLI | host |
 | `host-julia/` | Julia package `HelicDAQ` + Tables.jl capture interface | host |
 | `host-matlab/` | MATLAB package `helicdaq` + native table capture interface | host |
@@ -97,7 +99,7 @@ at compile time. TCP, UDP streaming and discovery consume only
 protocol tasks. Wired experiment crates expose these choices as mutually
 exclusive `board-w5500` and `board-w6100` features, with W5500 as the default.
 
-`common::net::cyw43` is selected only by `sig-gen-w`. It owns PIO1 SM0,
+`common::net::cyw43` is selected only by `pico2w-rig`. It owns PIO1 SM0,
 DMA0 and the Pico 2W fixed radio pins GP23/24/25/29, joins in station mode,
 disables power saving to avoid latency spikes, then supplies the same stack
 contract. `cyw43`, `cyw43-pio` and the embedded firmware/NVRAM wrapper are
@@ -115,10 +117,10 @@ PWM-wrap tick and omit the ADC read.
 ```
 core 1 (real-time)                       core 0 (everything else)
 ┌─────────────────────────────┐          ┌───────────────────────────────┐
-│ rt_loop task                │          │ TCP control server (:2350)    │
+│ synchronous SRAM loop       │          │ TCP control server (:2350)    │
 │  PWM slice 4 → CONVST       │ commands │   ParamStore (registry+shadow)│
 │  BUSY↓ → SPI read (AD7609)  │◄─────────│ UDP streamer (:2351)          │
-│  apply queued commands      │  SPSC    │ laser UART task → atomic      │
+│  ≤2 queued commands/tick    │  SPSC    │ laser UART task → atomic      │
 │  generators (target+forcing │          │ status task (1 Hz defmt)      │
 │  + waveform table)          │          │                               │
 │  controller → rig output    │ records  │ embassy-net + net backend     │
@@ -134,14 +136,14 @@ cannot move it. Sample-rate presets map to exact divider/wrap pairs from
 the 150 MHz system clock (`config.rs::SampleRate::pwm_params`).
 
 The software pipeline is edge-triggered on the BUSY falling edge
-(conversion complete). CBC uses the synchronous `rt-sync` runner (default;
-see "Real-time isolation" below), which spin-polls the IO bank's raw
+(conversion complete). CBC uses the mandatory synchronous runner, which
+spin-polls the IO bank's raw
 edge-detect latch from SRAM. The ADC-free whirl and Pico 2W rigs use the same
 runner with the PWM peripheral's latched wrap flag. Each tick then runs
 
-1. SPI read of the 144-bit frame (~12 µs at 12 MHz) and scaling to volts;
-2. drain of the command mailbox (parameter updates land here, at a sample
-   boundary, never mid-tick);
+1. apply at most two queued commands (updates land at a sample boundary;
+   excess commands remain FIFO-ordered for later ticks);
+2. SPI read of the 144-bit frame (~12 µs at 12 MHz) and scaling to volts;
 3. one `PhaseAccumulator::step()`, then evaluation of the **target** and
    **forcing** Fourier series against the same phase (all harmonics of
    both stay locked forever through wrapping-multiply phases; see
@@ -159,7 +161,7 @@ diagnostic parameters (`wake_phase_min`/`wake_phase_max` from the CONVST
 PWM counter, `t_measure_max`, `t_actuate_max`, `t_rest_max`; reset by
 writing `diag_reset`) separate late wake-up from long body per phase.
 
-### Real-time isolation (`rt-sync`)
+### Mandatory real-time isolation
 
 The RP2350's XIP cache is shared between cores. When core 0 serves network
 traffic it sweeps enough flash through the cache that core-1 instruction
@@ -171,9 +173,9 @@ re-arms the edge interrupt per wait. The per-tick embassy machinery
 cross-core critical section, GPIO IRQ dispatch) added wake-up jitter of up
 to a full period.
 
-`rt-sync` (default for all three experiment crates) removes flash and embassy
-from the hot path entirely. Core 1 runs `run_rt_loop_sync` — a plain loop, no
-executor — with:
+All three experiment crates unconditionally remove flash and Embassy from the
+hot path. There is no async core-1 feature or fallback. Flash-resident setup
+constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
 
 - `BusyEdgeSpinTick`: an SRAM spin on the IO bank's raw edge-low latch.
   The latch stays armed during the body, so an edge that arrives while a
@@ -190,9 +192,16 @@ executor — with:
 - raw PIO FIFO access for the whirl rig's SSI and optical-period state
   machines. Embassy retains ownership and performs one-time PIO setup, while
   per-tick FIFO reads and writes use PAC registers from SRAM.
-- The tick body, DSP helpers and drivers' pure functions placed in
-  `.data.ram_func` via the `diag-rt-sram` feature (implied by `rt-sync`),
-  and raw `TIMER0` reads for the timing diagnostics.
+- The tick body and RP-specific helpers placed directly in `.data.ram_func`.
+  The firmware workspace enables the `rt-sram` feature for host-tested DSP and
+  driver crates, which cannot use the embedded linker section in desktop
+  builds. Timing diagnostics read raw `TIMER0` registers.
+
+`RawPioInstance` derives PAC FIFO registers from the typed Embassy PIO owner.
+The BUSY latch similarly derives its GPIO number before erasing the typed pin.
+Embassy erases SPI chip-select pin types, so each experiment has one documented
+`unsafe RawSpiDevice::new` construction beside its pin constants; all later
+ADC/DAC hot-path operations are safe, bound device methods.
 
 Measured effect (see `docs/overrun_handoff.md`): overruns under TCP polling
 and UDP capture went from ~120–500/s to zero, wake phase is constant at
@@ -217,7 +226,7 @@ in [embassy_time_alarm_loss.md](embassy_time_alarm_loss.md).
 
 ### RT regression checklist
 
-Run this after any change that touches `run_rt_tick`, `run_rt_loop_sync`,
+Run this after any change that touches `run_rt_tick`, `run_hot_loop`,
 `BusyEdgeSpinTick`, `analog_spi`, the `Rig` implementation, controllers,
 generators, or the record/command queues — and after dependency bumps of
 embassy or heapless. The failure mode being guarded against is quiet: the
@@ -228,44 +237,38 @@ so "it still streams" proves nothing.
 
 ```sh
 cd firmware
-cargo build --release -p fw-cbc-rig -p fw-whirl-rig -p fw-sig-gen-w
-nm target/thumbv8m.main-none-eabihf/release/fw-cbc-rig \
-  | grep -E 'run_rt_loop_sync|transfer_in_place|run_rt_tick'
-nm target/thumbv8m.main-none-eabihf/release/fw-whirl-rig \
-  | grep -E 'run_rt_loop_sync|run_rt_tick|PwmWrapSpinTick|DualSsiReader|PulsePeriodReader'
-nm target/thumbv8m.main-none-eabihf/release/fw-sig-gen-w \
-  | grep -E 'run_rt_loop_sync|transfer_in_place|run_rt_tick|PwmWrapSpinTick'
+cargo build --release -p fw-cbc-rig -p fw-whirl-rig -p fw-pico2w-rig
+python3 tools/check_rt_layout.py
 ```
 
-`run_rt_loop_sync` and `transfer_in_place` must have `2000xxxx` (SRAM)
-addresses; a flash-resident `__Thumbv7ABSLongThunk__…run_rt_loop_sync`
-veneer alongside them is normal (it is the one-time call from flash into
-the SRAM loop). `run_rt_tick` should not appear at all (inlined into the
-SRAM loop); if it appears at a `1000xxxx` (flash) address, the tick body
-has fallen out of `.data.ram_func`. New per-tick helpers that show up as
-separate flash symbols need the
-`#[unsafe(link_section = ".data.ram_func")]` attribute (via the
-`diag-rt-sram` feature plumbing for host-tested crates).
+The checker requires `run_hot_loop` and the analogue transfer routine at
+`2000xxxx` SRAM addresses and permits the one-time flash-to-SRAM linker veneer.
+`run_rt_tick` may be inlined; if emitted separately, it must also be in SRAM.
+Review newly emitted helper symbols as well: the script is a guardrail, not a
+complete call-graph proof.
 
-**2. Hardware check — the overrun matrix** (device + probe attached, one
+**2. Hardware check — production regression** (device + probe attached, one
 sequential client):
 
 ```sh
-cd firmware
-PYTHONPATH=../host-python uv run --with numpy --env-file /dev/null \
-  python tools/overrun_matrix.py --variant rt_sync --idle-seconds 5 --poll-seconds 5
+PYTHONPATH=host-python uv run --with numpy --python 3.12 \
+  python firmware/tools/rt_regression.py --rig cbc
 ```
 
-Acceptance, in **every** phase (idle, poll, capture) at 8 kHz:
+Use `--rig whirl` or `--rig pico2w --host <DHCP-address>` for the other
+profiles. Acceptance, in **every** CBC phase at 8 kHz:
 
-- `overruns == 0`, `tick_timeouts == 0`, `adc_errors == 0`;
-- no growth of `records_dropped` beyond the documented startup burst;
+- `overruns == 0`, `tick_timeouts == 0`, `records_dropped == 0`;
 - `ticks_per_s` ≈ 8000 (a deficit means BUSY edges are being skipped);
 - `clock_jitter == 0`;
 - `wake_phase_min == wake_phase_max` (a spread of more than ~2 µs means
   wake-up determinism regressed);
 - `loop_time_max` ≤ ~60 µs (reference build: 43–50 µs);
 - capture `lost_packets == 0` and `capture_dropped == 0`.
+
+`cmd_backlog_max` records host-command bursts. Two commands are applied per
+tick; a non-zero maximum is not a timing failure, but persistent `Busy` replies
+or a maximum near the queue capacity indicates an undersized control path.
 
 **3. Streaming-heavy check** (when the change touches records, streaming or
 the network): capture all 13 sources for 8000 records and `adc0,out` for
@@ -311,8 +314,8 @@ with one-sample latency. PIO0 SM1 measures rising-edge intervals from the
 optical revolution pulse independently of core load.
 
 The analogue SPI bus (SPI1: ADC + DAC chip selects) belongs to core 1
-exclusively. `board.rs` hands the unassembled `AnalogParts` to core 1,
-which builds the shared-bus devices there. This is what lets the bus
+exclusively. CBC's `board.rs` hands the unassembled `CbcParts` to core 1,
+and `rig.rs` builds the shared-bus devices there. This is what lets the bus
 mutex be the zero-cost `NoopRawMutex` (it is `!Sync`, so this is also
 compiler-enforced).
 
@@ -342,35 +345,40 @@ only change**. `helic_fw_common::params::ParamStore` serves reads from RT-loop
 atomics or from the shadow copies of writable values, and turns writes into
 `RtCommand`s.
 
-To add a platform parameter: append a `ParamDef` to `BASE_PARAMS`, add its
-index constant, and handle it in `get` (and `set` if writable). Controller
-parameters need no registry work at all; see below.
+The fixed schema and capacity assertions live in `params/schema.rs`; mutable
+shadow state and command translation remain in `params.rs`. To add a platform
+parameter, use the typed read-only/writable constructors in `BASE_PARAMS`, add
+its index constant, and handle it in `get` (and `set` if writable). Experiment
+telemetry uses `ExtraParam::f32`/`u32`, which always describes a read-only scalar
+whose definition matches its atomic storage. Controller parameters need no
+registry work at all; see below.
 
 ## Extending
 
 ### Adding an experiment
 
 Start from the existing experiment whose peripherals and transport are
-closest. An experiment crate should contain only wiring, compile-time choices
-and task wrappers:
+closest. An experiment crate has a deliberately predictable anatomy:
 
 1. Copy the crate under `firmware/experiments/`, rename its package to
    `fw-<name>`, and select exactly one common network feature:
    `net-wiznet-w5500`, `net-wiznet-w6100` or `net-cyw43`.
-2. In `board.rs`, assign pins and construct unassembled peripheral parts.
-   Move real-time-owned parts to core 1; keep network and sensor tasks on
-   core 0. Put reusable driver logic in `helic-drivers`, not here.
+2. In `board.rs`, assign pins and construct unassembled peripheral parts only.
+   Its short file should be sufficient to audit every pin and core owner.
 3. In `config.rs`, set `EXPERIMENT`, `SAMPLE_RATE`, `NET_CONFIG`, controller
    alias/factory and rig-specific constants. Experiment names, parameter names
    and source names must fit their protocol limits.
-4. Implement `Rig` for the assembled hardware. `INPUTS` and `measure` must
-   use the same order; choose a `TickSource`, implement `actuate`, and expose
+4. In `rig.rs`, assemble core-1 parts and implement `Rig`. `INPUTS` and
+   `measure` must use the same order; choose a `TickSource`, implement `actuate`, and expose
    rig controls through `param_names`, `param_defaults`, `normalise_param`
    and `set_param`.
-5. In `main.rs`, define atomic-backed `ExtraParam`s for read-only sensor and
-   diagnostic values, bind only the interrupts the board owns, and wrap the
-   common TCP, stream, beacon, laser and RT runners as needed.
-6. Keep `rt_loop.rs` as the thin concrete wrapper around `run_rt_loop`.
+5. In `telemetry.rs`, declare atomic-backed `ExtraParam`s for read-only sensor
+   and diagnostic values. Scalar atomics are latest-value views, not coherent
+   substitutes for stream records.
+6. In `main.rs`, bind only owned interrupts, move the complete RT parts bundle
+   to core 1, and compose the common TCP, stream, beacon, laser and RT runners.
+   Put reusable algorithms in `helic-core`, portable device logic in
+   `helic-drivers`, and RP2350 mechanisms in `firmware/common`.
 
 Controller telemetry is appended after rig inputs, and the common loop then
 appends `target`, `forcing`, `table` and `out`; no experiment assigns those
@@ -466,6 +474,11 @@ Drivers are generic over `embedded-hal` traits and the `AnalogIn` /
 `AnalogOut` traits in `helic-drivers`. An AD7606B (SPI-configured) or AD5764
 replacement implements the same trait and slots into `board.rs`; the RT
 loop does not change. Pin assignments live **only** in `board.rs`.
+
+`helic-drivers::pwm_out` is a portable PWM-output building block that no
+current experiment instantiates. It remains in the reusable driver crate
+because it has host tests and no RP2350 policy; do not move it into an
+experiment merely to make it look used.
 
 ### Adding a stream source
 

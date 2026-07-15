@@ -32,8 +32,8 @@ rtc analogue cape:
   previous finite value;
 - a disconnected laser UART no longer starves core 0 when GP1 has the fitted
   external pull-up;
-- the `rt-sync` synchronous SRAM real-time loop (now the `fw-cbc-rig`
-  default): zero overruns, zero clock jitter and a constant 36 µs wake
+- the mandatory synchronous SRAM real-time loop: zero overruns, zero clock
+  jitter and a constant 36 µs wake
   phase at 8 kHz under idle, TCP polling, 1000-record capture, 8000-record
   all-13-source capture and a sustained 60000-record capture, all with
   index-contiguous records and zero UDP loss. The previous async loop
@@ -46,7 +46,7 @@ rtc analogue cape:
   timeouts) for ~4 minutes; the watchdog bounds that class of stall to
   50 ms.
 
-Independent re-verification on 2026-07-15 used the release `rt-sync` image
+Independent re-verification on 2026-07-15 used the release synchronous image
 from `4828b79` after formatting-only cleanup. Five-second idle and TCP-poll
 phases sustained approximately 8000 ticks/s with zero overruns, timeouts,
 record drops, ADC errors or clock jitter; wake phase stayed at exactly 36 us,
@@ -66,10 +66,10 @@ intentionally matches it.
 - An optoNCDT 1420 producing real binary measurements. Only disconnected-line
   behaviour has been checked.
 - Long phase-locked arbitrary table operation.
-- `fw-whirl-rig` and `fw-sig-gen-w`. They build with the firmware workspace
+- `fw-whirl-rig` and `fw-pico2w-rig`. They build with the firmware workspace
   and their portable logic has host tests, but neither has been exercised as
-  a complete physical experiment. Both default to the synchronous SRAM core-1
-  architecture: whirl adapts it to the raw PWM-wrap latch and PIO FIFOs,
+  a complete physical experiment. Both use the mandatory synchronous SRAM
+  core-1 architecture: whirl adapts it to the raw PWM-wrap latch and PIO FIFOs,
   while Pico 2W uses the raw latch and SPI1 DAC path. This is static ELF and
   cross-build evidence only, not real SSI, optical-input, Wi-Fi, DAC or timing
   evidence.
@@ -190,72 +190,16 @@ Current host libraries send a small UDP primer before `StreamStart`, so
 stateful firewall rules that accept established return traffic may no longer
 need a persistent explicit UDP 2351 allow rule.
 
-After that host fix, the Codex environment could again receive UDP 2351. A
-2026-07-15 retry completed a 1000-record `adc0,out` smoke capture, a
-4000-record arbitrary-table loopback capture, a live table re-commit during a
-6000-record stream, and an 8000-record capture of all 13 discovered `cbc-rig`
-sources, all with zero UDP packet loss. During the run, `tick_timeouts`,
-`adc_errors` and `records_dropped` did not increase, but `overruns` increased
-by 1295 and `loop_time_last` remained around 307–353 µs at the reported 8 kHz
-sample rate. Treat the functional capture evidence as valid, but investigate
-the timing counters with the debug log and GP14 timing pin before claiming
-real-time timing margin from this run.
+The detailed sequence of failed async-loop mitigations, diagnostic variants,
+and the final SRAM/latch resolution is historical evidence rather than current
+bring-up guidance; it is retained in `docs/overrun_handoff.md`.
 
-Follow-up overrun investigation on 2026-07-15 found that the steady idle
-core-1 loop is not intrinsically over budget: with only the debug probe
-attached after a fresh flash, the status log reported normal tick bodies of
-approximately 45–50 µs and a fixed startup-only overrun count. Sequential host
-control polling and UDP capture reproduced the overrun growth, and temporary
-stage instrumentation showed the slow ticks spread across ADC read, compute,
-actuation and record work rather than a command-queue backlog. The supported
-root cause is contention from core-0 W5500/TCP/UDP work against core-1
-real-time execution through shared RP2350 resources, most likely XIP flash,
-AHB/peripheral-bus and DMA/interconnect pressure while the hot RT path runs
-from flash and performs blocking SPI1 ADC/DAC transfers. Treat `overruns` and
-`clock_jitter` growth during host traffic as a real timing-isolation problem,
-not a UDP-loss problem.
-
-A remote A/B matrix then flashed diagnostic variants one at a time, always
-using a single host client. Disabling the 1 Hz status log did not help.
-Disabling the UDP streamer reduced idle noise but TCP polling still produced
-roughly 100 overruns/s. Skipping ADC reads, DAC writes, or record enqueue
-reduced the absolute loop cost but did not remove host-traffic-induced
-overruns. Running at 4 kHz reduced, but did not eliminate, the symptom.
-Reducing the W5500 SPI clock from 40 MHz to 10 MHz reduced capture-induced
-overruns but did not materially change TCP polling. These results make an
-individual ADC, DAC, record-ring, defmt or UDP-drain bug unlikely. The next
-useful firmware intervention was to reduce shared flash/interconnect pressure
-by moving the core-1 hot path into SRAM.
-
-That SRAM diagnostic was run remotely on 2026-07-15. It moved the synchronous
-RT tick body plus the hot board, ADC, DAC, generator, table and controller
-helpers into `.data.ram_func`, then repeated the same idle, TCP-poll and UDP
-capture measurements. It did not improve the host-traffic failure mode: idle
-remained low at approximately 4.7 overruns/s, TCP polling rose to
-approximately 137 overruns/s, and a 1000-record `adc0,out` capture produced
-approximately 515 overruns/s with zero UDP packet loss, no new
-`records_dropped`, no `adc_errors` and no `tick_timeouts`. This makes XIP
-instruction fetch in the core-1 tick body unlikely to be the dominant cause.
-The remaining likely mechanisms are W5500/SPI0 DMA or interrupt burst pressure
-against core-1 timing, shared bus/interconnect effects during network traffic,
-or delayed servicing of the BUSY-edge wait rather than pure RT-loop compute
-cost.
-
-With normal firmware restored, a decimation sweep of 1000-record `adc0,out`
-captures showed a bandwidth dependence but not a full mitigation: decimation
-1 produced approximately 458 overruns/s, decimation 2 approximately 346
-overruns/s, decimation 4 approximately 275 overruns/s, decimation 8
-approximately 243 overruns/s and decimation 16 approximately 228 overruns/s.
-All captures delivered 1000 records with zero UDP packet loss and no new
-`records_dropped`, `adc_errors` or `tick_timeouts`. Decimation is therefore a
-useful operational reduction for heavier streams, but it does not solve the
-underlying isolation issue.
 
 ## Resource audit
 
 Release ELF allocated-section totals after protocol v2 hardening were
 approximately 130–144 KB flash and 130 KB RAM for wired experiments.
-`fw-sig-gen-w`, including CYW43439 blobs, used approximately 404 KB flash and
+`fw-pico2w-rig`, including CYW43439 blobs, used approximately 404 KB flash and
 124 KB RAM. These fit the 2 MB flash and 520 KB SRAM design envelope, but do
 not establish timing, wired throughput or RF performance.
 

@@ -34,7 +34,7 @@ interface discovers their parameters and stream sources.
 |---|---|---|
 | `fw-cbc-rig` | W5500/W6100-EVB-Pico2, AD7609, AD5064 and optional optoNCDT | Core path verified on W5500; W6100 software verified |
 | `fw-whirl-rig` | W5500/W6100-EVB-Pico2, dual RMB20 SSI and optical revolution pulse | Software verified; hardware verification pending |
-| `fw-sig-gen-w` | Pico 2W and AD5064 over Wi-Fi | Software verified |
+| `fw-pico2w-rig` | Pico 2W and AD5064 over Wi-Fi | Software verified |
 
 Here, software verified means that portable logic passes host tests and the
 complete firmware target builds; it is not a claim about the physical path.

@@ -4,7 +4,7 @@ HELIC-DAQ is a real-time control and data acquisition platform for laboratory
 control, signal generation and instrumentation. `cbc-rig` targets
 control-based continuation using an AD7609 ADC and AD5064 DAC. Wired
 experiments support the W5500-EVB-Pico2 and W6100-EVB-Pico2. `whirl-rig`
-samples two RMB20 SSI encoders and an optical revolution pulse. `sig-gen-w`
+samples two RMB20 SSI encoders and an optical revolution pulse. `pico2w-rig`
 runs an AD5064 signal generator with optional optoNCDT laser logging on a
 Raspberry Pi Pico 2W over Wi-Fi.
 
@@ -15,7 +15,7 @@ Raspberry Pi Pico 2W over Wi-Fi.
 - In `whirl-rig`, samples pitch and yaw simultaneously at **2 kHz** using one
   PIO state machine and estimates rotor speed from a hardware-timed optical
   pulse period.
-- In `sig-gen-w`, updates an AD5064 output at a hardware-timed **8 kHz** while
+- In `pico2w-rig`, updates an AD5064 output at a hardware-timed **8 kHz** while
   Wi-Fi control, streaming and optional laser logging run on the other core.
 - Runs a **real-time control loop** every sample: measurements → controller →
   actuation where output hardware is fitted. The default builds select
@@ -52,21 +52,22 @@ header, plus `cargo install probe-rs-tools`):
 cd firmware
 cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
 cargo run --release -p fw-whirl-rig # Dual SSI encoders and revolution pulse
-cargo run --release -p fw-sig-gen-w # Pico 2W Wi-Fi signal generator
+HELIC_WIFI_SSID=lab HELIC_WIFI_PASSWORD=secret \
+  cargo run --release -p fw-pico2w-rig # Pico 2W Wi-Fi signal generator
 ```
 
 Wired packages target the W5500-EVB-Pico2 by default. Select the pin-compatible
 W6100-EVB-Pico2 explicitly:
 
 ```sh
-cargo run --release -p fw-cbc-rig --no-default-features --features board-w6100,rt-sync
+cargo run --release -p fw-cbc-rig --no-default-features --features board-w6100
 ```
 
-For `cbc-rig` and `whirl-rig`, retain their synchronous SRAM real-time path
-when disabling default features:
+The synchronous SRAM real-time path is mandatory and is retained when default
+network features are disabled:
 
 ```sh
-cargo run --release -p fw-whirl-rig --no-default-features --features board-w6100,rt-sync
+cargo run --release -p fw-whirl-rig --no-default-features --features board-w6100
 ```
 
 The log shows a boot banner, network bring-up, and a once-a-second status
@@ -82,7 +83,7 @@ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf 
 picotool load helic-daq.uf2 && picotool reboot
 ```
 
-Add `--no-default-features --features board-w6100,rt-sync` to the CBC or whirl
+Add `--no-default-features --features board-w6100` to the CBC or whirl
 build command for a W6100 image. The resulting executable has the same
 filename, so convert or copy it before building the other board variant.
 
@@ -114,9 +115,11 @@ are selected there too. Discovery uses local UDP broadcasts; on Wi-Fi, disable
 access-point client isolation if `find` sees nothing but direct connections
 still work.
 
-For `sig-gen-w`, set `WIFI_SSID` and `WIFI_PASSWORD` in its `config.rs`
-before flashing. Credentials are compiled into the image and the device joins
-as a station, retrying until the access point is available. DHCP is the
+For `pico2w-rig`, supply `HELIC_WIFI_SSID` and `HELIC_WIFI_PASSWORD` in the
+build environment as shown above. They are compiled into the image without a
+tracked source edit; a firmware built without them stops during network setup
+with a clear panic instead of attempting placeholder credentials. The device
+joins as a station and retries until the access point is available. DHCP is the
 default and `helic-daq find` reports the assigned address. The Pico 2W LED is
 driven through the CYW43439, not GP25. Use wired Ethernet for sustained
 full-rate multi-source streaming; Wi-Fi is intended for control, signal
@@ -127,7 +130,7 @@ RMB20SC12BC96 encoders use 12-bit natural-binary SSI at 1 MHz and share one
 clock, so PIO samples both data inputs on the same instruction. The optical
 input exposes `rev_period`, EWMA `rpm`, `rev_pulse` and `rpm_valid`. The
 estimate uses a 250 ms time constant and becomes invalid after 100 ms without
-an accepted pulse. Its default `rt-sync` build polls the hardware PWM-wrap
+an accepted pulse. Its mandatory real-time path polls the hardware PWM-wrap
 latch and accesses both PIO FIFOs from SRAM without an executor on core 1.
 `ssi_errors`, `pulse_count`, `pulse_glitches` and `pulse_errors` provide
 transport diagnostics.

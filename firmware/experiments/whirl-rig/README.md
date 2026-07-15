@@ -14,7 +14,7 @@ pin-compatible W6100-EVB-Pico2 through the `board-w6100` feature.
   measures rising-edge intervals with 1 µs resolution.
 - W5500 or W6100 Ethernet on SPI0, plus the GP14 tick-timing output.
 
-The default `rt-sync` real-time loop runs synchronously from the raw PWM-wrap
+The mandatory real-time loop runs synchronously from the raw PWM-wrap
 latch at 2 kHz, with no Embassy executor on core 1. The loop and its PIO FIFO,
 SSI decoding and RPM-estimator path execute from SRAM. SSI acquisition is
 pipelined with fixed one-sample latency. The raw optical period and a 250 ms
@@ -29,3 +29,7 @@ Build with `cargo build --release -p fw-whirl-rig` from `firmware/`. General
 workflows are in the [user guide](../../../docs/user_guide.md), and extension
 rules are in the [developer guide](../../../docs/developer_guide.md). Consult
 [notes.md](../../../notes.md) before hardware use.
+
+`src/board.rs` is only the pin and ownership map. `src/rig.rs` contains PIO
+assembly and measurement semantics, while `src/telemetry.rs` declares the
+latest-value and diagnostic atomics exposed to the host.
