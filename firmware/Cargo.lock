@@ -931,7 +931,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fw-sig-gen-w"
+name = "fw-pico2w-rig"
 version = "0.1.0"
 dependencies = [
  "cortex-m",

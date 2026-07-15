@@ -28,7 +28,7 @@ credentials.
 [`src/board.rs`](src/board.rs) contains the Pico 2W resource assignment and
 `Rig` implementation.
 
-Build with `cargo build --release -p fw-sig-gen-w` from `firmware/`. Use the
+Build with `cargo build --release -p fw-pico2w-rig` from `firmware/`. Use the
 wired CBC or whirl rigs for sustained full-rate multi-source streaming; see
 the [user guide](../../../docs/user_guide.md) and
 [developer guide](../../../docs/developer_guide.md) for details.

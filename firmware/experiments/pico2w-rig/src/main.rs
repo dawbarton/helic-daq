@@ -124,13 +124,14 @@ async fn core0_main(
 ) {
     // Radio initialisation joins the access point and returns the same network
     // stack abstraction used by wired experiments, plus LED control and MAC.
+    let (ssid, password) = config::wifi_credentials();
     let (stack, control, mac) = net::cyw43::init(
         spawner,
         wifi,
         Irqs,
         Irqs,
-        config::WIFI_SSID,
-        config::WIFI_PASSWORD,
+        ssid,
+        password,
         config::NET_CONFIG,
     )
     .await;

@@ -13,4 +13,6 @@ fn main() {
     println!("cargo:rustc-link-search={}", out.display());
     // Re-run only if the checked-in memory map changes.
     println!("cargo:rerun-if-changed=memory.x");
+    println!("cargo:rerun-if-env-changed=HELIC_WIFI_SSID");
+    println!("cargo:rerun-if-env-changed=HELIC_WIFI_PASSWORD");
 }

@@ -1,5 +1,5 @@
 [package]
-name = "fw-sig-gen-w"
+name = "fw-pico2w-rig"
 description = "HELIC-DAQ firmware for wireless signal generation and laser logging"
 version.workspace = true
 edition.workspace = true

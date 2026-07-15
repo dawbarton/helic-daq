@@ -25,7 +25,7 @@ HOT_SYMBOLS = (
 REQUIRED_SYMBOLS = {
     "fw-cbc-rig": ("run_hot_loop", "transfer_in_place"),
     "fw-whirl-rig": ("run_hot_loop",),
-    "fw-sig-gen-w": ("run_hot_loop", "transfer_in_place"),
+    "fw-pico2w-rig": ("run_hot_loop", "transfer_in_place"),
 }
 
 
@@ -84,7 +84,7 @@ def main() -> int:
             print(error)
         return 1
 
-    print("real-time layout check passed for cbc-rig, whirl-rig, and sig-gen-w")
+    print("real-time layout check passed for cbc-rig, whirl-rig, and pico2w-rig")
     return 0
 
 
