@@ -196,10 +196,32 @@ overruns. Running at 4 kHz reduced, but did not eliminate, the symptom.
 Reducing the W5500 SPI clock from 40 MHz to 10 MHz reduced capture-induced
 overruns but did not materially change TCP polling. These results make an
 individual ADC, DAC, record-ring, defmt or UDP-drain bug unlikely. The next
-useful firmware intervention is to reduce shared flash/interconnect pressure,
-with an SRAM-resident core-1 hot path as the leading candidate. A secondary
-network-side intervention is to reduce W5500/SPI0 burst pressure, but that
-alone is not expected to solve TCP-control-induced jitter.
+useful firmware intervention was to reduce shared flash/interconnect pressure
+by moving the core-1 hot path into SRAM.
+
+That SRAM diagnostic was run remotely on 2026-07-15. It moved the synchronous
+RT tick body plus the hot board, ADC, DAC, generator, table and controller
+helpers into `.data.ram_func`, then repeated the same idle, TCP-poll and UDP
+capture measurements. It did not improve the host-traffic failure mode: idle
+remained low at approximately 4.7 overruns/s, TCP polling rose to
+approximately 137 overruns/s, and a 1000-record `adc0,out` capture produced
+approximately 515 overruns/s with zero UDP packet loss, no new
+`records_dropped`, no `adc_errors` and no `tick_timeouts`. This makes XIP
+instruction fetch in the core-1 tick body unlikely to be the dominant cause.
+The remaining likely mechanisms are W5500/SPI0 DMA or interrupt burst pressure
+against core-1 timing, shared bus/interconnect effects during network traffic,
+or delayed servicing of the BUSY-edge wait rather than pure RT-loop compute
+cost.
+
+With normal firmware restored, a decimation sweep of 1000-record `adc0,out`
+captures showed a bandwidth dependence but not a full mitigation: decimation
+1 produced approximately 458 overruns/s, decimation 2 approximately 346
+overruns/s, decimation 4 approximately 275 overruns/s, decimation 8
+approximately 243 overruns/s and decimation 16 approximately 228 overruns/s.
+All captures delivered 1000 records with zero UDP packet loss and no new
+`records_dropped`, `adc_errors` or `tick_timeouts`. Decimation is therefore a
+useful operational reduction for heavier streams, but it does not solve the
+underlying isolation issue.
 
 ## Resource audit
 
@@ -215,9 +237,9 @@ Prioritise tests that move a complete path from software-only to physical
 evidence:
 
 1. optoNCDT binary receive with the fitted pull-up;
-2. reduce core-0/core-1 shared-resource contention in the 8 kHz path, for
-   example by moving the hot RT loop, ADC/DAC transfers and DSP helpers into
-   SRAM and rechecking GP14 under control and streaming traffic;
+2. reduce core-0/core-1 shared-resource contention in the 8 kHz path, focusing
+   next on W5500/SPI0 burst size, DMA and interrupt effects; the SRAM hot-path
+   diagnostic did not materially improve TCP or streaming overruns;
 3. whirl-rig shared-clock SSI, simultaneous pitch/yaw capture and optical
    period calibration;
 4. Pico 2W association, discovery and decimated streaming;
