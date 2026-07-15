@@ -15,8 +15,16 @@ rtc analogue cape:
 - hardware sample-rate presets at 1, 2, 4 and 8 kHz;
 - scalar and complete 33-element Fourier parameter round trips, read-only
   rejection and sample-boundary application;
+- arbitrary table playback and atomic re-commit through the DAC-to-ADC
+  loopback path. A 128-sample positive waveform streamed with zero UDP packet
+  loss, `table == out`, and ADC0 fit residual of 3.3 mV RMS after gain/offset
+  fit. A live re-commit from 0.45 V to 1.65 V during a 6000-record stream
+  produced only the two expected levels and zero UDP packet loss;
 - phase accumulator, Fourier generator and streaming at 8 kHz using a
   commanded 100 Hz sine;
+- finite streaming of all 13 currently discovered `cbc-rig` sources at 8 kHz
+  for 8000 records with zero UDP packet loss and no increase in
+  `records_dropped`;
 - closed-loop PID on ADC0 with live gain tuning. A 2 V to 3 V step settled to
   2% in approximately 39 ms in the test loopback;
 - hardware protocol rejection of `StreamSetup` while a stream is active with
@@ -33,7 +41,7 @@ intentionally matches it.
 
 - An optoNCDT 1420 producing real binary measurements. Only disconnected-line
   behaviour has been checked.
-- Arbitrary table playback, atomic re-commit and long phase-locked operation.
+- Long phase-locked arbitrary table operation.
 - `fw-sig-gen`, `fw-pwm-rig`, `fw-whirl-rig` and `fw-sig-gen-w`. They build
   with the firmware workspace and their portable logic has host tests, but
   none has been exercised as a complete physical experiment.
@@ -154,6 +162,17 @@ Current host libraries send a small UDP primer before `StreamStart`, so
 stateful firewall rules that accept established return traffic may no longer
 need a persistent explicit UDP 2351 allow rule.
 
+After that host fix, the Codex environment could again receive UDP 2351. A
+2026-07-15 retry completed a 1000-record `adc0,out` smoke capture, a
+4000-record arbitrary-table loopback capture, a live table re-commit during a
+6000-record stream, and an 8000-record capture of all 13 discovered `cbc-rig`
+sources, all with zero UDP packet loss. During the run, `tick_timeouts`,
+`adc_errors` and `records_dropped` did not increase, but `overruns` increased
+by 1295 and `loop_time_last` remained around 307–353 µs at the reported 8 kHz
+sample rate. Treat the functional capture evidence as valid, but investigate
+the timing counters with the debug log and GP14 timing pin before claiming
+real-time timing margin from this run.
+
 ## Resource audit
 
 Release ELF allocated-section totals after protocol v2 hardening were
@@ -168,7 +187,8 @@ Prioritise tests that move a complete path from software-only to physical
 evidence:
 
 1. optoNCDT binary receive with the fitted pull-up;
-2. arbitrary table playback and atomic recommit on a scope;
+2. long phase-locked arbitrary table operation and timing-counter diagnosis
+   while watching GP14;
 3. whirl-rig shared-clock SSI, simultaneous pitch/yaw capture and optical
    period calibration;
 4. Pico 2W association, discovery and decimated streaming;
