@@ -65,6 +65,7 @@ impl WaveTable {
     /// Linear periodic interpolation using exact fixed-point index
     /// arithmetic. The last knot interpolates back to the first.
     #[inline]
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn evaluate(&self, theta: u32) -> f32 {
         debug_assert!(self.len >= 2);
         let len = self.len();
@@ -174,6 +175,7 @@ impl TablePlayer {
     }
 
     #[inline]
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn step(&mut self, table: &WaveTable, master_phase: u32, master_start: bool) -> f32 {
         if table.len() < 2 {
             return 0.0;

@@ -51,6 +51,7 @@ VARIANTS = (
     Variant("skip_adc", ("diag-skip-adc",)),
     Variant("skip_dac", ("diag-skip-dac",)),
     Variant("skip_record_enqueue", ("diag-skip-record-enqueue",), capture=False),
+    Variant("rt_sram", ("diag-rt-sram",)),
     Variant("wiznet_10mhz", ("diag-wiznet-10mhz",)),
 )
 

@@ -17,6 +17,7 @@ diag-sample-4k = []
 diag-skip-adc = []
 diag-skip-dac = []
 diag-skip-record-enqueue = ["helic-fw-common/diag-skip-record-enqueue"]
+diag-rt-sram = ["helic-fw-common/diag-rt-sram"]
 diag-wiznet-10mhz = []
 
 [dependencies]

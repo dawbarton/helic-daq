@@ -223,6 +223,7 @@ impl Rig for RtAnalog {
         self.convst_pwm = Some(self.start_convst_pwm(divider, top));
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn measure(&mut self, values: &mut [f32]) {
         // This method is on the bounded RT path. It performs no allocation and
         // uses f32 so arithmetic is accelerated by the Cortex-M33 FPU.
@@ -241,6 +242,7 @@ impl Rig for RtAnalog {
         values[8] = f32::from_bits(LASER_VALUE.load(Ordering::Relaxed));
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn actuate(&mut self, out: f32) {
         // The driver clamps or maps according to this channel's declared
         // polarity. DAC_POLARITY must match the fitted output stage.
@@ -250,10 +252,12 @@ impl Rig for RtAnalog {
         let _ = self.dac.write_volts(self.output_channel, out);
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn tick_start(&mut self) {
         self.tick_pin.set_high();
     }
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn tick_end(&mut self) {
         self.tick_pin.set_low();
     }

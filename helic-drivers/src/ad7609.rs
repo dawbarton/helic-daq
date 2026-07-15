@@ -84,6 +84,7 @@ impl Oversampling {
 
 /// Unpack a 144-bit read (MSB first, channel 1 first) into 8 sign-extended
 /// 18-bit values. Pure function, unit-tested on the host.
+#[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
 pub fn decode_frame(raw: &[u8; 18]) -> [i32; CHANNELS] {
     let mut out = [0i32; CHANNELS];
     for (ch, v) in out.iter_mut().enumerate() {
@@ -170,6 +171,7 @@ where
 {
     type Error = E;
 
+    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn read_frame(&mut self) -> Result<[i32; CHANNELS], E> {
         let mut raw = [0u8; 18];
         self.spi.read(&mut raw)?;

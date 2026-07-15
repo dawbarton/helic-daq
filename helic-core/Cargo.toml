@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+diag-rt-sram = []
+
 [dependencies]
 libm = "0.2.16"
 

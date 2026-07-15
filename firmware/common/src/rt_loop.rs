@@ -9,7 +9,7 @@ use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
 use helic_core::phase::PhaseAccumulator;
-use helic_core::table::{TableMode, TablePlayer};
+use helic_core::table::{TableMode, TablePlayer, WaveTable};
 use static_cell::StaticCell;
 
 use crate::rig::{source_count, Rig, TickSource, MAX_SOURCES};
@@ -58,6 +58,106 @@ pub static TICKS: AtomicU32 = AtomicU32::new(0);
 
 static SIN_LUT: StaticCell<SinLut> = StaticCell::new();
 
+#[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+#[allow(clippy::too_many_arguments)]
+fn run_rt_tick<R: Rig>(
+    rig: &mut R,
+    controller: &mut R::Ctrl,
+    sample_rate: SampleRate,
+    dt: f32,
+    commands: &mut CommandConsumer,
+    records: &mut RecordProducer,
+    lut: &SinLut,
+    phase: &mut PhaseAccumulator,
+    target_coeffs: &mut FourierCoeffs<HARMONICS>,
+    forcing_coeffs: &mut FourierCoeffs<HARMONICS>,
+    table_player: &mut TablePlayer,
+    active_table: &mut &'static WaveTable,
+    index: &mut u32,
+    last_tick: &mut Option<Instant>,
+    n_inputs: usize,
+    n_telemetry: usize,
+    n_sources: usize,
+) {
+    #[cfg(feature = "diag-skip-record-enqueue")]
+    let _ = &mut *records;
+    #[cfg(feature = "diag-skip-record-enqueue")]
+    let _ = n_sources;
+
+    let t0 = Instant::now();
+    rig.tick_start();
+
+    if let Some(last) = *last_tick {
+        let spacing = (t0 - last).as_micros() as u32;
+        let nominal = sample_rate.period_us() as u32;
+        if spacing > nominal {
+            CLOCK_JITTER_US.fetch_max(spacing - nominal, Ordering::Relaxed);
+        }
+    }
+    *last_tick = Some(t0);
+
+    while let Some(command) = commands.dequeue() {
+        match command {
+            RtCommand::SetIncrement(increment) => phase.set_increment(increment),
+            RtCommand::SetTargetCoeffs(coeffs) => *target_coeffs = coeffs,
+            RtCommand::SetForcingCoeffs(coeffs) => *forcing_coeffs = coeffs,
+            RtCommand::SetTableIncrement(increment) => table_player.set_increment(increment),
+            RtCommand::SetTableGain(gain) => table_player.set_gain(gain),
+            RtCommand::SetTableMode(mode) => table_player.set_mode(mode),
+            RtCommand::SetTableMultiplier(multiplier) => table_player.set_multiplier(multiplier),
+            RtCommand::SetTablePhase(offset) => table_player.set_phase_offset(offset),
+            RtCommand::TriggerTable => table_player.trigger(),
+            RtCommand::UseTable(buffer) => *active_table = table::activate(buffer),
+            RtCommand::ResetController => controller.reset(),
+            RtCommand::SetCtrlParam(id, value) => controller.set_param(id, value),
+            RtCommand::SetRigParam(id, value) => rig.set_param(id, value),
+        }
+    }
+
+    let mut values = [0.0; MAX_SOURCES];
+    rig.measure(&mut values[..n_inputs]);
+    let (theta, period_start) = phase.step();
+    let target = target_coeffs.evaluate(lut, theta);
+    let forcing = forcing_coeffs.evaluate(lut, theta);
+    let controller_out = controller.tick(&values[..n_inputs], target, dt);
+    let table_out = table_player.step(active_table, theta, period_start);
+    let out = controller_out + forcing + table_out;
+    rig.actuate(out);
+
+    controller.telemetry(&mut values[n_inputs..n_inputs + n_telemetry]);
+    let generated = n_inputs + n_telemetry;
+    values[generated] = target;
+    values[generated + 1] = forcing;
+    values[generated + 2] = table_out;
+    values[generated + 3] = out;
+    #[cfg(feature = "diag-skip-record-enqueue")]
+    let _ = &values;
+
+    #[cfg(not(feature = "diag-skip-record-enqueue"))]
+    {
+        if records
+            .enqueue(Record {
+                index: *index,
+                n: n_sources as u8,
+                values,
+            })
+            .is_err()
+        {
+            RECORDS_DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    *index = (*index).wrapping_add(1);
+    rig.tick_end();
+
+    let elapsed = t0.elapsed().as_micros() as u32;
+    LOOP_TIME_LAST_US.store(elapsed, Ordering::Relaxed);
+    LOOP_TIME_MAX_US.fetch_max(elapsed, Ordering::Relaxed);
+    if elapsed > sample_rate.period_us() as u32 {
+        OVERRUNS.fetch_add(1, Ordering::Relaxed);
+    }
+    TICKS.fetch_add(1, Ordering::Relaxed);
+}
+
 pub async fn run_rt_loop<R: Rig>(
     mut rig: R,
     mut tick: R::Tick,
@@ -66,9 +166,6 @@ pub async fn run_rt_loop<R: Rig>(
     mut commands: CommandConsumer,
     mut records: RecordProducer,
 ) -> ! {
-    #[cfg(feature = "diag-skip-record-enqueue")]
-    let _ = &mut records;
-
     let n_inputs = R::INPUTS.len();
     let n_telemetry = R::Ctrl::TELEMETRY.len();
     let n_sources = source_count::<R>();
@@ -94,80 +191,25 @@ pub async fn run_rt_loop<R: Rig>(
 
     loop {
         tick.wait().await;
-        let t0 = Instant::now();
-        rig.tick_start();
-
-        if let Some(last) = last_tick {
-            let spacing = (t0 - last).as_micros() as u32;
-            let nominal = sample_rate.period_us() as u32;
-            if spacing > nominal {
-                CLOCK_JITTER_US.fetch_max(spacing - nominal, Ordering::Relaxed);
-            }
-        }
-        last_tick = Some(t0);
-
-        while let Some(command) = commands.dequeue() {
-            match command {
-                RtCommand::SetIncrement(increment) => phase.set_increment(increment),
-                RtCommand::SetTargetCoeffs(coeffs) => target_coeffs = coeffs,
-                RtCommand::SetForcingCoeffs(coeffs) => forcing_coeffs = coeffs,
-                RtCommand::SetTableIncrement(increment) => table_player.set_increment(increment),
-                RtCommand::SetTableGain(gain) => table_player.set_gain(gain),
-                RtCommand::SetTableMode(mode) => table_player.set_mode(mode),
-                RtCommand::SetTableMultiplier(multiplier) => {
-                    table_player.set_multiplier(multiplier)
-                }
-                RtCommand::SetTablePhase(offset) => table_player.set_phase_offset(offset),
-                RtCommand::TriggerTable => table_player.trigger(),
-                RtCommand::UseTable(buffer) => active_table = table::activate(buffer),
-                RtCommand::ResetController => controller.reset(),
-                RtCommand::SetCtrlParam(id, value) => controller.set_param(id, value),
-                RtCommand::SetRigParam(id, value) => rig.set_param(id, value),
-            }
-        }
-
-        let mut values = [0.0; MAX_SOURCES];
-        rig.measure(&mut values[..n_inputs]);
-        let (theta, period_start) = phase.step();
-        let target = target_coeffs.evaluate(lut, theta);
-        let forcing = forcing_coeffs.evaluate(lut, theta);
-        let controller_out = controller.tick(&values[..n_inputs], target, dt);
-        let table_out = table_player.step(active_table, theta, period_start);
-        let out = controller_out + forcing + table_out;
-        rig.actuate(out);
-
-        controller.telemetry(&mut values[n_inputs..n_inputs + n_telemetry]);
-        let generated = n_inputs + n_telemetry;
-        values[generated] = target;
-        values[generated + 1] = forcing;
-        values[generated + 2] = table_out;
-        values[generated + 3] = out;
-        #[cfg(feature = "diag-skip-record-enqueue")]
-        let _ = &values;
-
-        #[cfg(not(feature = "diag-skip-record-enqueue"))]
-        {
-            if records
-                .enqueue(Record {
-                    index,
-                    n: n_sources as u8,
-                    values,
-                })
-                .is_err()
-            {
-                RECORDS_DROPPED.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-        index = index.wrapping_add(1);
-        rig.tick_end();
-
-        let elapsed = t0.elapsed().as_micros() as u32;
-        LOOP_TIME_LAST_US.store(elapsed, Ordering::Relaxed);
-        LOOP_TIME_MAX_US.fetch_max(elapsed, Ordering::Relaxed);
-        if elapsed > sample_rate.period_us() as u32 {
-            OVERRUNS.fetch_add(1, Ordering::Relaxed);
-        }
-        TICKS.fetch_add(1, Ordering::Relaxed);
+        run_rt_tick::<R>(
+            &mut rig,
+            &mut controller,
+            sample_rate,
+            dt,
+            &mut commands,
+            &mut records,
+            lut,
+            &mut phase,
+            &mut target_coeffs,
+            &mut forcing_coeffs,
+            &mut table_player,
+            &mut active_table,
+            &mut index,
+            &mut last_tick,
+            n_inputs,
+            n_telemetry,
+            n_sources,
+        );
     }
 }
 
