@@ -14,13 +14,18 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
-use helic_core::table::{TableMode, MAX_TABLE_LEN};
+use helic_core::table::TableMode;
 use helic_proto::{ErrorCode, ParamType};
 
 use crate::rig::Rig;
 use crate::rt_loop::{self, CommandProducer, RtCommand};
 use crate::table;
 use crate::{SampleRate, HARMONICS};
+
+mod schema;
+
+pub use schema::BASE_PARAMS;
+use schema::*;
 
 /// Firmware identification string, padded/truncated to 16 chars on the wire.
 pub const FIRMWARE_BANNER: &str = concat!(
@@ -40,6 +45,26 @@ pub struct ParamDef {
     pub ty: ParamType,
     pub count: u16,
     pub writable: bool,
+}
+
+impl ParamDef {
+    const fn read_only(name: &'static str, ty: ParamType, count: u16) -> Self {
+        Self {
+            name,
+            ty,
+            count,
+            writable: false,
+        }
+    }
+
+    const fn writable(name: &'static str, ty: ParamType, count: u16) -> Self {
+        Self {
+            name,
+            ty,
+            count,
+            writable: true,
+        }
+    }
 }
 
 /// One experiment-owned, read-only scalar backed by an atomic word.
@@ -98,226 +123,6 @@ pub trait ParamRegistry {
     }
     fn sample_rate(&self) -> SampleRate;
 }
-
-/// The fixed (platform) part of the registry. Controller parameters are
-/// appended after these, so indices below must match `get`/`set`.
-pub const BASE_PARAMS: &[ParamDef] = &[
-    ParamDef {
-        name: "firmware",
-        ty: ParamType::Char,
-        count: 16,
-        writable: false,
-    },
-    ParamDef {
-        name: "experiment",
-        ty: ParamType::Char,
-        count: 16,
-        writable: false,
-    },
-    ParamDef {
-        name: "sample_freq",
-        ty: ParamType::F32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "ticks",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "loop_time_last",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "loop_time_max",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "clock_jitter",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "overruns",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "tick_timeouts",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "records_dropped",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "freq",
-        ty: ParamType::F32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "target_coeffs",
-        ty: ParamType::F32,
-        count: COEFF_COUNT,
-        writable: true,
-    },
-    ParamDef {
-        name: "forcing_coeffs",
-        ty: ParamType::F32,
-        count: COEFF_COUNT,
-        writable: true,
-    },
-    ParamDef {
-        name: "ctrl_reset",
-        ty: ParamType::U32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "table",
-        ty: ParamType::F32,
-        count: MAX_TABLE_LEN as u16,
-        writable: true,
-    },
-    ParamDef {
-        name: "table_len",
-        ty: ParamType::U16,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "table_freq",
-        ty: ParamType::F32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "table_gain",
-        ty: ParamType::F32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "table_mode",
-        ty: ParamType::U32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "table_mult",
-        ty: ParamType::U32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "table_phase",
-        ty: ParamType::F32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "table_trigger",
-        ty: ParamType::U32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "wake_phase_min",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "wake_phase_max",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "t_measure_max",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "t_actuate_max",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "t_rest_max",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-    ParamDef {
-        name: "diag_reset",
-        ty: ParamType::U32,
-        count: 1,
-        writable: true,
-    },
-    ParamDef {
-        name: "cmd_backlog_max",
-        ty: ParamType::U32,
-        count: 1,
-        writable: false,
-    },
-];
-
-const IDX_FREQ: usize = 10;
-const IDX_TARGET: usize = 11;
-const IDX_FORCING: usize = 12;
-const IDX_CTRL_RESET: usize = 13;
-const IDX_TABLE: usize = 14;
-const IDX_TABLE_LEN: usize = 15;
-const IDX_TABLE_FREQ: usize = 16;
-const IDX_TABLE_GAIN: usize = 17;
-const IDX_TABLE_MODE: usize = 18;
-const IDX_TABLE_MULT: usize = 19;
-const IDX_TABLE_PHASE: usize = 20;
-const IDX_TABLE_TRIGGER: usize = 21;
-const IDX_WAKE_PHASE_MIN: usize = 22;
-const IDX_WAKE_PHASE_MAX: usize = 23;
-const IDX_T_MEASURE_MAX: usize = 24;
-const IDX_T_ACTUATE_MAX: usize = 25;
-const IDX_T_REST_MAX: usize = 26;
-const IDX_DIAG_RESET: usize = 27;
-const IDX_COMMAND_BACKLOG_MAX: usize = 28;
-
-/// Maximum number of controller parameters supported.
-pub const MAX_CTRL_PARAMS: usize = 8;
-pub const MAX_RIG_PARAMS: usize = 8;
-pub const MAX_EXTRA_PARAMS: usize = 8;
-const DISCOVERY_HEADROOM: usize = helic_proto::MAX_PAYLOAD * 3 / 4;
-
-const fn encoded_defs_len(defs: &[ParamDef]) -> usize {
-    let mut total = 0;
-    let mut i = 0;
-    while i < defs.len() {
-        total += defs[i].name.len() + 5;
-        i += 1;
-    }
-    total
-}
-
-const MAX_REGISTRY_ENCODED_LEN: usize = encoded_defs_len(BASE_PARAMS)
-    + (MAX_EXTRA_PARAMS + MAX_RIG_PARAMS + MAX_CTRL_PARAMS)
-        * (helic_proto::payload::MAX_NAME_LEN + 5);
-const _: () = assert!(MAX_REGISTRY_ENCODED_LEN <= helic_proto::MAX_PAYLOAD);
 
 #[derive(Clone, Copy)]
 enum ShadowUpdate {
