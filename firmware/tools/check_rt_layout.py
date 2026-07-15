@@ -20,12 +20,24 @@ HOT_SYMBOLS = (
     "run_hot_loop",
     "run_rt_tick",
     "transfer_in_place",
+    "__aeabi_memcpy4",
+    "__aeabi_memclr4",
 )
 
 REQUIRED_SYMBOLS = {
-    "fw-cbc-rig": ("run_hot_loop", "transfer_in_place"),
-    "fw-whirl-rig": ("run_hot_loop",),
-    "fw-pico2w-rig": ("run_hot_loop", "transfer_in_place"),
+    "fw-cbc-rig": (
+        "run_hot_loop",
+        "transfer_in_place",
+        "__aeabi_memcpy4",
+        "__aeabi_memclr4",
+    ),
+    "fw-whirl-rig": ("run_hot_loop", "__aeabi_memcpy4", "__aeabi_memclr4"),
+    "fw-pico2w-rig": (
+        "run_hot_loop",
+        "transfer_in_place",
+        "__aeabi_memcpy4",
+        "__aeabi_memclr4",
+    ),
 }
 
 

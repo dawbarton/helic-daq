@@ -170,11 +170,12 @@ fn run_rt_tick<R: Rig>(
     }
     *last_tick = Some(t0);
 
-    COMMAND_BACKLOG_MAX.fetch_max(commands.len() as u32, Ordering::Relaxed);
+    let mut commands_applied = 0;
     for _ in 0..COMMANDS_PER_TICK {
         let Some(command) = commands.dequeue() else {
             break;
         };
+        commands_applied += 1;
         match command {
             RtCommand::SetIncrement(increment) => phase.set_increment(increment),
             RtCommand::SetTargetCoeffs(coeffs) => *target_coeffs = coeffs,
@@ -190,6 +191,13 @@ fn run_rt_tick<R: Rig>(
             RtCommand::SetCtrlParam(id, value) => controller.set_param(id, value),
             RtCommand::SetRigParam(id, value) => rig.set_param(id, value),
         }
+    }
+    if commands_applied != 0 {
+        // Avoid an atomic read-modify-write on every quiet tick. On the rare
+        // command tick, applied + remaining reconstructs the queue depth at
+        // the boundary while the fixed loop above still bounds the work.
+        let backlog = commands_applied + commands.len();
+        COMMAND_BACKLOG_MAX.fetch_max(backlog as u32, Ordering::Relaxed);
     }
 
     let mut values = [0.0; MAX_SOURCES];

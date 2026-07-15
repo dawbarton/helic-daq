@@ -13,6 +13,7 @@ pub mod pulse_pio;
 pub mod raw_pio;
 pub mod rig;
 pub mod rt_loop;
+mod rt_mem;
 pub mod ssi_pio;
 pub mod table;
 pub mod time_watchdog;
