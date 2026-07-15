@@ -57,6 +57,17 @@ loss, zero device drops and loop maxima of 41 us and 44 us. After a further
 advanced by 2400146, while overruns, timeouts, record drops and ADC errors all
 remained zero.
 
+Post-refactor verification on 2026-07-15 used release image `b35d4b8`, after
+the layout gate found and the firmware replaced flash-resident compiler EABI
+copy/clear helpers. Five-second idle and TCP-poll phases and an 8000-record
+`adc0,out` capture sustained 8000 ticks/s with zero overruns, timeouts, clock
+jitter, record drops, packet loss or index gaps; wake phase remained exactly
+36 µs and loop maxima were 33–34 µs. A separate 8000-record all-13-source
+capture and a sustained 60000-record `adc0,out` capture had the same zero-loss
+result and 34 µs loop maxima. Finally, 100 complete coefficient replacements
+interleaved with 100 scalar frequency changes produced a 38 µs maximum, zero
+errors and `cmd_backlog_max = 1`. Outputs were returned to zero afterwards.
+
 The default firmware was returned to `PassThrough` after PID testing. The
 current analogue cape is all-unipolar, and the CBC `DAC_POLARITY` array
 intentionally matches it.

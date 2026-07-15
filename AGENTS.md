@@ -41,6 +41,9 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
   stretch flash-resident tick code past the whole sample period (see
   "Real-time isolation" in `docs/developer_guide.md`). Timing uses raw
   `TIMER0` reads; the ADC/DAC transfers use `helic_fw_common::analog_spi`.
+  Fixed-array operations may lower to ARM EABI memory helpers, so keep
+  `rt_mem` and the layout check in place; SRAM annotations on the Rust caller
+  alone do not prove that compiler-generated calls avoid flash.
   After touching the tick path, run the regression checklist in the
   developer guide before calling the change done.
 - Keep the BUSY edge-detect latch continuously armed in `BusyEdgeSpinTick`.

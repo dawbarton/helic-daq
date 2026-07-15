@@ -23,6 +23,11 @@ and fixed; see "Resolution" at the end of this document. In short:
 - A second, unrelated failure was exposed and mitigated: lost embassy-time
   alarms (embassy-rs/embassy#3758 class) could freeze all core-0 timers for
   minutes. `helic_fw_common::time_watchdog` bounds this to 50 ms.
+- A later abstraction refactor exposed another hidden flash edge:
+  compiler-generated `__aeabi_memcpy4`/`__aeabi_memclr4` calls. The current
+  tree supplies SRAM implementations and checks their ELF addresses; keep
+  that guard even though the Rust hot-loop functions themselves are already
+  SRAM-annotated.
 
 The remainder of this document is a historical snapshot of the timing-overrun
 investigation for the

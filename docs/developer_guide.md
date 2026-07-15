@@ -196,6 +196,10 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   The firmware workspace enables the `rt-sram` feature for host-tested DSP and
   driver crates, which cannot use the embedded linker section in desktop
   builds. Timing diagnostics read raw `TIMER0` registers.
+- `rt_mem`: SRAM implementations of the ARM EABI aligned copy and clear
+  helpers. LLVM emits these calls for fixed-array initialisation and moves in
+  otherwise SRAM-resident Rust; allowing the compiler-builtins versions in
+  flash reintroduced 68–75 µs network-dependent maxima during this refactor.
 
 `RawPioInstance` derives PAC FIFO registers from the typed Embassy PIO owner.
 The BUSY latch similarly derives its GPIO number before erasing the typed pin.
@@ -241,11 +245,11 @@ cargo build --release -p fw-cbc-rig -p fw-whirl-rig -p fw-pico2w-rig
 python3 tools/check_rt_layout.py
 ```
 
-The checker requires `run_hot_loop` and the analogue transfer routine at
-`2000xxxx` SRAM addresses and permits the one-time flash-to-SRAM linker veneer.
-`run_rt_tick` may be inlined; if emitted separately, it must also be in SRAM.
-Review newly emitted helper symbols as well: the script is a guardrail, not a
-complete call-graph proof.
+The checker requires `run_hot_loop`, the ARM EABI copy/clear helpers and, where
+used, the analogue transfer routine at `2000xxxx` SRAM addresses. It permits
+one-time flash-to-SRAM linker veneers. `run_rt_tick` may be inlined; if emitted
+separately, it must also be in SRAM. Review newly emitted helper symbols as
+well: the script is a guardrail, not a complete call-graph proof.
 
 **2. Hardware check — production regression** (device + probe attached, one
 sequential client):
@@ -263,7 +267,8 @@ profiles. Acceptance, in **every** CBC phase at 8 kHz:
 - `clock_jitter == 0`;
 - `wake_phase_min == wake_phase_max` (a spread of more than ~2 µs means
   wake-up determinism regressed);
-- `loop_time_max` ≤ ~60 µs (reference build: 43–50 µs);
+- `loop_time_max` ≤ ~60 µs (current reference build: 32–34 µs, or 38 µs
+  while repeatedly replacing complete coefficient arrays);
 - capture `lost_packets == 0` and `capture_dropped == 0`.
 
 `cmd_backlog_max` records host-command bursts. Two commands are applied per
@@ -272,8 +277,19 @@ or a maximum near the queue capacity indicates an undersized control path.
 
 **3. Streaming-heavy check** (when the change touches records, streaming or
 the network): capture all 13 sources for 8000 records and `adc0,out` for
-60000 records; assert `np.diff(index) == 1` throughout and zero loss. The
-reference procedure is in `docs/overrun_handoff.md` ("Resolution").
+60000 records:
+
+```sh
+PYTHONPATH=host-python uv run --with numpy --python 3.12 \
+  python firmware/tools/rt_regression.py --rig cbc \
+  --capture-sources all --capture-samples 8000
+PYTHONPATH=host-python uv run --with numpy --python 3.12 \
+  python firmware/tools/rt_regression.py --rig cbc --no-flash \
+  --capture-samples 60000
+```
+
+The tool asserts contiguous indices and zero loss. The original manual
+procedure and diagnostic evidence remain in `docs/overrun_handoff.md`.
 
 **4. Timer-freeze check** (when the change touches core-0 tasks, timers or
 the network stack): leave the device idle for ≥5 minutes after
@@ -286,7 +302,9 @@ calls, async GPIO/SPI, or anything acquiring a critical section inside the
 tick; new tick-path code left in flash (check 1 catches it); replacing the
 continuously armed edge latch with per-wait re-arming (check 2's
 `ticks_per_s` catches it); removing the `time_watchdog` wiring (check 4
-catches it).
+catches it). Compiler-generated memory calls are just as real as explicit
+Rust calls: do not remove `rt_mem` merely because no source invokes it by
+name.
 
 ### Cross-core rules
 
