@@ -1,6 +1,6 @@
 # Hardware verification status
 
-Last updated 2026-07-14. Read this before a hardware session and update the
+Last updated 2026-07-15. Read this before a hardware session and update the
 verification boundary, failures and fitted-hardware assumptions afterwards.
 
 ## Verified on hardware
@@ -116,6 +116,41 @@ workaround was to issue control commands from the normal environment, receive
 length-prefixed UDP datagrams with `/usr/bin/python3`, then decode them offline
 with `decode_stream_header` and NumPy. Treat a capture timeout with working
 control as a host-firewall symptom before changing firmware.
+
+### daffyduck Linux/Podman host
+
+On `daffyduck`, the original rootless Podman container used for AI-assisted
+bring-up did not expose the USB Ethernet interface directly. The host had
+`enx001cc245a3b4` configured as `192.168.1.10/24` for the HELIC subnet, but
+inside the container only a `pasta` interface on the managed network was
+visible. With the default `fw-cbc-rig` static address restored
+(`192.168.1.235/24`), firmware build and `probe-rs` flashing worked, TCP
+control worked, and unicast discovery to `192.168.1.235` worked from the
+container.
+
+After recreating the container with host networking, the container did see
+`enx001cc245a3b4` and the `192.168.1.0/24` route. TCP control used local
+address `192.168.1.10`, ARP resolved `192.168.1.235` to
+`02:48:4c:00:00:01`, and the firmware log showed finite streams arming and
+completing. However, Python capture on UDP port 2351 still timed out, and
+the Linux UDP receive counters did not increase during the stream attempt.
+Host-side `tcpdump` on `enx001cc245a3b4` confirmed UDP packets arriving from
+`192.168.1.235:2351` to `192.168.1.10:2351`, so the remaining block was the
+host firewall ruleset. The host uses `iptables-nft` rather than `ufw`; its
+`INPUT` chain accepted only selected new UDP traffic before a final
+unconditional drop. Adding an allow rule for inbound UDP 2351 on
+`enx001cc245a3b4` fixed capture:
+
+```sh
+sudo iptables -I INPUT 1 -i enx001cc245a3b4 -p udp --dport 2351 -j ACCEPT
+```
+
+After that rule, a 1000-sample `adc0,out` baseline capture and a 4000-sample
+10 Hz, 1 V sine capture both completed with zero UDP packet loss. With the
+unipolar analogue board, `out` reported ±1 V while `adc0` showed the clipped
+positive half-cycle from approximately 0 to 1 V. If TCP control works but
+capture times out on this machine, first check this firewall rule and verify
+UDP 2351 with `tcpdump`.
 
 ## Resource audit
 
