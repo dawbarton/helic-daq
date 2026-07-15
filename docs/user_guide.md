@@ -34,8 +34,16 @@ signal generator on a Raspberry Pi Pico 2W over Wi-Fi.
 
 ## Putting the firmware on the device
 
-You need the Rust toolchain (`rustup`, stable channel; the repository pins the
-rest) and one of:
+Install [`rustup`](https://rustup.rs/), then open a new terminal and initialise
+the repository's required stable toolchain, components and RP2350 target:
+
+```sh
+cd cbc-daq
+rustup show
+```
+
+The settings in `rust-toolchain.toml` make `rustup` install and select
+everything required. You can then put the firmware on the device using one of:
 
 **With a debug probe** (a Raspberry Pi Debug Probe on the SWD
 header, plus `cargo install probe-rs-tools`):
