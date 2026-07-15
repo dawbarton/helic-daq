@@ -63,8 +63,14 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("table_mult", "I", 1, True, 1),
         SimParam("table_phase", "f", 1, True, 0.0),
         SimParam("table_trigger", "I", 1, True, 0),
-        SimParam("laser", "f", 1, False, 25.0),
+        SimParam("wake_phase_min", "I", 1, False, 0),
+        SimParam("wake_phase_max", "I", 1, False, 0),
+        SimParam("t_measure_max", "I", 1, False, 0),
+        SimParam("t_actuate_max", "I", 1, False, 0),
+        SimParam("t_rest_max", "I", 1, False, 0),
+        SimParam("diag_reset", "I", 1, True, 0),
         SimParam("cmd_backlog_max", "I", 1, False, 0),
+        SimParam("laser", "f", 1, False, 25.0),
         SimParam("rig_laser_range", "f", 1, True, 50.0),
         SimParam("rig_out_channel", "f", 1, True, 0.0),
     ]
@@ -279,6 +285,22 @@ class Simulator:
             ):
                 return self._error(6, msg_type)
             param.value = value
+            if param.name == "diag_reset" and value:
+                for name in (
+                    "loop_time_max",
+                    "clock_jitter",
+                    "overruns",
+                    "tick_timeouts",
+                    "records_dropped",
+                    "wake_phase_min",
+                    "wake_phase_max",
+                    "t_measure_max",
+                    "t_actuate_max",
+                    "t_rest_max",
+                    "cmd_backlog_max",
+                ):
+                    self._by_name[name].value = 0
+                param.value = 0
             if param.name == "table_trigger" and value:
                 self._table_trigger_time = (
                     self._by_name["ticks"].value / self._by_name["sample_freq"].value

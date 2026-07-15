@@ -55,6 +55,24 @@ class TestSimulator(unittest.TestCase):
         self.assertAlmostEqual(self.dev.get("table_freq"), 10.0)
         self.assertEqual(self.dev.get("table_mode"), 1)
 
+    def test_timing_diagnostics_match_firmware_registry(self):
+        names = [param.name for param in self.dev.params]
+        self.assertEqual(
+            names[22:29],
+            [
+                "wake_phase_min",
+                "wake_phase_max",
+                "t_measure_max",
+                "t_actuate_max",
+                "t_rest_max",
+                "diag_reset",
+                "cmd_backlog_max",
+            ],
+        )
+        self.sim._by_name["loop_time_max"].value = 42
+        self.dev.set("diag_reset", 1)
+        self.assertEqual(self.dev.get("loop_time_max", "diag_reset"), [0, 0])
+
     def test_beacon_response(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
             client.settimeout(1.0)
