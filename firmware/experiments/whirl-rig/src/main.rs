@@ -30,9 +30,10 @@ use static_cell::StaticCell;
 
 mod board;
 mod config;
+mod rig;
 mod rt_loop;
 
-use board::WhirlRig;
+use rig::WhirlRig;
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 type Store = ParamStore<config::ActiveController, WhirlRig>;
@@ -193,7 +194,7 @@ fn main() -> ! {
     );
 
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::run(b.sensors, controller, cmd_rx, rec_tx)
+        rt_loop::run(b.rt, controller, cmd_rx, rec_tx)
     });
 
     helic_fw_common::time_watchdog::start();

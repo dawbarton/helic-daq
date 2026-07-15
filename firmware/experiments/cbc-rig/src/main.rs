@@ -39,16 +39,18 @@ use static_cell::StaticCell;
 
 mod board;
 mod config;
+mod rig;
 mod rt_loop;
 
-use board::{LaserParts, RtAnalog};
+use board::LaserParts;
+use rig::CbcRig;
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
-type Store = ParamStore<config::ActiveController, RtAnalog>;
+type Store = ParamStore<config::ActiveController, CbcRig>;
 // This unnamed compile-time assertion fails the build if the chosen rig and
 // controller would overflow the fixed protocol source table.
 const _: () =
-    assert!(helic_fw_common::rig::source_count::<RtAnalog>() <= helic_fw_common::rig::MAX_SOURCES);
+    assert!(helic_fw_common::rig::source_count::<CbcRig>() <= helic_fw_common::rig::MAX_SOURCES);
 
 // Atomics are the only scalar state shared across cores. An AtomicU32 can also
 // carry an f32 losslessly by storing its IEEE-754 bit pattern with to_bits().
@@ -157,7 +159,7 @@ fn main() -> ! {
     // Core 1 runs the loop directly with no executor, so nothing on the core
     // can suspend the tick or pull Embassy scheduling into its hot path.
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::run(b.analog, controller, cmd_rx, rec_tx)
+        rt_loop::run(b.rt, controller, cmd_rx, rec_tx)
     });
 
     // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without it

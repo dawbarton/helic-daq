@@ -5,19 +5,19 @@
 
 use helic_fw_common::rt_loop::{CommandConsumer, RecordProducer};
 
-use crate::board::AnalogParts;
+use crate::board::CbcParts;
 use crate::config;
 
 pub use helic_fw_common::rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
 /// Assemble the hardware after it has moved to core 1, then run forever.
 pub fn run(
-    analog: AnalogParts,
+    parts: CbcParts,
     controller: config::ActiveController,
     commands: CommandConsumer,
     records: RecordProducer,
 ) -> ! {
-    let (rig, tick) = analog.build(config::SAMPLE_RATE);
+    let (rig, tick) = parts.build(config::SAMPLE_RATE);
     helic_fw_common::rt_loop::run_rt_loop(
         rig,
         tick,

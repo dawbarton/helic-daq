@@ -30,15 +30,18 @@ use static_cell::StaticCell;
 
 mod board;
 mod config;
+mod rig;
 mod rt_loop;
 
-use board::{LaserParts, RtAnalog};
+use board::LaserParts;
+use rig::PicoDacRig;
 use rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
 
-type Store = ParamStore<config::ActiveController, RtAnalog>;
+type Store = ParamStore<config::ActiveController, PicoDacRig>;
 // Reject an over-large discovered source table during compilation.
-const _: () =
-    assert!(helic_fw_common::rig::source_count::<RtAnalog>() <= helic_fw_common::rig::MAX_SOURCES);
+const _: () = assert!(
+    helic_fw_common::rig::source_count::<PicoDacRig>() <= helic_fw_common::rig::MAX_SOURCES
+);
 
 pub(crate) static LASER_VALUE: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
@@ -114,7 +117,7 @@ fn main() -> ! {
 
     // `move` gives the RT core exclusive ownership of its hardware and state.
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::run(board.analog, controller, cmd_rx, rec_tx)
+        rt_loop::run(board.rt, controller, cmd_rx, rec_tx)
     });
 
     helic_fw_common::time_watchdog::start();

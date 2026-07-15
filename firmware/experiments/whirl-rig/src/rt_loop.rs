@@ -2,7 +2,7 @@
 
 use helic_fw_common::rt_loop::{CommandConsumer, RecordProducer};
 
-use crate::board::SensorParts;
+use crate::board::WhirlParts;
 use crate::config;
 
 pub use helic_fw_common::rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN};
@@ -10,12 +10,12 @@ pub use helic_fw_common::rt_loop::{Record, RtCommand, COMMAND_QUEUE_LEN, RECORD_
 /// Assemble the sensors on core 1, then own the core with the synchronous
 /// SRAM-resident real-time loop.
 pub fn run(
-    sensors: SensorParts,
+    parts: WhirlParts,
     controller: config::ActiveController,
     commands: CommandConsumer,
     records: RecordProducer,
 ) -> ! {
-    let (rig, tick) = sensors.build(config::SAMPLE_RATE);
+    let (rig, tick) = parts.build(config::SAMPLE_RATE);
     helic_fw_common::rt_loop::run_rt_loop(
         rig,
         tick,
