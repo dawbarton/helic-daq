@@ -173,6 +173,34 @@ sample rate. Treat the functional capture evidence as valid, but investigate
 the timing counters with the debug log and GP14 timing pin before claiming
 real-time timing margin from this run.
 
+Follow-up overrun investigation on 2026-07-15 found that the steady idle
+core-1 loop is not intrinsically over budget: with only the debug probe
+attached after a fresh flash, the status log reported normal tick bodies of
+approximately 45–50 µs and a fixed startup-only overrun count. Sequential host
+control polling and UDP capture reproduced the overrun growth, and temporary
+stage instrumentation showed the slow ticks spread across ADC read, compute,
+actuation and record work rather than a command-queue backlog. The supported
+root cause is contention from core-0 W5500/TCP/UDP work against core-1
+real-time execution through shared RP2350 resources, most likely XIP flash,
+AHB/peripheral-bus and DMA/interconnect pressure while the hot RT path runs
+from flash and performs blocking SPI1 ADC/DAC transfers. Treat `overruns` and
+`clock_jitter` growth during host traffic as a real timing-isolation problem,
+not a UDP-loss problem.
+
+A remote A/B matrix then flashed diagnostic variants one at a time, always
+using a single host client. Disabling the 1 Hz status log did not help.
+Disabling the UDP streamer reduced idle noise but TCP polling still produced
+roughly 100 overruns/s. Skipping ADC reads, DAC writes, or record enqueue
+reduced the absolute loop cost but did not remove host-traffic-induced
+overruns. Running at 4 kHz reduced, but did not eliminate, the symptom.
+Reducing the W5500 SPI clock from 40 MHz to 10 MHz reduced capture-induced
+overruns but did not materially change TCP polling. These results make an
+individual ADC, DAC, record-ring, defmt or UDP-drain bug unlikely. The next
+useful firmware intervention is to reduce shared flash/interconnect pressure,
+with an SRAM-resident core-1 hot path as the leading candidate. A secondary
+network-side intervention is to reduce W5500/SPI0 burst pressure, but that
+alone is not expected to solve TCP-control-induced jitter.
+
 ## Resource audit
 
 Release ELF allocated-section totals after protocol v2 hardening were
@@ -187,8 +215,9 @@ Prioritise tests that move a complete path from software-only to physical
 evidence:
 
 1. optoNCDT binary receive with the fitted pull-up;
-2. long phase-locked arbitrary table operation and timing-counter diagnosis
-   while watching GP14;
+2. reduce core-0/core-1 shared-resource contention in the 8 kHz path, for
+   example by moving the hot RT loop, ADC/DAC transfers and DSP helpers into
+   SRAM and rechecking GP14 under control and streaming traffic;
 3. whirl-rig shared-clock SSI, simultaneous pitch/yaw capture and optical
    period calibration;
 4. Pico 2W association, discovery and decimated streaming;
