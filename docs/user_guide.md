@@ -3,12 +3,10 @@
 HELIC-DAQ is a real-time control and data acquisition platform for laboratory
 control, signal generation and instrumentation. `cbc-rig` targets
 control-based continuation using an AD7609 ADC and AD5064 DAC. Wired
-experiments support the W5500-EVB-Pico2 and W6100-EVB-Pico2. `sig-gen` uses
-the same board and DAC as an arbitrary/function generator with optional
-optoNCDT laser logging, but requires no ADC board. `pwm-rig` replaces
-the DAC with a filtered 10-bit PWM output on GP10. `whirl-rig` samples two
-RMB20 SSI encoders and an optical revolution pulse. `sig-gen-w` runs the
-signal generator on a Raspberry Pi Pico 2W over Wi-Fi.
+experiments support the W5500-EVB-Pico2 and W6100-EVB-Pico2. `whirl-rig`
+samples two RMB20 SSI encoders and an optical revolution pulse. `sig-gen-w`
+runs an AD5064 signal generator with optional optoNCDT laser logging on a
+Raspberry Pi Pico 2W over Wi-Fi.
 
 ## What it does
 
@@ -17,6 +15,8 @@ signal generator on a Raspberry Pi Pico 2W over Wi-Fi.
 - In `whirl-rig`, samples pitch and yaw simultaneously at **2 kHz** using one
   PIO state machine and estimates rotor speed from a hardware-timed optical
   pulse period.
+- In `sig-gen-w`, updates an AD5064 output at a hardware-timed **8 kHz** while
+  Wi-Fi control, streaming and optional laser logging run on the other core.
 - Runs a **real-time control loop** every sample: measurements → controller →
   actuation where output hardware is fitted. The default builds select
   open-loop pass-through; a PID controller is provided and others can be
@@ -51,8 +51,6 @@ header, plus `cargo install probe-rs-tools`):
 ```sh
 cd firmware
 cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
-cargo run --release -p fw-sig-gen # ADC-free signal generator
-cargo run --release -p fw-pwm-rig # PWM output on GP10
 cargo run --release -p fw-whirl-rig # Dual SSI encoders and revolution pulse
 cargo run --release -p fw-sig-gen-w # Pico 2W Wi-Fi signal generator
 ```
@@ -100,8 +98,7 @@ helic-daq find
 ```
 
 The wired experiments use static addresses by default: `192.168.1.235/24` for
-`cbc-rig`, `192.168.1.236/24` for `sig-gen`, and `192.168.1.237/24` for
-`pwm-rig`. `whirl-rig` uses `192.168.1.238/24`.
+`cbc-rig` and `192.168.1.238/24` for `whirl-rig`.
 Connect it to your machine directly or via a switch and give your machine an
 address on the same subnet, for example `192.168.1.10/24`. After installing
 the host package below, check the TCP control service:
@@ -283,13 +280,6 @@ free-running mode for a table slower than the master.
 The uploaded table is staged in chunks and switched atomically at a sample
 boundary. Its contribution is available as the discovered `table` stream
 source and is added to controller output plus Fourier forcing.
-
-In `pwm-rig`, GP10 carries a 0–3.3 V duty-cycle representation with a
-roughly 146 kHz carrier and 10-bit resolution. An external RC or active
-low-pass filter is required; HELIC-DAQ does not smooth the carrier in
-software. Negative commands clamp to 0 V unless an external level-shifting
-output stage is added. Increasing PWM resolution lowers carrier frequency in
-direct proportion because `carrier × duty_steps = 150 MHz`.
 
 The `target_coeffs` series is the reference the controller tracks; the
 `forcing_coeffs` series is added directly to the output. With the default

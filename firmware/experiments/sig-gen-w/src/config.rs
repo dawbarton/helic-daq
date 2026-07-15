@@ -1,7 +1,7 @@
 //! Compile-time choices for the Pico 2W signal generator.
 //!
-//! This variant replaces the wired WIZnet transport with the CYW43439 radio.
-//! See the `sig-gen-w` connection instructions in `docs/user_guide.md`.
+//! The CYW43439 radio provides the only network transport for this rig. See
+//! the `sig-gen-w` connection instructions in `docs/user_guide.md`.
 
 use helic_core::controller::PassThrough;
 use helic_fw_common::net::NetConfig;

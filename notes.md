@@ -66,12 +66,13 @@ intentionally matches it.
 - An optoNCDT 1420 producing real binary measurements. Only disconnected-line
   behaviour has been checked.
 - Long phase-locked arbitrary table operation.
-- `fw-sig-gen`, `fw-pwm-rig`, `fw-whirl-rig` and `fw-sig-gen-w`. They build
-  with the firmware workspace and their portable logic has host tests, but
-  none has been exercised as a complete physical experiment. The whirl
-  default now uses the same synchronous SRAM core-1 architecture as CBC,
-  adapted to the raw PWM-wrap latch and PIO FIFOs; this has static ELF and
-  cross-build evidence only, not real SSI, optical-input or timing evidence.
+- `fw-whirl-rig` and `fw-sig-gen-w`. They build with the firmware workspace
+  and their portable logic has host tests, but neither has been exercised as
+  a complete physical experiment. Both default to the synchronous SRAM core-1
+  architecture: whirl adapts it to the raw PWM-wrap latch and PIO FIFOs,
+  while Pico 2W uses the raw latch and SPI1 DAC path. This is static ELF and
+  cross-build evidence only, not real SSI, optical-input, Wi-Fi, DAC or timing
+  evidence.
 - W6100 Ethernet on every wired experiment. The W6100 variants cross-build,
   but no W6100-EVB-Pico2 has been exercised. Verify link, static addressing,
   DHCP, discovery, TCP control and sustained UDP streaming before treating it
@@ -264,13 +265,11 @@ Prioritise tests that move a complete path from software-only to physical
 evidence:
 
 1. optoNCDT binary receive with the fitted pull-up;
-2. reduce core-0/core-1 shared-resource contention in the 8 kHz path, focusing
-   next on W5500/SPI0 burst size, DMA and interrupt effects; the SRAM hot-path
-   diagnostic did not materially improve TCP or streaming overruns;
+2. Pico 2W association, discovery, DAC output and decimated streaming while
+   checking the 8 kHz synchronous tick diagnostics;
 3. whirl-rig shared-clock SSI, simultaneous pitch/yaw capture and optical
    period calibration;
-4. Pico 2W association, discovery and decimated streaming;
-5. all-source W5500 streaming while watching `records_dropped`, UDP sequence
-   gaps, `loop_time_max`, `overruns` and `tick_timeouts`.
-6. W6100 link, static addressing, DHCP, discovery, control and all-source
+4. all-source W5500 streaming while watching `records_dropped`, UDP sequence
+   gaps, `loop_time_max`, `overruns` and `tick_timeouts`;
+5. W6100 link, static addressing, DHCP, discovery, control and all-source
    streaming, including core-0 load with broadcast traffic.

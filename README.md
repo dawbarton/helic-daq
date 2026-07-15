@@ -33,8 +33,6 @@ interface discovers their parameters and stream sources.
 | Firmware package | Board and purpose | Verification |
 |---|---|---|
 | `fw-cbc-rig` | W5500/W6100-EVB-Pico2, AD7609, AD5064 and optional optoNCDT | Core path verified on W5500; W6100 software verified |
-| `fw-sig-gen` | W5500/W6100-EVB-Pico2 and AD5064, with no ADC | Software verified |
-| `fw-pwm-rig` | W5500/W6100-EVB-Pico2 with filtered PWM output | Software verified |
 | `fw-whirl-rig` | W5500/W6100-EVB-Pico2, dual RMB20 SSI and optical revolution pulse | Software verified; hardware verification pending |
 | `fw-sig-gen-w` | Pico 2W and AD5064 over Wi-Fi | Software verified |
 

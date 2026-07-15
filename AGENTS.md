@@ -77,9 +77,9 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
   external 10 kΩ pull-up on GP1; without it, a disconnected sensor can cause
   a UART interrupt storm.
 - The whirl rig uses two RMB20SC12BC96 encoders: 12-bit natural binary SSI at
-  1 MHz with a shared clock. Its dual-SSI, optical-period, ADC-free signal
-  generator, PWM, Pico 2W and arbitrary-waveform paths are not yet
-  hardware-verified; consult `notes.md` before relying on them.
+  1 MHz with a shared clock. Its dual-SSI and optical-period paths, and the
+  Pico 2W Wi-Fi/DAC path, are not yet hardware-verified; consult `notes.md`
+  before relying on them.
 
 ## Working conventions
 

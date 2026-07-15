@@ -1,8 +1,8 @@
 //! HELIC-DAQ Pico 2W signal generator: Wi-Fi, DAC output and laser logging.
 //!
-//! The RT side matches `sig-gen`; core 0 substitutes the CYW43439 transport
-//! and its radio-controlled LED. Network-facing tasks still consume the same
-//! `embassy_net::Stack`. See the transport sections of both project guides.
+//! Core 1 owns the SRAM-resident DAC loop; core 0 owns the CYW43439 transport,
+//! laser receiver and radio-controlled LED. Network-facing tasks consume the
+//! same `embassy_net::Stack` as wired experiments.
 
 // The target has no operating-system standard library or conventional entry.
 #![no_std]
@@ -75,6 +75,7 @@ bind_interrupts!(pub struct Irqs {
     UART0_IRQ => uart::InterruptHandler<UART0>;
     PIO1_IRQ_0 => pio::InterruptHandler<PIO1>;
     PWM_IRQ_WRAP_0 => helic_fw_common::rig::PwmWrapInterruptHandler;
+    TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>,
         embassy_rp::dma::InterruptHandler<DMA_CH1>;
 });
@@ -82,6 +83,7 @@ bind_interrupts!(pub struct Irqs {
 // StaticCell supplies permanent task and queue storage without a heap.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
+#[cfg(not(feature = "rt-sync"))]
 static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
 static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
@@ -114,6 +116,7 @@ fn main() -> ! {
     );
 
     // `move` gives the RT core exclusive ownership of its hardware and state.
+    #[cfg(not(feature = "rt-sync"))]
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         executor1.run(|spawner| {
@@ -125,6 +128,12 @@ fn main() -> ! {
             )))
         });
     });
+    #[cfg(feature = "rt-sync")]
+    spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
+        rt_loop::rt_loop_sync(board.analog, controller, cmd_rx, rec_tx)
+    });
+
+    helic_fw_common::time_watchdog::start();
 
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
