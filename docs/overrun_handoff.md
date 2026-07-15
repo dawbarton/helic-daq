@@ -226,6 +226,11 @@ Run these in order, keeping DAQ access sequential.
 
 ## Useful Commands
 
+Note (post-resolution): `rt-sync` is now in the default feature set, so
+"standard" firmware is plain `cargo run --release -p fw-cbc-rig`. The
+command below now selects the historical async loop (useful only for
+reproducing the baseline measurements).
+
 Restore standard W5500 firmware:
 
 ```sh

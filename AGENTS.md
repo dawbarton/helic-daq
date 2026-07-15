@@ -30,9 +30,29 @@ and current documentation use HELIC-DAQ except where CBC is the experiment.
 - Keep the real-time path bounded: no allocation, blocking cross-core locks or
   `f64`. At 8 kHz, core 1 has 125 µs per tick and the Cortex-M33 only
   accelerates single-precision floating point.
+- Keep the `rt-sync` tick path SRAM-resident and embassy-free. Everything
+  reachable per tick on core 1 must carry
+  `#[unsafe(link_section = ".data.ram_func")]` (or inline into a function
+  that does) and must not call into the embassy executor, `embassy-time`,
+  async GPIO/SPI, `defmt`, or anything taking a critical section: the shared
+  XIP cache and the global cross-core spinlock let core-0 network traffic
+  stretch flash-resident tick code past the whole sample period (see
+  "Real-time isolation" in `docs/developer_guide.md`). Timing uses raw
+  `TIMER0` reads; the ADC/DAC transfers use `helic_fw_common::analog_spi`.
+  After touching the tick path, run the regression checklist in the
+  developer guide before calling the change done.
+- Keep the BUSY edge-detect latch continuously armed in `BusyEdgeSpinTick`.
+  Re-arming per wait (as the async `InputFuture` does) silently loses edges
+  that arrive while a tick body runs; the latch is what makes a late tick
+  catch up instead of skipping a sample.
 - Preserve hardware-timed sampling. ADC experiments use PWM-driven CONVST and
   the BUSY falling edge; ADC-free experiments use a PWM-wrap interrupt. Do not
   replace either with software timing.
+- Keep `helic_fw_common::time_watchdog` bound to `TIMER0_IRQ_1` and started
+  on core 0 in every experiment that uses embassy-time. The embassy-rp time
+  driver can lose its alarm (`docs/embassy_time_alarm_loss.md`); without the
+  watchdog every core-0 timer can freeze until unrelated network traffic
+  arrives.
 - Core 0 and core 1 communicate only through fixed-capacity SPSC queues and
   atomics. Parameter changes and waveform-buffer swaps take effect at sample
   boundaries. Streaming drops and counts records rather than blocking core 1.

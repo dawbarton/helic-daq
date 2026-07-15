@@ -207,7 +207,73 @@ stopped re-arming the shared queue 8000×/s, which had been masking it.
 heartbeat that re-pends `TIMER0_IRQ_0`, so the driver re-checks its queue
 and any lost alarm is recovered within 50 ms. Experiments bind
 `TimeWatchdogHandler` to `TIMER0_IRQ_1` and call `time_watchdog::start()`
-on core 0.
+on core 0. A copy-paste-ready upstream report of the underlying bug lives
+in [embassy_time_alarm_loss.md](embassy_time_alarm_loss.md).
+
+### RT regression checklist
+
+Run this after any change that touches `run_rt_tick`, `run_rt_loop_sync`,
+`BusyEdgeSpinTick`, `analog_spi`, the `Rig` implementation, controllers,
+generators, or the record/command queues — and after dependency bumps of
+embassy or heapless. The failure mode being guarded against is quiet: the
+loop keeps producing valid-looking data while stretching or skipping ticks,
+so "it still streams" proves nothing.
+
+**1. Static check — hot path is in SRAM** (no hardware needed):
+
+```sh
+cd firmware && cargo build --release -p fw-cbc-rig
+nm target/thumbv8m.main-none-eabihf/release/fw-cbc-rig \
+  | grep -E 'run_rt_loop_sync|transfer_in_place|run_rt_tick'
+```
+
+`run_rt_loop_sync` and `transfer_in_place` must have `2000xxxx` (SRAM)
+addresses; a flash-resident `__Thumbv7ABSLongThunk__…run_rt_loop_sync`
+veneer alongside them is normal (it is the one-time call from flash into
+the SRAM loop). `run_rt_tick` should not appear at all (inlined into the
+SRAM loop); if it appears at a `1000xxxx` (flash) address, the tick body
+has fallen out of `.data.ram_func`. New per-tick helpers that show up as
+separate flash symbols need the
+`#[unsafe(link_section = ".data.ram_func")]` attribute (via the
+`diag-rt-sram` feature plumbing for host-tested crates).
+
+**2. Hardware check — the overrun matrix** (device + probe attached, one
+sequential client):
+
+```sh
+cd firmware
+PYTHONPATH=../host-python uv run --with numpy --env-file /dev/null \
+  python tools/overrun_matrix.py --variant rt_sync --idle-seconds 5 --poll-seconds 5
+```
+
+Acceptance, in **every** phase (idle, poll, capture) at 8 kHz:
+
+- `overruns == 0`, `tick_timeouts == 0`, `adc_errors == 0`;
+- no growth of `records_dropped` beyond the documented startup burst;
+- `ticks_per_s` ≈ 8000 (a deficit means BUSY edges are being skipped);
+- `clock_jitter == 0`;
+- `wake_phase_min == wake_phase_max` (a spread of more than ~2 µs means
+  wake-up determinism regressed);
+- `loop_time_max` ≤ ~60 µs (reference build: 43–50 µs);
+- capture `lost_packets == 0` and `capture_dropped == 0`.
+
+**3. Streaming-heavy check** (when the change touches records, streaming or
+the network): capture all 13 sources for 8000 records and `adc0,out` for
+60000 records; assert `np.diff(index) == 1` throughout and zero loss. The
+reference procedure is in `docs/overrun_handoff.md` ("Resolution").
+
+**4. Timer-freeze check** (when the change touches core-0 tasks, timers or
+the network stack): leave the device idle for ≥5 minutes after
+disconnecting, then reconnect and confirm `records_dropped` did not grow —
+growth means the 5 ms drain ticker froze, i.e. the embassy-time alarm was
+lost and the watchdog is not doing its job.
+
+Things that reliably cause regressions: `defmt` logging, `embassy_time`
+calls, async GPIO/SPI, or anything acquiring a critical section inside the
+tick; new tick-path code left in flash (check 1 catches it); replacing the
+continuously armed edge latch with per-wait re-arming (check 2's
+`ticks_per_s` catches it); removing the `time_watchdog` wiring (check 4
+catches it).
 
 ### Cross-core rules
 
