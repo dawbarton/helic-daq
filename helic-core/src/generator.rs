@@ -26,7 +26,7 @@ impl<const K: usize> FourierCoeffs<K> {
     /// Harmonic phases are exact wrapping multiples, so they remain
     /// phase-locked to the fundamental indefinitely.
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn evaluate(&self, lut: &SinLut, phase: u32) -> f32 {
         let mut sum = self.mean;
         for k in 0..K {
@@ -84,7 +84,7 @@ impl<const K: usize> PeriodicGenerator<K> {
 
     /// Advance one sample and evaluate.
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn step(&mut self, lut: &SinLut) -> GenSample {
         let (phase, period_start) = self.phase.step();
         GenSample {

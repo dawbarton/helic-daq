@@ -14,7 +14,7 @@ pub struct SsiFormat {
 
 impl SsiFormat {
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn decode(&self, raw: u32) -> Result<u32, SsiError> {
         if !(1..=32).contains(&self.bits) {
             return Err(SsiError::InvalidFormat);
@@ -41,7 +41,7 @@ impl SsiFormat {
 }
 
 #[inline]
-#[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+#[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
 pub fn deinterleave_pair(raw: u32, bits: u8) -> Result<[u32; 2], SsiError> {
     if !(1..=16).contains(&bits) {
         return Err(SsiError::InvalidFormat);
@@ -66,7 +66,7 @@ pub struct SsiScale {
 
 impl SsiScale {
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn position(&self, counts: u32) -> f32 {
         debug_assert!(self.counts_per_rev > 0);
         (counts % self.counts_per_rev) as f32 / self.counts_per_rev as f32

@@ -17,12 +17,9 @@ use embassy_rp::{pac, Peri, Peripherals};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
-#[cfg(feature = "rt-sync")]
 use helic_fw_common::analog_spi::{transfer_in_place, RawSpiConfig, SioOutPin};
 use helic_fw_common::net::cyw43::WifiParts;
-#[cfg(feature = "rt-sync")]
-use helic_fw_common::rig::PwmWrapSpinTick;
-use helic_fw_common::rig::{PwmWrapTick, Rig};
+use helic_fw_common::rig::{PwmWrapSpinTick, Rig};
 use helic_fw_common::SampleRate;
 
 use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
@@ -30,7 +27,6 @@ use crate::{LASER_RANGE_MM, LASER_VALUE};
 
 /// Voltage reference fitted to the analogue board.
 const DAC_VREF: f32 = 4.096;
-#[cfg(feature = "rt-sync")]
 const DAC_CS_PIN: u8 = 9;
 /// Must match the fitted output stages before hardware use.
 const DAC_POLARITY: [ChannelPolarity; 4] = [
@@ -77,17 +73,12 @@ pub struct RtAnalog {
     dac: Dac,
     tick_pin: Output<'static>,
     output_channel: usize,
-    #[cfg(feature = "rt-sync")]
     dac_raw: RawSpiConfig,
-    #[cfg(feature = "rt-sync")]
     dac_cs_raw: SioOutPin,
     pwm_divider: u32,
 }
 
-#[cfg(feature = "rt-sync")]
 pub type Tick = PwmWrapSpinTick;
-#[cfg(not(feature = "rt-sync"))]
-pub type Tick = PwmWrapTick;
 
 impl AnalogParts {
     /// Consume the peripheral bundle and construct the rig on core 1.
@@ -100,17 +91,12 @@ impl AnalogParts {
             dac: Ad5064::new(spi, DAC_POLARITY, DAC_VREF),
             tick_pin: self.tick_pin,
             output_channel: OUTPUT_CHANNEL,
-            #[cfg(feature = "rt-sync")]
             dac_raw: RawSpiConfig::new(16_000_000, false, true),
-            #[cfg(feature = "rt-sync")]
             dac_cs_raw: SioOutPin::new(DAC_CS_PIN),
             pwm_divider: sample_rate.pwm_params().0 as u32,
         };
         // Start the sample clock only after the DAC transport is assembled.
-        #[cfg(feature = "rt-sync")]
         let tick = PwmWrapSpinTick::new(self.tick_slice, sample_rate);
-        #[cfg(not(feature = "rt-sync"))]
-        let tick = PwmWrapTick::new(self.tick_slice, sample_rate);
         (rig, tick)
     }
 }
@@ -120,7 +106,6 @@ impl Rig for RtAnalog {
     const INPUTS: &'static [(&'static str, &'static str)] = &[("laser", "mm")];
 
     // Static choices keep the tick monomorphic and bounded.
-    type Tick = PwmWrapTick;
     type Ctrl = ActiveController;
 
     fn init(&mut self) {
@@ -134,15 +119,14 @@ impl Rig for RtAnalog {
         }
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn measure(&mut self, values: &mut [f32]) {
         // Read the most recent core-0 laser value without waiting.
         values[0] = f32::from_bits(LASER_VALUE.load(Ordering::Relaxed));
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn actuate(&mut self, out: f32) {
-        #[cfg(feature = "rt-sync")]
         {
             let code = helic_drivers::ad5064::code_for_volts(
                 out,
@@ -156,23 +140,21 @@ impl Rig for RtAnalog {
             );
             transfer_in_place(pac::SPI1, self.dac_raw, self.dac_cs_raw, &mut word);
         }
-        #[cfg(not(feature = "rt-sync"))]
-        let _ = self.dac.write_volts(self.output_channel, out);
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_start(&mut self) {
         // GP14 gives an independent scope view of RT processing duration.
         self.tick_pin.set_high();
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_phase_us(&self) -> Option<u32> {
         let ctr = pac::PWM.ch(4).ctr().read().ctr() as u32;
         Some(ctr * self.pwm_divider / 150)
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_end(&mut self) {
         self.tick_pin.set_low();
     }
@@ -201,7 +183,7 @@ impl Rig for RtAnalog {
         }
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn set_param(&mut self, id: u16, value: f32) {
         match id {
             0 => LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed),

@@ -27,7 +27,7 @@ impl SinLut {
 
     /// sin(phase), with phase in u32 turns (2³² = 2π), linearly interpolated.
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn sin(&self, phase: u32) -> f32 {
         let idx = (phase >> FRAC_BITS) as usize;
         let frac = (phase & ((1 << FRAC_BITS) - 1)) as f32 * FRAC_SCALE;
@@ -38,7 +38,7 @@ impl SinLut {
 
     /// cos(phase): same table, quarter-period phase offset (exact, wrapping).
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn cos(&self, phase: u32) -> f32 {
         self.sin(phase.wrapping_add(1 << 30))
     }

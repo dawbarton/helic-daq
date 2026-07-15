@@ -80,7 +80,7 @@ impl<'d, PIO: Instance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
     }
 
     /// Begin one transaction. A successful call never waits for the encoder.
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     pub fn start(&mut self) -> bool {
         if self.raw.fstat().read().txfull() & (1 << SM) != 0 {
             return false;
@@ -90,7 +90,7 @@ impl<'d, PIO: Instance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
     }
 
     /// Return the completed word, or `None` while the transaction is running.
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     pub fn read(&mut self) -> Option<u32> {
         if self.raw.fstat().read().rxempty() & (1 << SM) != 0 {
             return None;

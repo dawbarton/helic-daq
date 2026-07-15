@@ -1,21 +1,12 @@
 //! Per-experiment hardware and sample-clock contracts.
 
-use core::future::poll_fn;
-use core::sync::atomic::{AtomicU32, Ordering};
-use core::task::Poll;
-
 use embassy_rp::gpio::Input;
-use embassy_rp::interrupt::typelevel::PWM_IRQ_WRAP_0;
-use embassy_rp::interrupt::typelevel::{Handler, Interrupt};
 use embassy_rp::pac;
 use embassy_rp::pwm::{self, Pwm, Slice};
 use embassy_rp::Peri;
-use embassy_sync::waitqueue::AtomicWaker;
-use embassy_time::{with_timeout, Duration};
 use fixed::traits::ToFixed;
 use helic_core::controller::Controller;
 
-use crate::rt_loop::TICK_TIMEOUTS;
 use crate::SampleRate;
 
 pub const MAX_SOURCES: usize = 24;
@@ -77,50 +68,19 @@ pub fn validate_sources<R: Rig>() {
     );
 }
 
-#[allow(async_fn_in_trait)]
-pub trait TickSource {
-    async fn wait(&mut self);
-}
-
-pub struct BusyEdgeTick {
-    busy: Input<'static>,
-    timeout: Duration,
-}
-
-impl BusyEdgeTick {
-    pub fn new(busy: Input<'static>, sample_rate: SampleRate) -> Self {
-        Self {
-            busy,
-            timeout: Duration::from_micros(2 * sample_rate.period_us()),
-        }
-    }
-}
-
-impl TickSource for BusyEdgeTick {
-    async fn wait(&mut self) {
-        if with_timeout(self.timeout, self.busy.wait_for_falling_edge())
-            .await
-            .is_err()
-        {
-            TICK_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-}
-
 /// Synchronous (busy-polling) tick source for a dedicated real-time core.
 ///
-/// Unlike [`TickSource`], waiting spins in SRAM instead of suspending an
-/// executor task: no interrupt dispatch, no waker registration, no timer
-/// queue and no cross-core critical section is involved, so a tick's start
-/// time cannot be disturbed by core-0 activity. Appropriate when the core
-/// runs nothing but the real-time loop.
-pub trait SyncTickSource {
+/// Waiting spins in SRAM instead of suspending an executor task: no interrupt
+/// dispatch, waker registration, timer queue, or cross-core critical section
+/// is involved. Every production experiment gives core 1 exclusively to this
+/// contract; there is deliberately no asynchronous fallback.
+pub trait TickSource {
     /// Block until the next hardware tick. Returns `false` if the tick had
     /// to be forced by timeout because no edge arrived.
     fn wait(&mut self) -> bool;
 }
 
-/// [`SyncTickSource`] on the BUSY falling edge, using the IO bank's raw
+/// [`TickSource`] on the BUSY falling edge, using the IO bank's raw
 /// edge-detect latch. Because the latch is armed continuously (not re-armed
 /// per wait as the async `InputFuture` is), an edge that arrives while the
 /// previous tick body is still running is not lost: the next wait returns
@@ -148,7 +108,7 @@ impl BusyEdgeSpinTick {
     }
 }
 
-impl SyncTickSource for BusyEdgeSpinTick {
+impl TickSource for BusyEdgeSpinTick {
     #[unsafe(link_section = ".data.ram_func")]
     fn wait(&mut self) -> bool {
         let intr = pac::IO_BANK0.intr((self.pin / 8) as usize);
@@ -167,72 +127,12 @@ impl SyncTickSource for BusyEdgeSpinTick {
     }
 }
 
-static PWM_WRAP_WAKER: AtomicWaker = AtomicWaker::new();
-static PWM_WRAP_MASK: AtomicU32 = AtomicU32::new(0);
-static PWM_WRAP_EVENTS: AtomicU32 = AtomicU32::new(0);
-
-pub struct PwmWrapInterruptHandler;
-
-impl Handler<PWM_IRQ_WRAP_0> for PwmWrapInterruptHandler {
-    unsafe fn on_interrupt() {
-        let pending = pac::PWM.irq0_ints().read().0 & PWM_WRAP_MASK.load(Ordering::Acquire);
-        pac::PWM.intr().write(|w| w.0 = pending);
-        PWM_WRAP_EVENTS.fetch_or(pending, Ordering::Release);
-        PWM_WRAP_WAKER.wake();
-    }
-}
-
-pub struct PwmWrapTick {
-    _pwm: Pwm<'static>,
-    mask: u32,
-}
-
-impl PwmWrapTick {
-    pub fn new<T: Slice>(slice: Peri<'static, T>, sample_rate: SampleRate) -> Self {
-        let mask = 1 << slice.number();
-        let (divider, top) = sample_rate.pwm_params();
-        let mut config = pwm::Config::default();
-        config.divider = divider.to_fixed();
-        config.top = top;
-        let pwm = Pwm::new_free(slice, config);
-
-        PWM_WRAP_MASK.store(mask, Ordering::Release);
-        PWM_WRAP_EVENTS.fetch_and(!mask, Ordering::Relaxed);
-        pac::PWM.intr().write(|w| w.0 = mask);
-        pac::PWM.irq0_inte().modify(|w| w.0 |= mask);
-        PWM_IRQ_WRAP_0::unpend();
-        unsafe { PWM_IRQ_WRAP_0::enable() };
-
-        Self { _pwm: pwm, mask }
-    }
-}
-
-impl TickSource for PwmWrapTick {
-    async fn wait(&mut self) {
-        poll_fn(|cx| {
-            PWM_WRAP_WAKER.register(cx.waker());
-            if PWM_WRAP_EVENTS.fetch_and(!self.mask, Ordering::Acquire) & self.mask != 0 {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
-        .await
-    }
-}
-
-impl Drop for PwmWrapTick {
-    fn drop(&mut self) {
-        pac::PWM.irq0_inte().modify(|w| w.0 &= !self.mask);
-    }
-}
-
 /// Synchronous PWM-wrap tick for an ADC-free rig on a dedicated core.
 ///
 /// The PWM peripheral owns the sample instant. Its raw wrap flag remains
 /// latched while the tick body runs, so polling it from SRAM avoids the
 /// executor, interrupt dispatch, waker and cross-core critical section used
-/// by [`PwmWrapTick`].
+/// by an interrupt-driven or executor-driven wait.
 pub struct PwmWrapSpinTick {
     _pwm: Pwm<'static>,
     mask: u32,
@@ -262,7 +162,7 @@ impl PwmWrapSpinTick {
     }
 }
 
-impl SyncTickSource for PwmWrapSpinTick {
+impl TickSource for PwmWrapSpinTick {
     #[unsafe(link_section = ".data.ram_func")]
     fn wait(&mut self) -> bool {
         let start = pac::TIMER0.timerawl().read();
@@ -283,7 +183,6 @@ impl SyncTickSource for PwmWrapSpinTick {
 pub trait Rig {
     const INPUTS: &'static [(&'static str, &'static str)];
 
-    type Tick: TickSource;
     type Ctrl: Controller;
 
     fn init(&mut self);

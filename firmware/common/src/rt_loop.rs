@@ -13,7 +13,7 @@ use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableMode, TablePlayer, WaveTable};
 use static_cell::StaticCell;
 
-use crate::rig::{source_count, Rig, SyncTickSource, TickSource, MAX_SOURCES};
+use crate::rig::{source_count, Rig, TickSource, MAX_SOURCES};
 use crate::table;
 use crate::{SampleRate, HARMONICS};
 
@@ -93,7 +93,7 @@ fn now_us() -> u32 {
     pac::TIMER0.timerawl().read()
 }
 
-#[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+#[unsafe(link_section = ".data.ram_func")]
 #[allow(clippy::too_many_arguments)]
 fn run_rt_tick<R: Rig>(
     rig: &mut R,
@@ -209,73 +209,14 @@ fn run_rt_tick<R: Rig>(
     TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
-pub async fn run_rt_loop<R: Rig>(
-    mut rig: R,
-    mut tick: R::Tick,
-    mut controller: R::Ctrl,
-    sample_rate: SampleRate,
-    mut commands: CommandConsumer,
-    mut records: RecordProducer,
-) -> ! {
-    let n_inputs = R::INPUTS.len();
-    let n_telemetry = R::Ctrl::TELEMETRY.len();
-    let n_sources = source_count::<R>();
-    assert!(n_sources <= MAX_SOURCES);
-
-    rig.init();
-    let lut = SIN_LUT.init(SinLut::new());
-    let mut phase = PhaseAccumulator::new();
-    let mut target_coeffs = FourierCoeffs::<HARMONICS>::zero();
-    let mut forcing_coeffs = FourierCoeffs::<HARMONICS>::zero();
-    let mut table_player = TablePlayer::new();
-    let mut active_table = table::active();
-    let dt = sample_rate.dt();
-    let mut index = 0u32;
-    let mut last_tick: Option<u32> = None;
-
-    info!(
-        "core 1: RT loop running at {} Hz, {} harmonics, {} sources",
-        sample_rate.hz(),
-        HARMONICS,
-        n_sources
-    );
-
-    loop {
-        tick.wait().await;
-        run_rt_tick::<R>(
-            &mut rig,
-            &mut controller,
-            sample_rate,
-            dt,
-            &mut commands,
-            &mut records,
-            lut,
-            &mut phase,
-            &mut target_coeffs,
-            &mut forcing_coeffs,
-            &mut table_player,
-            &mut active_table,
-            &mut index,
-            &mut last_tick,
-            n_inputs,
-            n_telemetry,
-            n_sources,
-        );
-    }
-}
-
-/// Synchronous variant of [`run_rt_loop`] for a core dedicated to the
-/// real-time loop, with no executor running at all.
+/// Run the bounded pipeline on a core dedicated to real-time work.
 ///
-/// Placed in SRAM together with a [`SyncTickSource`] and SRAM SPI transfers
-/// (see `analog_spi`), the entire per-tick instruction stream then executes
-/// from SRAM: core-0 traffic cannot delay the tick through the shared XIP
-/// cache, and no cross-core critical section or timer-queue operation is
-/// taken between ticks. Phase-resolved diagnostics on the async version
-/// measured every tick phase (SPI, arithmetic and wake-up alike) stretching
-/// roughly tenfold under core-0 TCP traffic, which this removes.
+/// The runner, [`TickSource`], and raw peripheral transfers execute from SRAM,
+/// so core-0 traffic cannot evict the hot path from the shared XIP cache. Core
+/// 1 has no executor: introducing async waits here would also reintroduce the
+/// cross-core critical sections and lost-edge behaviour which caused overruns.
 #[unsafe(link_section = ".data.ram_func")]
-pub fn run_rt_loop_sync<R: Rig, T: SyncTickSource>(
+pub fn run_rt_loop<R: Rig, T: TickSource>(
     mut rig: R,
     mut tick: T,
     mut controller: R::Ctrl,
@@ -300,7 +241,7 @@ pub fn run_rt_loop_sync<R: Rig, T: SyncTickSource>(
     let mut last_tick: Option<u32> = None;
 
     info!(
-        "core 1: synchronous RT loop running at {} Hz, {} harmonics, {} sources",
+        "core 1: SRAM RT loop running at {} Hz, {} harmonics, {} sources",
         sample_rate.hz(),
         HARMONICS,
         n_sources

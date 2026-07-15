@@ -31,7 +31,7 @@ pub enum Command {
 }
 
 /// Encode one 32-bit input-register word. Pure function, host-tested.
-#[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+#[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
 pub fn frame(command: Command, channel: u8, data: u16) -> [u8; 4] {
     debug_assert!(channel < CHANNELS as u8);
     [
@@ -56,7 +56,7 @@ pub enum ChannelPolarity {
 /// non-finite inputs (an upstream fault) map to the safe 0 V code rather
 /// than whatever `NaN as u16` yields (code 0 = negative full-scale on a
 /// bipolar channel).
-#[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+#[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
 pub fn code_for_volts(volts: f32, polarity: ChannelPolarity, vref: f32) -> u16 {
     let volts = if volts.is_finite() { volts } else { 0.0 };
     let normalized = match polarity {
@@ -90,14 +90,14 @@ where
     }
 
     /// Write and update one channel with a raw code.
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn write_code(&mut self, channel: usize, code: u16) -> Result<(), E> {
         self.spi
             .write(&frame(Command::WriteAndUpdate, channel as u8, code))
     }
 
     /// Write and update one channel in volts (clamped to the channel range).
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn write_volts(&mut self, channel: usize, volts: f32) -> Result<(), E> {
         let code = code_for_volts(volts, self.polarity[channel], self.vref);
         self.write_code(channel, code)

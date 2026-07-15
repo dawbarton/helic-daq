@@ -38,26 +38,19 @@ use embassy_sync::blocking_mutex::Mutex;
 use fixed::traits::ToFixed;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
 use helic_drivers::ad7609::{Ad7609, ConfigPins};
-#[cfg(all(not(feature = "diag-skip-adc"), not(feature = "rt-sync")))]
-use helic_drivers::AnalogIn;
-#[cfg(feature = "rt-sync")]
 use helic_fw_common::analog_spi::{transfer_in_place, RawSpiConfig, SioOutPin};
 use helic_fw_common::net::wiznet::EthernetParts;
-#[cfg(feature = "rt-sync")]
-use helic_fw_common::rig::BusyEdgeSpinTick;
-use helic_fw_common::rig::{BusyEdgeTick, Rig};
+use helic_fw_common::rig::{BusyEdgeSpinTick, Rig};
 use helic_fw_common::SampleRate;
 use static_cell::StaticCell;
 
 use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
-#[cfg(all(not(feature = "diag-skip-adc"), not(feature = "rt-sync")))]
-use crate::ADC_ERRORS;
 use crate::{LASER_RANGE_MM, LASER_VALUE};
 
 /// DAC reference voltage (ADR-series reference on the analog board).
 pub const DAC_VREF: f32 = 4.096;
 
-// GPIO numbers needed by the raw SRAM hot path (`rt-sync`). Keep these in
+// GPIO numbers needed by the raw SRAM hot path. Keep these in
 // lockstep with the `Board::new` pin assignments and the module pin map.
 const ADC_BUSY_PIN: u8 = 7;
 const ADC_CS_PIN: u8 = 13;
@@ -89,12 +82,8 @@ pub type Dac = Ad5064<SpiDev>;
 // device borrows it. StaticCell initialises that storage exactly once.
 static SPI_BUS: StaticCell<SpiBus> = StaticCell::new();
 
-/// Tick source produced by [`AnalogParts::build`]: the SRAM busy-poll under
-/// `rt-sync`, otherwise the async BUSY-edge future.
-#[cfg(feature = "rt-sync")]
+/// Tick source produced by [`AnalogParts::build`].
 pub type Tick = BusyEdgeSpinTick;
-#[cfg(not(feature = "rt-sync"))]
-pub type Tick = BusyEdgeTick;
 
 /// Top-level ownership bundle returned after assigning every board peripheral.
 ///
@@ -147,15 +136,11 @@ pub struct RtAnalog {
     pub dac: Dac,
     /// Tick-timing debug pin.
     pub tick_pin: Output<'static>,
-    /// Raw SRAM SPI path (`rt-sync`): precomputed configs and chip selects.
+    /// Raw SRAM SPI path: precomputed configs and chip selects.
     /// The embassy drivers above still perform init; see `analog_spi`.
-    #[cfg(feature = "rt-sync")]
     adc_raw: RawSpiConfig,
-    #[cfg(feature = "rt-sync")]
     dac_raw: RawSpiConfig,
-    #[cfg(feature = "rt-sync")]
     adc_cs_raw: SioOutPin,
-    #[cfg(feature = "rt-sync")]
     dac_cs_raw: SioOutPin,
     convst: Option<(Peri<'static, PWM_SLICE4>, Peri<'static, PIN_8>)>,
     convst_pwm: Option<Pwm<'static>>,
@@ -172,10 +157,7 @@ impl AnalogParts {
     /// the bus mutex is a `NoopRawMutex`, sound only because everything it
     /// guards lives on that single core.
     pub fn build(self, sample_rate: SampleRate) -> (RtAnalog, Tick) {
-        #[cfg(feature = "rt-sync")]
         let tick = BusyEdgeSpinTick::new(self.adc_busy, ADC_BUSY_PIN, sample_rate);
-        #[cfg(not(feature = "rt-sync"))]
-        let tick = BusyEdgeTick::new(self.adc_busy, sample_rate);
         let bus: &'static SpiBus = SPI_BUS.init(Mutex::new(RefCell::new(self.spi)));
 
         // AD7609 reads in SPI mode 2 (clock idles high, data captured on
@@ -205,13 +187,9 @@ impl AnalogParts {
             tick_pin: self.tick_pin,
             // Frequencies and modes must match the SpiDeviceWithConfig
             // configurations above; only the code path differs.
-            #[cfg(feature = "rt-sync")]
             adc_raw: RawSpiConfig::new(12_000_000, true, false),
-            #[cfg(feature = "rt-sync")]
             dac_raw: RawSpiConfig::new(16_000_000, false, true),
-            #[cfg(feature = "rt-sync")]
             adc_cs_raw: SioOutPin::new(ADC_CS_PIN),
-            #[cfg(feature = "rt-sync")]
             dac_cs_raw: SioOutPin::new(DAC_CS_PIN),
             convst: Some((self.convst_slice, self.convst_pin)),
             convst_pwm: None,
@@ -243,7 +221,6 @@ impl Rig for RtAnalog {
 
     // Associated types select concrete implementations at compile time. There
     // is no run-time trait-object lookup inside a sample tick.
-    type Tick = BusyEdgeTick;
     type Ctrl = ActiveController;
 
     fn init(&mut self) {
@@ -266,11 +243,11 @@ impl Rig for RtAnalog {
         self.convst_pwm = Some(self.start_convst_pwm(divider, top));
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn measure(&mut self, values: &mut [f32]) {
         // This method is on the bounded RT path. It performs no allocation and
         // uses f32 so arithmetic is accelerated by the Cortex-M33 FPU.
-        #[cfg(all(not(feature = "diag-skip-adc"), feature = "rt-sync"))]
+        #[cfg(not(feature = "diag-skip-adc"))]
         {
             // 18 zero bytes out, 8 × 18-bit frame back; register-level
             // transfers cannot fail, so there is no error arm here.
@@ -283,28 +260,19 @@ impl Rig for RtAnalog {
             );
             self.adc_last = helic_drivers::ad7609::decode_frame(&raw);
         }
-        #[cfg(all(not(feature = "diag-skip-adc"), not(feature = "rt-sync")))]
-        {
-            match self.adc.read_frame() {
-                Ok(frame) => self.adc_last = frame,
-                Err(_) => {
-                    ADC_ERRORS.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        }
         for (value, raw) in values[..8].iter_mut().zip(self.adc_last) {
             *value = raw as f32 * self.adc_scale;
         }
         values[8] = f32::from_bits(LASER_VALUE.load(Ordering::Relaxed));
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn actuate(&mut self, out: f32) {
         // The driver clamps or maps according to this channel's declared
         // polarity. DAC_POLARITY must match the fitted output stage.
         #[cfg(feature = "diag-skip-dac")]
         let _ = out;
-        #[cfg(all(not(feature = "diag-skip-dac"), feature = "rt-sync"))]
+        #[cfg(not(feature = "diag-skip-dac"))]
         {
             let code = helic_drivers::ad5064::code_for_volts(
                 out,
@@ -323,16 +291,14 @@ impl Rig for RtAnalog {
                 &mut word,
             );
         }
-        #[cfg(all(not(feature = "diag-skip-dac"), not(feature = "rt-sync")))]
-        let _ = self.dac.write_volts(self.output_channel, out);
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_start(&mut self) {
         self.tick_pin.set_high();
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_phase_us(&self) -> Option<u32> {
         // Conversion starts on the CONVST rising edge, which is the wrap
         // point (counter 0) of PWM slice 4 (GP8, see the module pin map). The
@@ -342,7 +308,7 @@ impl Rig for RtAnalog {
         Some(ctr * self.pwm_divider / 150)
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_end(&mut self) {
         self.tick_pin.set_low();
     }

@@ -11,7 +11,7 @@ license = "MIT"
 helic-core = { path = "../helic-core" }
 helic-drivers = { version = "0.1.0", path = "../helic-drivers" }
 helic-proto = { path = "../helic-proto" }
-helic-fw-common = { path = "common", default-features = false }
+helic-fw-common = { path = "common", default-features = false, features = ["rt-sram"] }
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 cyw43 = { version = "=0.7.0", features = ["defmt"] }

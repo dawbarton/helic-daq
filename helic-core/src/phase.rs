@@ -49,7 +49,7 @@ impl PhaseAccumulator {
     /// Advance one sample and return the new phase. Returns wrap = `true`
     /// when the phase passed the start of a new period (the `period_start`
     /// hook used by per-period processing such as Fourier statistics).
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn step(&mut self) -> (u32, bool) {
         let (phase, wrapped) = self.phase.overflowing_add(self.increment);
         self.phase = phase;

@@ -110,7 +110,6 @@ bind_interrupts!(pub struct Irqs {
     // Embassy turns this declarative list into type-safe interrupt tokens.
     // Bind only peripherals owned by this experiment.
     UART0_IRQ => uart::InterruptHandler<UART0>;
-    PWM_IRQ_WRAP_0 => helic_fw_common::rig::PwmWrapInterruptHandler;
     TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH1>,
         embassy_rp::dma::InterruptHandler<DMA_CH2>,
@@ -122,8 +121,6 @@ bind_interrupts!(pub struct Irqs {
 // a heap allocator. Queue capacities are fixed for the same reason.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
-#[cfg(not(feature = "rt-sync"))]
-static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
 static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
 
@@ -157,20 +154,10 @@ fn main() -> ! {
     // `move` transfers ownership of the analogue peripherals, controller and
     // queue endpoints into core 1. Core 0 cannot use them afterwards, which
     // enforces the architecture at compile time.
-    #[cfg(not(feature = "rt-sync"))]
+    // Core 1 runs the loop directly with no executor, so nothing on the core
+    // can suspend the tick or pull Embassy scheduling into its hot path.
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        let executor1 = EXECUTOR1.init(Executor::new());
-        executor1.run(|spawner| {
-            spawner.spawn(unwrap!(rt_loop::rt_loop(
-                b.analog, controller, cmd_rx, rec_tx
-            )))
-        });
-    });
-    // `rt-sync`: core 1 runs the loop directly with no executor, so nothing
-    // on the core can suspend the tick or pull embassy code into its path.
-    #[cfg(feature = "rt-sync")]
-    spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::rt_loop_sync(b.analog, controller, cmd_rx, rec_tx)
+        rt_loop::run(b.analog, controller, cmd_rx, rec_tx)
     });
 
     // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without it

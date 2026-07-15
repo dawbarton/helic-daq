@@ -165,7 +165,6 @@ pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 
 bind_interrupts!(pub struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<PIO0>;
-    PWM_IRQ_WRAP_0 => helic_fw_common::rig::PwmWrapInterruptHandler;
     TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH2>,
         embassy_rp::dma::InterruptHandler<DMA_CH3>;
@@ -173,8 +172,6 @@ bind_interrupts!(pub struct Irqs {
 
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
-#[cfg(not(feature = "rt-sync"))]
-static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
 static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
 
@@ -195,18 +192,8 @@ fn main() -> ! {
         &controller,
     );
 
-    #[cfg(not(feature = "rt-sync"))]
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        let executor1 = EXECUTOR1.init(Executor::new());
-        executor1.run(|spawner| {
-            spawner.spawn(unwrap!(rt_loop::rt_loop(
-                b.sensors, controller, cmd_rx, rec_tx
-            )))
-        });
-    });
-    #[cfg(feature = "rt-sync")]
-    spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
-        rt_loop::rt_loop_sync(b.sensors, controller, cmd_rx, rec_tx)
+        rt_loop::run(b.sensors, controller, cmd_rx, rec_tx)
     });
 
     helic_fw_common::time_watchdog::start();

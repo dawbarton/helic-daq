@@ -59,7 +59,7 @@ pub struct PassThrough;
 
 impl Controller for PassThrough {
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn tick(&mut self, _inputs: &[f32], reference: f32, _dt: f32) -> f32 {
         reference
     }
@@ -83,7 +83,7 @@ impl PidController {
     }
 
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn measurement(&self, inputs: &[f32]) -> f32 {
         inputs.get(self.feedback).copied().unwrap_or(0.0)
     }
@@ -91,7 +91,7 @@ impl PidController {
 
 impl Controller for PidController {
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn tick(&mut self, inputs: &[f32], reference: f32, dt: f32) -> f32 {
         self.error = reference - self.measurement(inputs);
         self.pid.update(self.error, dt)

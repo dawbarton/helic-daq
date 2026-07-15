@@ -14,9 +14,7 @@ use helic_core::rpm::RpmEstimator;
 use helic_drivers::ssi::{deinterleave_pair, SsiFormat, SsiScale};
 use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::pulse_pio::PulsePeriodReader;
-#[cfg(feature = "rt-sync")]
-use helic_fw_common::rig::PwmWrapSpinTick;
-use helic_fw_common::rig::{PwmWrapTick, Rig};
+use helic_fw_common::rig::{PwmWrapSpinTick, Rig};
 use helic_fw_common::ssi_pio::DualSsiReader;
 use helic_fw_common::SampleRate;
 
@@ -57,10 +55,7 @@ pub struct WhirlRig {
     pwm_divider: u32,
 }
 
-#[cfg(feature = "rt-sync")]
 pub type Tick = PwmWrapSpinTick;
-#[cfg(not(feature = "rt-sync"))]
-pub type Tick = PwmWrapTick;
 
 impl SensorParts {
     pub fn build(self, sample_rate: SampleRate) -> (WhirlRig, Tick) {
@@ -99,10 +94,7 @@ impl SensorParts {
         };
         // Start the sample clock only after both PIO state machines are fully
         // configured, so the first latched wrap cannot pre-date sensor setup.
-        #[cfg(feature = "rt-sync")]
         let tick = PwmWrapSpinTick::new(self.tick_slice, sample_rate);
-        #[cfg(not(feature = "rt-sync"))]
-        let tick = PwmWrapTick::new(self.tick_slice, sample_rate);
         (rig, tick)
     }
 }
@@ -117,7 +109,6 @@ impl Rig for WhirlRig {
         ("rpm_valid", "bool"),
     ];
 
-    type Tick = PwmWrapTick;
     type Ctrl = ActiveController;
 
     fn init(&mut self) {
@@ -126,7 +117,7 @@ impl Rig for WhirlRig {
         }
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn measure(&mut self, values: &mut [f32]) {
         if let Some(raw) = self.encoders.read() {
             match deinterleave_pair(raw, ENCODER_BITS).and_then(|words| {
@@ -181,21 +172,21 @@ impl Rig for WhirlRig {
         RPM_VALUE.store(estimate.rpm.to_bits(), Ordering::Relaxed);
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn actuate(&mut self, _out: f32) {}
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_start(&mut self) {
         self.tick_pin.set_high();
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_phase_us(&self) -> Option<u32> {
         let ctr = pac::PWM.ch(4).ctr().read().ctr() as u32;
         Some(ctr * self.pwm_divider / 150)
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_end(&mut self) {
         self.tick_pin.set_low();
     }

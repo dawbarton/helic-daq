@@ -69,7 +69,7 @@ impl<'d, PIO: Instance + 'd, const SM: usize> PulsePeriodReader<'d, PIO, SM> {
         Self { _sm: sm, raw }
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     pub fn read(&mut self) -> Option<u32> {
         if self.raw.fstat().read().rxempty() & (1 << SM) != 0 {
             return None;
@@ -77,7 +77,7 @@ impl<'d, PIO: Instance + 'd, const SM: usize> PulsePeriodReader<'d, PIO, SM> {
         Some(self.raw.rxf(SM).read())
     }
 
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[unsafe(link_section = ".data.ram_func")]
     pub fn stalled(&mut self) -> bool {
         let fdebug = self.raw.fdebug();
         let stalled = fdebug.read().rxstall() & (1 << SM) != 0;

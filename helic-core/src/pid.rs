@@ -68,7 +68,7 @@ impl Pid {
     /// Advance one sample: `error` = setpoint − measurement, `dt` = sample
     /// period in seconds. Returns the clamped controller output.
     #[inline]
-    #[cfg_attr(feature = "diag-rt-sram", unsafe(link_section = ".data.ram_func"))]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn update(&mut self, error: f32, dt: f32) -> f32 {
         let c = &self.config;
 

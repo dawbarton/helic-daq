@@ -12,7 +12,10 @@ net-wiznet = ["dep:embassy-net-wiznet", "dep:embedded-hal-bus"]
 net-wiznet-w5500 = ["net-wiznet"]
 net-wiznet-w6100 = ["net-wiznet"]
 diag-skip-record-enqueue = []
-diag-rt-sram = ["helic-core/diag-rt-sram", "helic-drivers/diag-rt-sram"]
+# Every experiment enables this centrally through the firmware workspace. It is
+# a named feature only because the host-tested crates must not use an embedded
+# linker section during ordinary desktop builds.
+rt-sram = ["helic-core/rt-sram", "helic-drivers/rt-sram"]
 
 [dependencies]
 helic-core.workspace = true

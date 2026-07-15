@@ -5,13 +5,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-default = ["rt-sync"]
-diag-rt-sram = ["helic-fw-common/diag-rt-sram"]
-# Synchronous SRAM real-time loop on core 1: no executor, raw PWM-wrap latch
-# and register-level DAC SPI transfers.
-rt-sync = ["diag-rt-sram"]
-
 [dependencies]
 # This experiment deliberately disables the common crate's wired default and
 # selects the CYW43439 backend. Application tasks still use embassy-net.
