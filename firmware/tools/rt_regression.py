@@ -225,6 +225,10 @@ def main() -> int:
     parser.add_argument("--poll-seconds", type=float, default=5.0)
     parser.add_argument("--poll-interval", type=float, default=0.05)
     parser.add_argument("--capture-samples", type=int, default=8_000)
+    parser.add_argument(
+        "--capture-sources",
+        help="comma-separated source names, or 'all' (default: rig smoke-test set)",
+    )
     parser.add_argument("--flash-timeout", type=float, default=10.0)
     parser.add_argument("--connect-timeout", type=float, default=15.0)
     args = parser.parse_args()
@@ -256,8 +260,14 @@ def main() -> int:
         reset_diagnostics(device)
         before = snapshot(device)
         started = time.monotonic()
+        if args.capture_sources == "all":
+            capture_sources = [source.name for source in device.sources]
+        elif args.capture_sources:
+            capture_sources = args.capture_sources.split(",")
+        else:
+            capture_sources = list(profile.capture_sources)
         capture = device.capture(
-            list(profile.capture_sources),
+            capture_sources,
             samples=args.capture_samples,
             port=protocol.STREAM_PORT,
         )
@@ -268,6 +278,7 @@ def main() -> int:
             lost_packets=int(capture["lost_packets"]),
             capture_dropped=int(capture["dropped"]),
             index_gaps=sum(int(b) != int(a) + 1 for a, b in zip(indices, indices[1:])),
+            sources=capture_sources,
             phase=phase_snapshot(device),
         )
         result["capture"] = captured
