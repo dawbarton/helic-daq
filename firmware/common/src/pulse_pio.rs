@@ -9,6 +9,8 @@ use embassy_rp::pio::{Common, Direction, FifoJoin, Instance, PioPin, StateMachin
 use embassy_rp::{pac, Peri};
 use fixed::traits::ToFixed;
 
+use crate::raw_pio::RawPioInstance;
+
 pub struct PulsePeriodReader<'d, PIO: Instance, const SM: usize> {
     /// Retains Embassy's ownership and one-time state-machine configuration.
     _sm: StateMachine<'d, PIO, SM>,
@@ -16,14 +18,12 @@ pub struct PulsePeriodReader<'d, PIO: Instance, const SM: usize> {
     raw: pac::pio::Pio,
 }
 
-impl<'d, PIO: Instance + 'd, const SM: usize> PulsePeriodReader<'d, PIO, SM> {
+impl<'d, PIO: RawPioInstance + 'd, const SM: usize> PulsePeriodReader<'d, PIO, SM> {
     /// Configure an edge-period state machine.
     ///
-    /// `raw` must address the same PIO block represented by `common` and
-    /// `sm`. The typed Embassy state machine retains ownership; the duplicate
-    /// PAC handle is used only for bounded FIFO access from the SRAM hot path.
+    /// The typed PIO instance selects its matching PAC register block, so the
+    /// FIFO hot path cannot be pointed at a different peripheral.
     pub fn new(
-        raw: pac::pio::Pio,
         common: &mut Common<'d, PIO>,
         mut sm: StateMachine<'d, PIO, SM>,
         input: Peri<'d, impl PioPin + 'd>,
@@ -66,7 +66,10 @@ impl<'d, PIO: Instance + 'd, const SM: usize> PulsePeriodReader<'d, PIO, SM> {
         sm.set_config(&config);
         sm.set_pin_dirs(Direction::In, &[&input]);
         sm.set_enable(true);
-        Self { _sm: sm, raw }
+        Self {
+            _sm: sm,
+            raw: PIO::raw(),
+        }
     }
 
     #[unsafe(link_section = ".data.ram_func")]

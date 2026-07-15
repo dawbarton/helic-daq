@@ -6,6 +6,8 @@ use embassy_rp::pio::{Common, Direction, Instance, PioPin, ShiftDirection, State
 use embassy_rp::{pac, Peri};
 use fixed::traits::ToFixed;
 
+use crate::raw_pio::RawPioInstance;
+
 pub struct DualSsiReader<'d, PIO: Instance, const SM: usize> {
     /// Retains Embassy's ownership and one-time state-machine configuration.
     _sm: StateMachine<'d, PIO, SM>,
@@ -14,15 +16,14 @@ pub struct DualSsiReader<'d, PIO: Instance, const SM: usize> {
     bit_count: u32,
 }
 
-impl<'d, PIO: Instance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
+impl<'d, PIO: RawPioInstance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
     /// Configure a dual-input SSI state machine.
     ///
-    /// `raw` must address the same PIO block represented by `common` and
-    /// `sm`. The typed Embassy state machine retains ownership; the duplicate
-    /// PAC handle is used only for bounded FIFO access from the SRAM hot path.
+    /// The typed PIO instance selects its matching PAC register block, so a
+    /// caller cannot accidentally pair (for example) a PIO0 state machine with
+    /// PIO1 FIFO registers.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        raw: pac::pio::Pio,
         common: &mut Common<'d, PIO>,
         mut sm: StateMachine<'d, PIO, SM>,
         clock: Peri<'d, impl PioPin + 'd>,
@@ -74,7 +75,7 @@ impl<'d, PIO: Instance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
 
         Self {
             _sm: sm,
-            raw,
+            raw: PIO::raw(),
             bit_count: u32::from(bits - 1),
         }
     }

@@ -1,6 +1,6 @@
 //! Per-experiment hardware and sample-clock contracts.
 
-use embassy_rp::gpio::Input;
+use embassy_rp::gpio::{Input, Pin, Pull};
 use embassy_rp::pac;
 use embassy_rp::pwm::{self, Pwm, Slice};
 use embassy_rp::Peri;
@@ -93,10 +93,13 @@ pub struct BusyEdgeSpinTick {
 }
 
 impl BusyEdgeSpinTick {
-    /// `pin` must be the GPIO number of `busy`.
-    pub fn new(busy: Input<'static>, pin: u8, sample_rate: SampleRate) -> Self {
+    /// Take ownership of the BUSY pin and configure its disconnected state.
+    /// The GPIO number used for raw latch access is derived before the typed
+    /// pin is erased, so it cannot disagree with the owned input.
+    pub fn new<P: Pin>(busy: Peri<'static, P>, sample_rate: SampleRate) -> Self {
+        let pin = busy.pin();
         let this = Self {
-            _busy: busy,
+            _busy: Input::new(busy, Pull::Down),
             pin,
             timeout_us: 2 * sample_rate.period_us() as u32,
         };

@@ -29,16 +29,16 @@ use core::sync::atomic::Ordering;
 use defmt::warn;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
-use embassy_rp::peripherals::{CORE1, DMA_CH1, PIN_1, PIN_8, PWM_SLICE4, SPI1, UART0};
+use embassy_rp::peripherals::{CORE1, DMA_CH1, PIN_1, PIN_7, PIN_8, PWM_SLICE4, SPI1, UART0};
 use embassy_rp::pwm::{self, Pwm};
 use embassy_rp::spi::{self, Async, Blocking, Spi};
-use embassy_rp::{Peri, Peripherals};
+use embassy_rp::{pac, Peri, Peripherals};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use fixed::traits::ToFixed;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
 use helic_drivers::ad7609::{Ad7609, ConfigPins};
-use helic_fw_common::analog_spi::{transfer_in_place, RawSpiConfig, SioOutPin};
+use helic_fw_common::analog_spi::{HotSpiConfig, RawSpiDevice, SramAd5064};
 use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::rig::{BusyEdgeSpinTick, Rig};
 use helic_fw_common::SampleRate;
@@ -52,7 +52,6 @@ pub const DAC_VREF: f32 = 4.096;
 
 // GPIO numbers needed by the raw SRAM hot path. Keep these in
 // lockstep with the `Board::new` pin assignments and the module pin map.
-const ADC_BUSY_PIN: u8 = 7;
 const ADC_CS_PIN: u8 = 13;
 const DAC_CS_PIN: u8 = 9;
 
@@ -116,7 +115,7 @@ pub struct AnalogParts {
     /// Timing-debug pin (GP14): high while the RT tick body runs.
     pub tick_pin: Output<'static>,
     /// AD7609 BUSY (GP7): falls when conversion data is ready.
-    pub adc_busy: Input<'static>,
+    pub adc_busy: Peri<'static, PIN_7>,
     /// AD5064 ~LDAC (GP15), held low: write-and-update per channel.
     pub dac_ldac: Output<'static>,
     spi: Spi<'static, SPI1, Blocking>,
@@ -138,10 +137,8 @@ pub struct RtAnalog {
     pub tick_pin: Output<'static>,
     /// Raw SRAM SPI path: precomputed configs and chip selects.
     /// The embassy drivers above still perform init; see `analog_spi`.
-    adc_raw: RawSpiConfig,
-    dac_raw: RawSpiConfig,
-    adc_cs_raw: SioOutPin,
-    dac_cs_raw: SioOutPin,
+    adc_raw: RawSpiDevice,
+    dac_raw: SramAd5064,
     convst: Option<(Peri<'static, PWM_SLICE4>, Peri<'static, PIN_8>)>,
     convst_pwm: Option<Pwm<'static>>,
     /// CONVST PWM clock divider, for converting counter ticks to µs.
@@ -157,25 +154,33 @@ impl AnalogParts {
     /// the bus mutex is a `NoopRawMutex`, sound only because everything it
     /// guards lives on that single core.
     pub fn build(self, sample_rate: SampleRate) -> (RtAnalog, Tick) {
-        let tick = BusyEdgeSpinTick::new(self.adc_busy, ADC_BUSY_PIN, sample_rate);
+        let tick = BusyEdgeSpinTick::new(self.adc_busy, sample_rate);
         let bus: &'static SpiBus = SPI_BUS.init(Mutex::new(RefCell::new(self.spi)));
 
         // AD7609 reads in SPI mode 2 (clock idles high, data captured on
         // the falling edge). 12 MHz: 18 bytes in ~12 µs. The datasheet
         // allows faster; verify on scope before raising.
-        let mut adc_config = spi::Config::default();
-        adc_config.frequency = 12_000_000;
-        adc_config.polarity = spi::Polarity::IdleHigh;
-        adc_config.phase = spi::Phase::CaptureOnFirstTransition;
-        let adc_spi = SpiDeviceWithConfig::new(bus, self.adc_cs, adc_config);
+        let adc_config = HotSpiConfig::new(
+            12_000_000,
+            spi::Polarity::IdleHigh,
+            spi::Phase::CaptureOnFirstTransition,
+        );
+        let adc_spi = SpiDeviceWithConfig::new(bus, self.adc_cs, adc_config.embassy());
 
         // AD5064 latches data on falling SCLK: SPI mode 1, write-only.
         // 16 MHz: one 32-bit word in 2 µs.
-        let mut dac_config = spi::Config::default();
-        dac_config.frequency = 16_000_000;
-        dac_config.polarity = spi::Polarity::IdleLow;
-        dac_config.phase = spi::Phase::CaptureOnSecondTransition;
-        let dac_spi = SpiDeviceWithConfig::new(bus, self.dac_cs, dac_config);
+        let dac_config = HotSpiConfig::new(
+            16_000_000,
+            spi::Polarity::IdleLow,
+            spi::Phase::CaptureOnSecondTransition,
+        );
+        let dac_spi = SpiDeviceWithConfig::new(bus, self.dac_cs, dac_config.embassy());
+
+        // SAFETY: Board::new configures these exact chip-select GPIOs as live
+        // outputs, and SPI1 plus both devices move together to core 1. The
+        // NoopRawMutex bus and raw hot path have no other users.
+        let adc_raw = unsafe { RawSpiDevice::new(pac::SPI1, adc_config, ADC_CS_PIN) };
+        let dac_raw = unsafe { RawSpiDevice::new(pac::SPI1, dac_config, DAC_CS_PIN) };
 
         // ~LDAC stays low for the lifetime of the firmware (write-and-update
         // addressing); leak the pin driver so it is never deconfigured.
@@ -185,12 +190,8 @@ impl AnalogParts {
             adc: Ad7609::new(adc_spi, self.adc_pins),
             dac: Ad5064::new(dac_spi, DAC_POLARITY, DAC_VREF),
             tick_pin: self.tick_pin,
-            // Frequencies and modes must match the SpiDeviceWithConfig
-            // configurations above; only the code path differs.
-            adc_raw: RawSpiConfig::new(12_000_000, true, false),
-            dac_raw: RawSpiConfig::new(16_000_000, false, true),
-            adc_cs_raw: SioOutPin::new(ADC_CS_PIN),
-            dac_cs_raw: SioOutPin::new(DAC_CS_PIN),
+            adc_raw,
+            dac_raw: SramAd5064::new(dac_raw, DAC_POLARITY, DAC_VREF),
             convst: Some((self.convst_slice, self.convst_pin)),
             convst_pwm: None,
             pwm_divider: sample_rate.pwm_params().0 as u32,
@@ -252,12 +253,7 @@ impl Rig for RtAnalog {
             // 18 zero bytes out, 8 × 18-bit frame back; register-level
             // transfers cannot fail, so there is no error arm here.
             let mut raw = [0u8; 18];
-            transfer_in_place(
-                embassy_rp::pac::SPI1,
-                self.adc_raw,
-                self.adc_cs_raw,
-                &mut raw,
-            );
+            self.adc_raw.transfer(&mut raw);
             self.adc_last = helic_drivers::ad7609::decode_frame(&raw);
         }
         for (value, raw) in values[..8].iter_mut().zip(self.adc_last) {
@@ -274,22 +270,7 @@ impl Rig for RtAnalog {
         let _ = out;
         #[cfg(not(feature = "diag-skip-dac"))]
         {
-            let code = helic_drivers::ad5064::code_for_volts(
-                out,
-                self.dac.polarity[self.output_channel],
-                self.dac.vref,
-            );
-            let mut word = helic_drivers::ad5064::frame(
-                helic_drivers::ad5064::Command::WriteAndUpdate,
-                self.output_channel as u8,
-                code,
-            );
-            transfer_in_place(
-                embassy_rp::pac::SPI1,
-                self.dac_raw,
-                self.dac_cs_raw,
-                &mut word,
-            );
+            self.dac_raw.write_volts(self.output_channel, out);
         }
     }
 
@@ -400,8 +381,7 @@ impl Board {
             led: Output::new(p.PIN_25, Level::Low),
             analog: AnalogParts {
                 tick_pin: Output::new(p.PIN_14, Level::Low),
-                // Pull BUSY down so a missing ADC reads as "not converting".
-                adc_busy: Input::new(p.PIN_7, Pull::Down),
+                adc_busy: p.PIN_7,
                 dac_ldac: Output::new(p.PIN_15, Level::Low),
                 spi,
                 adc_cs: Output::new(p.PIN_13, Level::High),

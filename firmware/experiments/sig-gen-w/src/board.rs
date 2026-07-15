@@ -17,7 +17,7 @@ use embassy_rp::{pac, Peri, Peripherals};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
-use helic_fw_common::analog_spi::{transfer_in_place, RawSpiConfig, SioOutPin};
+use helic_fw_common::analog_spi::{HotSpiConfig, RawSpiDevice, SramAd5064};
 use helic_fw_common::net::cyw43::WifiParts;
 use helic_fw_common::rig::{PwmWrapSpinTick, Rig};
 use helic_fw_common::SampleRate;
@@ -28,6 +28,11 @@ use crate::{LASER_RANGE_MM, LASER_VALUE};
 /// Voltage reference fitted to the analogue board.
 const DAC_VREF: f32 = 4.096;
 const DAC_CS_PIN: u8 = 9;
+const DAC_SPI_CONFIG: HotSpiConfig = HotSpiConfig::new(
+    16_000_000,
+    spi::Polarity::IdleLow,
+    spi::Phase::CaptureOnSecondTransition,
+);
 /// Must match the fitted output stages before hardware use.
 const DAC_POLARITY: [ChannelPolarity; 4] = [
     ChannelPolarity::Unipolar,
@@ -73,8 +78,7 @@ pub struct RtAnalog {
     dac: Dac,
     tick_pin: Output<'static>,
     output_channel: usize,
-    dac_raw: RawSpiConfig,
-    dac_cs_raw: SioOutPin,
+    dac_raw: SramAd5064,
     pwm_divider: u32,
 }
 
@@ -85,14 +89,16 @@ impl AnalogParts {
     pub fn build(self, sample_rate: SampleRate) -> (RtAnalog, Tick) {
         let spi = ExclusiveDevice::new(self.spi, self.dac_cs, Delay)
             .expect("AD5064 SPI device construction failed");
+        // SAFETY: Board::new keeps GP9 configured as the sole SPI1 device's
+        // chip select, and the complete SPI1/DAC bundle moves to core 1.
+        let dac_raw = unsafe { RawSpiDevice::new(pac::SPI1, DAC_SPI_CONFIG, DAC_CS_PIN) };
         // Keep LDAC driven low permanently for write-and-update operation.
         core::mem::forget(self.dac_ldac);
         let rig = RtAnalog {
             dac: Ad5064::new(spi, DAC_POLARITY, DAC_VREF),
             tick_pin: self.tick_pin,
             output_channel: OUTPUT_CHANNEL,
-            dac_raw: RawSpiConfig::new(16_000_000, false, true),
-            dac_cs_raw: SioOutPin::new(DAC_CS_PIN),
+            dac_raw: SramAd5064::new(dac_raw, DAC_POLARITY, DAC_VREF),
             pwm_divider: sample_rate.pwm_params().0 as u32,
         };
         // Start the sample clock only after the DAC transport is assembled.
@@ -127,19 +133,7 @@ impl Rig for RtAnalog {
 
     #[unsafe(link_section = ".data.ram_func")]
     fn actuate(&mut self, out: f32) {
-        {
-            let code = helic_drivers::ad5064::code_for_volts(
-                out,
-                self.dac.polarity[self.output_channel],
-                self.dac.vref,
-            );
-            let mut word = helic_drivers::ad5064::frame(
-                helic_drivers::ad5064::Command::WriteAndUpdate,
-                self.output_channel as u8,
-                code,
-            );
-            transfer_in_place(pac::SPI1, self.dac_raw, self.dac_cs_raw, &mut word);
-        }
+        self.dac_raw.write_volts(self.output_channel, out);
     }
 
     #[unsafe(link_section = ".data.ram_func")]
@@ -197,11 +191,8 @@ impl Board {
     /// Consume the peripheral singleton and make all pin ownership explicit.
     pub fn new(p: Peripherals) -> Self {
         // AD5064 uses SPI mode 1 at 16 MHz on the real-time core.
-        let mut dac_config = spi::Config::default();
-        dac_config.frequency = 16_000_000;
-        dac_config.polarity = spi::Polarity::IdleLow;
-        dac_config.phase = spi::Phase::CaptureOnSecondTransition;
-        let dac_spi = Spi::new_blocking_txonly(p.SPI1, p.PIN_10, p.PIN_11, dac_config);
+        let dac_spi =
+            Spi::new_blocking_txonly(p.SPI1, p.PIN_10, p.PIN_11, DAC_SPI_CONFIG.embassy());
 
         Self {
             analog: AnalogParts {

@@ -61,7 +61,6 @@ impl SensorParts {
     pub fn build(self, sample_rate: SampleRate) -> (WhirlRig, Tick) {
         let mut pio = Pio::new(self.pio, crate::Irqs);
         let encoders = DualSsiReader::new(
-            pac::PIO0,
             &mut pio.common,
             pio.sm0,
             self.ssi_clock,
@@ -71,7 +70,6 @@ impl SensorParts {
             ENCODER_BIT_RATE_HZ,
         );
         let pulse = PulsePeriodReader::new(
-            pac::PIO0,
             &mut pio.common,
             pio.sm1,
             self.revolution_pulse,
