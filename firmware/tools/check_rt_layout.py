@@ -14,8 +14,9 @@ SRAM_END = 0x2008_2000
 
 # These names deliberately match stable source identifiers rather than complete
 # Rust symbols. Generic instantiations are mangled, while the source identifiers
-# remain visible in `nm` output. Linker-generated flash thunks are ignored: they
-# are one-time entry veneers, not code reached from inside the tick loop.
+# remain visible in `nm` output. Linker-generated flash-to-SRAM thunks are
+# ignored: SRAM callers reach these definitions directly, so the veneers are
+# not part of the tick call graph.
 HOT_SYMBOLS = (
     "run_hot_loop",
     "run_rt_tick",
