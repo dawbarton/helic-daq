@@ -197,10 +197,8 @@ async fn laser_task(parts: LaserParts) -> ! {
         parts.rx_dma,
         uart_config,
     );
-    let (tx, rx) = uart.split();
     helic_fw_common::laser::configured_laser_run(
-        tx,
-        rx,
+        uart,
         config::LASER_MEASRATE_COMMAND,
         &telemetry::LASER_RANGE_MM,
         &telemetry::LASER_VALUE,

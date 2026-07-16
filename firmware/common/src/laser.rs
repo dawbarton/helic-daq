@@ -3,14 +3,19 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use defmt::{info, warn};
-use embassy_rp::uart::{Async, UartRx, UartTx};
+use embassy_rp::uart::{Async, Uart, UartRx};
 use embassy_time::{Duration, Timer, WithTimeout};
 use helic_drivers::optoncdt::{CommandReply, CommandReplyParser, DistanceScale, Parser, Reading};
 
 const OUTPUT_NONE: &[u8] = b"OUTPUT NONE\n";
+const GET_USER_LEVEL: &[u8] = b"GETUSERLEVEL\n";
 const NO_OUTPUT_REDUCTION: &[u8] = b"OUTREDUCEDEVICE NONE\n";
 const DISTANCE_ONLY: &[u8] = b"OUTADD_RS422 NONE\n";
 const OUTPUT_RS422: &[u8] = b"OUTPUT RS422\n";
+const REQUIRED_BAUD: u32 = 921_600;
+const SUPPORTED_BAUDS: [u32; 11] = [
+    921_600, 1_000_000, 691_200, 460_800, 256_000, 230_400, 128_000, 115_200, 56_000, 19_200, 9_600,
+];
 
 #[derive(Debug, Default)]
 struct ReplyTrace {
@@ -32,14 +37,26 @@ impl ReplyTrace {
 /// therefore followed by a bounded wait for the documented `->` prompt; any
 /// interleaved measurements are discarded until configuration is complete.
 pub async fn configured_laser_run(
-    mut tx: UartTx<'static, Async>,
-    mut rx: UartRx<'static, Async>,
+    mut uart: Uart<'static, Async>,
     measrate_command: &'static [u8],
     range_mm: &'static AtomicU32,
     destination: &'static AtomicU32,
 ) -> ! {
     loop {
-        if configure(&mut tx, &mut rx, measrate_command).await {
+        let Some(baudrate) = detect_baudrate(&mut uart).await else {
+            warn!("laser: no reply at any supported baud rate");
+            Timer::after_secs(2).await;
+            continue;
+        };
+        if baudrate != REQUIRED_BAUD {
+            warn!(
+                "laser: sensor replied at {} baud; {} is required for 8 kHz output",
+                baudrate, REQUIRED_BAUD
+            );
+            Timer::after_secs(2).await;
+            continue;
+        }
+        if configure(&mut uart, measrate_command).await {
             break;
         }
         // The sensor can still be booting when the RP2350 task starts. Retry
@@ -47,14 +64,50 @@ pub async fn configured_laser_run(
         Timer::after_millis(250).await;
     }
     info!("laser: configuration complete; parsing binary measurements");
+    let (_, rx) = uart.split();
     laser_run(rx, range_mm, destination).await
 }
 
-async fn configure(
-    tx: &mut UartTx<'static, Async>,
-    rx: &mut UartRx<'static, Async>,
-    measrate_command: &'static [u8],
-) -> bool {
+async fn detect_baudrate(uart: &mut Uart<'static, Async>) -> Option<u32> {
+    for baudrate in SUPPORTED_BAUDS {
+        uart.set_baudrate(baudrate);
+        info!("laser: probing {} baud", baudrate);
+        if uart.write(GET_USER_LEVEL).await.is_err() {
+            continue;
+        }
+
+        let mut trace = ReplyTrace::default();
+        match wait_for_reply(uart, &mut trace)
+            .with_timeout(Duration::from_millis(200))
+            .await
+        {
+            Ok(Ok(CommandReply::Ok)) => {
+                info!(
+                    "laser: detected {} baud after {} reply bytes; trailing {:?}",
+                    baudrate, trace.bytes_received, trace.trailing
+                );
+                return Some(baudrate);
+            }
+            Ok(Ok(CommandReply::Error(code))) => {
+                warn!(
+                    "laser: baud probe at {} returned E{} after {} bytes",
+                    baudrate, code, trace.bytes_received
+                );
+                return Some(baudrate);
+            }
+            Ok(Err(error)) => {
+                warn!(
+                    "laser: baud probe at {} receive error {:?} after {} bytes",
+                    baudrate, error, trace.bytes_received
+                );
+            }
+            Err(_) => {}
+        }
+    }
+    None
+}
+
+async fn configure(uart: &mut Uart<'static, Async>, measrate_command: &'static [u8]) -> bool {
     // Stop any existing binary stream first so subsequent ASCII replies are
     // quiet and unambiguous. The reply parser still tolerates values already
     // in flight, as required when the sensor retained an earlier RS422 setup.
@@ -67,13 +120,13 @@ async fn configure(
     ];
     for (name, command) in commands {
         info!("laser: sending {}", name);
-        if let Err(error) = tx.write(command).await {
+        if let Err(error) = uart.write(command).await {
             warn!("laser: {} transmit error: {:?}", name, error);
             return false;
         }
 
         let mut trace = ReplyTrace::default();
-        match wait_for_reply(rx, &mut trace)
+        match wait_for_reply(uart, &mut trace)
             .with_timeout(Duration::from_millis(500))
             .await
         {
@@ -110,13 +163,13 @@ async fn configure(
 }
 
 async fn wait_for_reply(
-    rx: &mut UartRx<'static, Async>,
+    uart: &mut Uart<'static, Async>,
     trace: &mut ReplyTrace,
 ) -> Result<CommandReply, embassy_rp::uart::Error> {
     let mut parser = CommandReplyParser::new();
     let mut byte = [0u8; 1];
     loop {
-        rx.read(&mut byte).await?;
+        uart.read(&mut byte).await?;
         trace.push(byte[0]);
         if let Some(reply) = parser.push(byte[0]) {
             return Ok(reply);
