@@ -557,18 +557,17 @@ Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses prob
 
 - The `cbc-rig` behaviour is **verified on hardware** (2026-07): networking,
   RT loop, ADC read, DAC write, DAC→ADC loopback (DC + AC), signal generator, all
-  four sample-rate presets, parameter round-trip, and closed-loop PID. The only
-  path not yet exercised there is the **laser UART with a real optoNCDT
-  sensor**. The whirl-rig PIO and Pico 2W/CYW43 paths have compile-time and
-  host-test verification only. See [../notes.md](../notes.md).
+  four sample-rate presets, parameter round-trip, closed-loop PID, and the
+  optoNCDT command-and-stream path through an ISL3177E at 8 kHz. The whirl-rig
+  PIO and Pico 2W/CYW43 paths have compile-time and host-test verification
+  only. See [../notes.md](../notes.md).
 - Arbitrary table upload and playback are implemented and host-tested, but
   still require scope verification on hardware, including glitch-free
   re-commit and long phase-locked runs.
 - USB serial as a second transport, flash-persisted platform configuration,
   per-period Fourier statistics and a filtered random perturbation source are
-  not implemented. CBC does configure the optoNCDT over UART TX at startup;
-  the phase-wrap hook and estimator interfaces leave room for the latter two
-  without changing the sample-clock architecture.
+  not implemented. The phase-wrap hook and estimator interfaces leave room
+  for the latter two without changing the sample-clock architecture.
 
 The exact verification status changes as boards are exercised. Keep
 [../notes.md](../notes.md) current rather than adding status history here.

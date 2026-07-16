@@ -1,6 +1,6 @@
 # Hardware verification status
 
-Last updated 2026-07-15. Read this before a hardware session and update the
+Last updated 2026-07-16. Read this before a hardware session and update the
 verification boundary, failures and fitted-hardware assumptions afterwards.
 
 ## Verified on hardware
@@ -32,6 +32,15 @@ rtc analogue cape:
   previous finite value;
 - a disconnected laser UART no longer starves core 0 when GP1 has the fitted
   external pull-up;
+- the complete optoNCDT ILD1420-50 command-and-stream path through an
+  ISL3177E. Release firmware `f77e670` detected the sensor at 921.6 kBaud,
+  received the documented `->` prompt, and received an accepted reply to
+  `OUTPUT NONE`, `MEASRATE 8`, `OUTREDUCEDEVICE NONE`,
+  `OUTADD_RS422 NONE`, and `OUTPUT RS422`. The first decoded measurement was
+  24.813969 mm. A subsequent 8000-record `laser` capture at 8 kHz ranged from
+  24.813969 mm to 24.816301 mm, with zero UDP packet loss. After
+  `diag_reset`, the run had zero clock jitter, overruns, tick timeouts, record
+  drops, and command backlog, with a 35 µs maximum loop time;
 - the mandatory synchronous SRAM real-time loop: zero overruns, zero clock
   jitter and a constant 36 µs wake
   phase at 8 kHz under idle, TCP polling, 1000-record capture, 8000-record
@@ -74,36 +83,6 @@ intentionally matches it.
 
 ## Not yet verified on hardware
 
-- An optoNCDT 1420 producing real binary measurements. Only disconnected-line
-  behaviour has been checked. CBC now sends the documented startup commands
-  over GP0, but that bidirectional command-and-stream path is software-only
-  until exercised with the sensor and RS422 hardware.
-
-  Initial bidirectional bring-up on 2026-07-16 flashed release firmware
-  `20c76a5` through the debug probe with an ISL3177E and the ILD1420-50 wired
-  to GP0/GP1. Ethernet and the real-time loop started normally. After clearing
-  diagnostics, a five-second window held `loop_time_max = 34 us`, with zero
-  clock jitter, overruns, tick timeouts, record drops and command backlog, but
-  the host-visible laser value remained exactly `0.0`. No valid in-range
-  binary measurement was therefore demonstrated. The current firmware does
-  not expose whether startup failed through an `Exxx` reply, UART error or
-  reply timeout; add bounded command-status diagnostics or probe both
-  differential pairs before changing polarity or declaring the sensor path
-  operational.
-
-  Follow-up on 2026-07-16 used diagnostic release firmware `7f5e519`.
-  Repeated `OUTPUT NONE` commands completed on UART TX, but every 500 ms reply
-  wait timed out after receiving exactly zero bytes: no prompt, binary data,
-  `Exxx` response, framing error or noise. The sensor output LED also remained
-  unchanged. A subsequent read-only baud scan in release firmware `f085a74`
-  queried `GETUSERLEVEL` at every supported ILD1420 rate from 9.6 kBaud to
-  1 MBaud and likewise received no bytes over repeated complete scans. This
-  rules out a retained supported baud-rate setting. Firmware `f085a74`
-  continued the 8 kHz real-time loop with a 34 us maximum, zero jitter,
-  overruns and tick timeouts during the scan. The next evidence must be
-  electrical: verify ISL3177E VCC and common ground, GP0 activity at DI, the
-  idle and commanded differential voltage at Y/Z and green/yellow, package
-  orientation, and continuity of the sensor Tx pair through A/B to GP1.
 - Long phase-locked arbitrary table operation.
 - `fw-whirl-rig` and `fw-pico2w-rig`. They build with the firmware workspace
   and their portable logic has host tests, but neither has been exercised as
@@ -170,8 +149,15 @@ CBC expects the factory 921.6 kBaud setting. At startup it uses GP0 through a
 TTL-to-RS422 transmitter to stop any old stream, set `MEASRATE` to the
 firmware sample rate, disable output reduction and additional values, then
 select `OUTPUT RS422`. Command replies and the `->` prompt are discarded
-before binary parsing starts. This transmit path and a real 8 kHz binary
-stream still require hardware verification.
+before binary parsing starts. The full command exchange and a real 8 kHz
+binary stream were verified with an ILD1420-50 and ISL3177E on 2026-07-16.
+
+The initial bring-up produced no receive bytes at any supported baud despite
+valid GP0 activity, while the real-time loop remained healthy. Correcting the
+physical RS-422 wiring resolved the fault without a firmware change. If this
+symptom recurs, verify ISL3177E VCC and common ground, package orientation,
+pair polarity, and continuity through both differential paths before changing
+the UART protocol.
 
 ### Ethernet and debug
 
@@ -250,12 +236,11 @@ not establish timing, wired throughput or RF performance.
 Prioritise tests that move a complete path from software-only to physical
 evidence:
 
-1. optoNCDT binary receive with the fitted pull-up;
-2. Pico 2W association, discovery, DAC output and decimated streaming while
+1. Pico 2W association, discovery, DAC output and decimated streaming while
    checking the 8 kHz synchronous tick diagnostics;
-3. whirl-rig shared-clock SSI, simultaneous pitch/yaw capture and optical
+2. whirl-rig shared-clock SSI, simultaneous pitch/yaw capture and optical
    period calibration;
-4. all-source W5500 streaming while watching `records_dropped`, UDP sequence
+3. all-source W5500 streaming while watching `records_dropped`, UDP sequence
    gaps, `loop_time_max`, `overruns` and `tick_timeouts`;
-5. W6100 link, static addressing, DHCP, discovery, control and all-source
+4. W6100 link, static addressing, DHCP, discovery, control and all-source
    streaming, including core-0 load with broadcast traffic.
