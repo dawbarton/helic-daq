@@ -90,6 +90,20 @@ intentionally matches it.
   reply timeout; add bounded command-status diagnostics or probe both
   differential pairs before changing polarity or declaring the sensor path
   operational.
+
+  Follow-up on 2026-07-16 used diagnostic release firmware `7f5e519`.
+  Repeated `OUTPUT NONE` commands completed on UART TX, but every 500 ms reply
+  wait timed out after receiving exactly zero bytes: no prompt, binary data,
+  `Exxx` response, framing error or noise. The sensor output LED also remained
+  unchanged. A subsequent read-only baud scan in release firmware `f085a74`
+  queried `GETUSERLEVEL` at every supported ILD1420 rate from 9.6 kBaud to
+  1 MBaud and likewise received no bytes over repeated complete scans. This
+  rules out a retained supported baud-rate setting. Firmware `f085a74`
+  continued the 8 kHz real-time loop with a 34 us maximum, zero jitter,
+  overruns and tick timeouts during the scan. The next evidence must be
+  electrical: verify ISL3177E VCC and common ground, GP0 activity at DI, the
+  idle and commanded differential voltage at Y/Z and green/yellow, package
+  orientation, and continuity of the sensor Tx pair through A/B to GP1.
 - Long phase-locked arbitrary table operation.
 - `fw-whirl-rig` and `fw-pico2w-rig`. They build with the firmware workspace
   and their portable logic has host tests, but neither has been exercised as
