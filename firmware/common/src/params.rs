@@ -77,6 +77,7 @@ pub struct ExtraParam {
     name: &'static str,
     ty: ParamType,
     value: &'static AtomicU32,
+    reset_on_diag: bool,
 }
 
 impl ExtraParam {
@@ -85,6 +86,7 @@ impl ExtraParam {
             name,
             ty: ParamType::F32,
             value,
+            reset_on_diag: false,
         }
     }
 
@@ -93,6 +95,17 @@ impl ExtraParam {
             name,
             ty: ParamType::U32,
             value,
+            reset_on_diag: false,
+        }
+    }
+
+    /// Declare a read-only event counter cleared by `diag_reset`.
+    pub const fn u32_event(name: &'static str, value: &'static AtomicU32) -> Self {
+        Self {
+            name,
+            ty: ParamType::U32,
+            value,
+            reset_on_diag: true,
         }
     }
 
@@ -107,6 +120,12 @@ impl ExtraParam {
 
     fn get(self, out: &mut [u8]) {
         out.copy_from_slice(&self.value.load(Ordering::Relaxed).to_le_bytes());
+    }
+
+    fn reset_diagnostic(self) {
+        if self.reset_on_diag {
+            self.value.store(0, Ordering::Relaxed);
+        }
     }
 }
 
@@ -485,6 +504,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 // maintained by core 1 but safely writable from here.
                 if u32::from_le_bytes(data.try_into().unwrap()) != 0 {
                     rt_loop::reset_diagnostics();
+                    for extra in self.extras {
+                        extra.reset_diagnostic();
+                    }
                 }
                 return Ok(());
             }

@@ -349,6 +349,10 @@ budgets.
   consecutive distance frames. This may be non-zero when firmware attaches to
   a sensor that was already streaming; it is separate from steady-state loss.
 
+Writing non-zero to `diag_reset` clears the laser fault counters together with
+the timing/event diagnostics. It does not reset `laser_frames_received`, so
+take before/after snapshots when checking the received frame rate.
+
 If something looks wrong, the same numbers appear once a second in the
 debug-probe log, along with connection events.
 

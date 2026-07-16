@@ -70,8 +70,18 @@ class TestSimulator(unittest.TestCase):
             ],
         )
         self.sim._by_name["loop_time_max"].value = 42
+        self.sim._by_name["laser_uart_errors"].value = 7
+        self.sim._by_name["laser_frames_received"].value = 123
         self.dev.set("diag_reset", 1)
-        self.assertEqual(self.dev.get("loop_time_max", "diag_reset"), [0, 0])
+        self.assertEqual(
+            self.dev.get(
+                "loop_time_max",
+                "diag_reset",
+                "laser_uart_errors",
+                "laser_frames_received",
+            ),
+            [0, 0, 0, 123],
+        )
 
     def test_beacon_response(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:

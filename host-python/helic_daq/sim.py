@@ -304,6 +304,11 @@ class Simulator:
                     "t_actuate_max",
                     "t_rest_max",
                     "cmd_backlog_max",
+                    "laser_uart_errors",
+                    "laser_parse_errors",
+                    "laser_invalid_frames",
+                    "laser_unexpected_values",
+                    "laser_sync_errors",
                 ):
                     self._by_name[name].value = 0
                 param.value = 0

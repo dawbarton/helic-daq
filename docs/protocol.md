@@ -116,20 +116,21 @@ The v2 base registry is:
 `wake_phase_*` read 4294967295/0 until the rig reports a sample-clock
 phase. `diag_reset` clears the `*_max`/`*_min` diagnostics along with
 `loop_time_max`, `clock_jitter`, `overruns`, `tick_timeouts`,
-`records_dropped` and `cmd_backlog_max`; total counters such as `ticks` keep
-running.
+`records_dropped`, `cmd_backlog_max`, and experiment event counters such as
+the laser error diagnostics; total counters such as `ticks` and
+`laser_frames_received` keep running.
 
 Experiment read-only values, rig parameters and controller parameters follow
 the base registry. For `cbc-rig`, these include `laser`,
 `laser_frames_received`, `laser_uart_errors`, `laser_parse_errors`,
 `laser_invalid_frames`, `laser_unexpected_values`, `laser_sync_errors`,
-`rig_laser_range`, and `rig_out_channel`. The laser counters are monotonic
-totals since binary-stream synchronisation: complete first values, UART
-receive errors, parser resynchronisations, out-of-range/error readings, and
-unexpected additional output values, respectively. `laser_sync_errors`
-separately counts UART and parser faults while acquiring eight consecutive
-well-formed distance frames after `OUTPUT RS422`. Controller names depend on
-the compile-time selected controller.
+`rig_laser_range`, and `rig_out_channel`. `laser_frames_received` is a
+monotonic total since binary-stream synchronisation. The UART, parser,
+invalid-frame, unexpected-value, and synchronisation error counters are totals
+since boot or the last `diag_reset`. `laser_sync_errors` counts UART and
+parser faults while acquiring eight consecutive well-formed distance frames
+after `OUTPUT RS422`. Controller names depend on the compile-time selected
+controller.
 
 Fourier coefficients use `[mean, a_1..a_K, b_1..b_K]`, representing
 `mean + Σ_k a_k cos(kθ) + b_k sin(kθ)`. The default build uses K = 16.
