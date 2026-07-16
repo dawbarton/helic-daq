@@ -56,7 +56,7 @@ bind_interrupts!(pub struct Irqs {
 // StaticCell supplies permanent task and queue storage without a heap.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
-static LASER_RX_BUFFER: StaticCell<[u8; 256]> = StaticCell::new();
+static LASER_RX_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -170,7 +170,7 @@ async fn laser_task(parts: LaserParts) -> ! {
         parts.uart,
         Irqs,
         parts.rx,
-        LASER_RX_BUFFER.init([0; 256]),
+        LASER_RX_BUFFER.init([0; 4096]),
         config,
     );
     helic_fw_common::laser::laser_run(

@@ -69,7 +69,7 @@ bind_interrupts!(pub struct Irqs {
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static LASER_TX_BUFFER: StaticCell<[u8; 64]> = StaticCell::new();
-static LASER_RX_BUFFER: StaticCell<[u8; 256]> = StaticCell::new();
+static LASER_RX_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -194,7 +194,7 @@ async fn laser_task(parts: LaserParts) -> ! {
         parts.rx,
         Irqs,
         LASER_TX_BUFFER.init([0; 64]),
-        LASER_RX_BUFFER.init([0; 256]),
+        LASER_RX_BUFFER.init([0; 4096]),
         uart_config,
     );
     helic_fw_common::laser::configured_laser_run(

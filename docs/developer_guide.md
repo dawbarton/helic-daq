@@ -330,12 +330,13 @@ Core 0 never touches loop state. Four mechanisms keep communication bounded:
   acquiring eight consecutive well-formed frames are separated into
   `laser_sync_errors`.
 
-The laser UART uses a 256-byte interrupt-drained receive ring. Reading one
+The laser UART uses a 4096-byte interrupt-drained receive ring. Reading one
 three-byte DMA transfer at a time leaves the peripheral briefly unarmed after
 every frame; core-0 startup or network work can then overflow the hardware
 FIFO even though the average data rate is modest. The ring remains armed while
-the async task is descheduled and still lets the task publish each frame as
-soon as it runs.
+the async task is descheduled, holds approximately 170 ms at 8 kHz (beyond the
+50 ms time-watchdog recovery bound), and still lets the task publish each
+frame as soon as it runs.
 
 In `whirl-rig`, PIO0 SM0 drives a shared SSI clock and samples the contiguous
 pitch and yaw pins with one `in pins, 2` instruction. Each hardware-latched
