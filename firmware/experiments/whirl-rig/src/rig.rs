@@ -6,6 +6,7 @@ use embassy_rp::gpio::Output;
 use embassy_rp::pac;
 use embassy_rp::peripherals::PIO0;
 use embassy_rp::pio::Pio;
+use embassy_rp::pwm::Slice;
 use helic_core::rpm::RpmEstimator;
 use helic_drivers::ssi::{deinterleave_pair, SsiFormat, SsiScale};
 use helic_fw_common::pulse_pio::PulsePeriodReader;
@@ -34,6 +35,7 @@ pub struct WhirlRig {
     encoder_scale: SsiScale,
     positions: [f32; 2],
     rpm: RpmEstimator,
+    pwm_slice: usize,
     pwm_divider: u32,
 }
 
@@ -68,6 +70,7 @@ impl WhirlParts {
             },
             positions: [0.0; 2],
             rpm: RpmEstimator::new(RPM_TAU_S, RPM_STALE_AFTER_S, RPM_MIN_PERIOD_S),
+            pwm_slice: self.tick_slice.number(),
             pwm_divider: sample_rate.pwm_params().0 as u32,
         };
 
@@ -164,7 +167,10 @@ impl Rig for WhirlRig {
 
     #[unsafe(link_section = ".data.ram_func")]
     fn tick_phase_us(&self) -> Option<u32> {
-        let ctr = pac::PWM.ch(4).ctr().read().ctr() as u32;
+        // The tick PWM slice (board.rs `tick_slice`) wraps at the sample
+        // instant. With a 150 MHz system clock, the divider converts its
+        // counter directly to elapsed µs.
+        let ctr = pac::PWM.ch(self.pwm_slice).ctr().read().ctr() as u32;
         Some(ctr * self.pwm_divider / 150)
     }
 

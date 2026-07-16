@@ -7,7 +7,7 @@ use defmt::warn;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::{PIN_8, PWM_SLICE4, SPI1};
-use embassy_rp::pwm::{self, Pwm};
+use embassy_rp::pwm::{self, Pwm, Slice};
 use embassy_rp::spi::{self, Blocking, Spi};
 use embassy_rp::{pac, Peri};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -63,6 +63,7 @@ pub struct CbcRig {
     dac_raw: SramAd5064,
     convst: Option<(Peri<'static, PWM_SLICE4>, Peri<'static, PIN_8>)>,
     convst_pwm: Option<Pwm<'static>>,
+    pwm_slice: usize,
     pwm_divider: u32,
     sample_rate: SampleRate,
     adc_scale: f32,
@@ -108,6 +109,7 @@ impl CbcParts {
             tick_pin: self.tick_pin,
             adc_raw,
             dac_raw: SramAd5064::new(dac_raw, DAC_POLARITY, DAC_VREF),
+            pwm_slice: self.convst_slice.number(),
             convst: Some((self.convst_slice, self.convst_pin)),
             convst_pwm: None,
             pwm_divider: sample_rate.pwm_params().0 as u32,
@@ -186,9 +188,10 @@ impl Rig for CbcRig {
 
     #[unsafe(link_section = ".data.ram_func")]
     fn tick_phase_us(&self) -> Option<u32> {
-        // PWM slice 4 wraps at CONVST's rising edge. With a 150 MHz system
-        // clock, the divider converts its counter directly to elapsed µs.
-        let ctr = pac::PWM.ch(4).ctr().read().ctr() as u32;
+        // The CONVST PWM slice wraps at CONVST's rising edge. With a 150 MHz
+        // system clock, the divider converts its counter directly to elapsed
+        // µs.
+        let ctr = pac::PWM.ch(self.pwm_slice).ctr().read().ctr() as u32;
         Some(ctr * self.pwm_divider / 150)
     }
 
@@ -219,6 +222,7 @@ impl Rig for CbcRig {
         }
     }
 
+    #[unsafe(link_section = ".data.ram_func")]
     fn set_param(&mut self, id: u16, value: f32) {
         match id {
             0 => LASER_RANGE_MM.store(value.to_bits(), Ordering::Relaxed),
