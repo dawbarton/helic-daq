@@ -23,4 +23,4 @@ pub use generator::{FourierCoeffs, GenSample, PeriodicGenerator};
 pub use lut::SinLut;
 pub use phase::PhaseAccumulator;
 pub use pid::{Pid, PidConfig};
-pub use table::{TableMode, TablePlayer, WaveTable, MAX_TABLE_LEN};
+pub use table::{TableInterpolation, TableMode, TablePlayer, WaveTable, MAX_TABLE_LEN};

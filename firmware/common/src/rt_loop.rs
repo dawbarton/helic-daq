@@ -10,7 +10,7 @@ use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
 use helic_core::phase::PhaseAccumulator;
-use helic_core::table::{TableMode, TablePlayer, WaveTable};
+use helic_core::table::{TableInterpolation, TableMode, TablePlayer, WaveTable};
 use static_cell::StaticCell;
 
 use crate::rig::{source_count, Rig, TickSource, MAX_SOURCES};
@@ -24,6 +24,7 @@ pub enum RtCommand {
     SetForcingCoeffs(FourierCoeffs<HARMONICS>),
     SetTableIncrement(u32),
     SetTableGain(f32),
+    SetTableInterpolation(TableInterpolation),
     SetTableMode(TableMode),
     SetTableMultiplier(u32),
     SetTablePhase(u32),
@@ -182,6 +183,9 @@ fn run_rt_tick<R: Rig>(
             RtCommand::SetForcingCoeffs(coeffs) => *forcing_coeffs = coeffs,
             RtCommand::SetTableIncrement(increment) => table_player.set_increment(increment),
             RtCommand::SetTableGain(gain) => table_player.set_gain(gain),
+            RtCommand::SetTableInterpolation(interpolation) => {
+                table_player.set_interpolation(interpolation)
+            }
             RtCommand::SetTableMode(mode) => table_player.set_mode(mode),
             RtCommand::SetTableMultiplier(multiplier) => table_player.set_multiplier(multiplier),
             RtCommand::SetTablePhase(offset) => table_player.set_phase_offset(offset),

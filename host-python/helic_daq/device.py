@@ -192,11 +192,13 @@ class Device:
         mode: str = "loop",
         mult: int = 1,
         phase: float = 0.0,
+        interpolation: str = "linear",
     ) -> None:
         """Upload and atomically activate a waveform table.
 
         Free-running modes use ``freq`` or ``1 / duration``. Locked modes
         use an exact integer multiple of the master Fourier phase.
+        ``interpolation`` is ``"linear"`` or zero-order ``"hold"``.
         """
         values = [float(value) for value in values]
         table = self.param("table")
@@ -215,6 +217,14 @@ class Device:
             mode_value = modes[mode]
         except KeyError:
             raise ValueError(f"unknown table mode {mode!r}; choose from {list(modes)}") from None
+        interpolations = {"hold": 0, "linear": 1}
+        try:
+            interpolation_value = interpolations[interpolation]
+        except KeyError:
+            raise ValueError(
+                f"unknown table interpolation {interpolation!r}; choose from "
+                f"{list(interpolations)}"
+            ) from None
         if mult < 1:
             raise ValueError("mult must be at least 1")
         if not 0.0 <= phase < 1.0:
@@ -233,6 +243,7 @@ class Device:
         if freq is not None:
             self.set("table_freq", freq)
         self.set("table_gain", gain)
+        self.set("table_interp", interpolation_value)
         self.set("table_mult", mult)
         self.set("table_phase", phase)
         self.set("table_mode", mode_value)

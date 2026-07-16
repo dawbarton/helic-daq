@@ -67,21 +67,51 @@ impl WaveTable {
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn evaluate(&self, theta: u32) -> f32 {
+        self.evaluate_with(theta, TableInterpolation::Linear)
+    }
+
+    /// Evaluate using the selected interpolation rule.
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
+    pub fn evaluate_with(&self, theta: u32, interpolation: TableInterpolation) -> f32 {
         debug_assert!(self.len >= 2);
         let len = self.len();
         let position = theta as u64 * len as u64;
         let index = (position >> 32) as usize;
         debug_assert!(index < len);
-        let fraction = position as u32 as f32 * (1.0 / 4294967296.0);
-        let next = if index + 1 == len { 0 } else { index + 1 };
-        let a = self.values[index];
-        a + (self.values[next] - a) * fraction
+        match interpolation {
+            TableInterpolation::Linear => {
+                let fraction = position as u32 as f32 * (1.0 / 4294967296.0);
+                let next = if index + 1 == len { 0 } else { index + 1 };
+                let a = self.values[index];
+                a + (self.values[next] - a) * fraction
+            }
+            TableInterpolation::ZeroOrderHold => self.values[index],
+        }
     }
 }
 
 impl Default for WaveTable {
     fn default() -> Self {
         Self::empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TableInterpolation {
+    ZeroOrderHold = 0,
+    #[default]
+    Linear = 1,
+}
+
+impl TableInterpolation {
+    pub const fn from_u32(value: u32) -> Option<Self> {
+        Some(match value {
+            0 => Self::ZeroOrderHold,
+            1 => Self::Linear,
+            _ => return None,
+        })
     }
 }
 
@@ -120,6 +150,7 @@ enum OneShotState {
 pub struct TablePlayer {
     phase: PhaseAccumulator,
     mode: TableMode,
+    interpolation: TableInterpolation,
     gain: f32,
     multiplier: u32,
     phase_offset: u32,
@@ -133,6 +164,7 @@ impl TablePlayer {
         Self {
             phase: PhaseAccumulator::new(),
             mode: TableMode::Off,
+            interpolation: TableInterpolation::Linear,
             gain: 1.0,
             multiplier: 1,
             phase_offset: 0,
@@ -153,6 +185,10 @@ impl TablePlayer {
     pub fn set_mode(&mut self, mode: TableMode) {
         self.mode = mode;
         self.one_shot = OneShotState::Idle;
+    }
+
+    pub fn set_interpolation(&mut self, interpolation: TableInterpolation) {
+        self.interpolation = interpolation;
     }
 
     pub fn set_multiplier(&mut self, multiplier: u32) {
@@ -223,7 +259,7 @@ impl TablePlayer {
                     .wrapping_add(self.phase_offset)
             }
         };
-        self.gain * table.evaluate(theta)
+        self.gain * table.evaluate_with(theta, self.interpolation)
     }
 }
 
@@ -260,6 +296,51 @@ mod tests {
         for theta in (0..=u16::MAX).map(|value| (value as u32) << 16) {
             assert!(three.evaluate(theta).is_finite());
         }
+    }
+
+    #[test]
+    fn zero_order_hold_keeps_each_value_until_the_next_knot() {
+        let table = WaveTable::from_slice(&[0.0, 1.0, 2.0, 3.0]).unwrap();
+        assert_eq!(
+            table.evaluate_with(0, TableInterpolation::ZeroOrderHold),
+            0.0
+        );
+        assert_eq!(
+            table.evaluate_with((1 << 30) - 1, TableInterpolation::ZeroOrderHold),
+            0.0
+        );
+        assert_eq!(
+            table.evaluate_with(1 << 30, TableInterpolation::ZeroOrderHold),
+            1.0
+        );
+        assert_eq!(
+            table.evaluate_with(u32::MAX, TableInterpolation::ZeroOrderHold),
+            3.0
+        );
+    }
+
+    #[test]
+    fn interpolation_values_are_mathematical_orders() {
+        assert_eq!(
+            TableInterpolation::from_u32(0),
+            Some(TableInterpolation::ZeroOrderHold)
+        );
+        assert_eq!(
+            TableInterpolation::from_u32(1),
+            Some(TableInterpolation::Linear)
+        );
+        assert_eq!(TableInterpolation::from_u32(2), None);
+    }
+
+    #[test]
+    fn interpolation_change_does_not_reset_playback_phase() {
+        let table = WaveTable::from_slice(&[0.0, 1.0]).unwrap();
+        let mut player = TablePlayer::new();
+        player.set_mode(TableMode::Loop);
+        player.set_increment(1 << 30);
+        assert_eq!(player.step(&table, 0, false), 0.5);
+        player.set_interpolation(TableInterpolation::ZeroOrderHold);
+        assert_eq!(player.step(&table, 0, false), 1.0);
     }
 
     #[test]

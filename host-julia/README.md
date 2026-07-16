@@ -47,7 +47,13 @@ Discover devices and upload an arbitrary waveform with:
 
 ```julia
 devices = find_devices()
-upload_table!(device, Float32[0, 1, 0, -1]; duration=0.2, mode=:loop)
+upload_table!(
+    device,
+    Float32[0, 1, 0, -1];
+    duration=0.2,
+    mode=:loop,
+    interpolation=:hold,
+)
 ```
 
 The Python package retains the `helic-daq` command-line interface and simulator;

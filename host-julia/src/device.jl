@@ -404,7 +404,10 @@ function _request_with_busy_retry(
     return  # unreachable; Runic requires an explicit return
 end
 
-"""Stage and atomically activate a finite arbitrary waveform table."""
+"""Stage and atomically activate a finite arbitrary waveform table.
+
+`interpolation` is `:linear` or zero-order `:hold`.
+"""
 function upload_table!(
         device::Device,
         values;
@@ -412,6 +415,7 @@ function upload_table!(
         frequency::Union{Nothing, Real} = nothing,
         gain::Real = 1,
         mode::Symbol = :loop,
+        interpolation::Symbol = :linear,
         multiplier::Integer = 1,
         phase::Real = 0,
     )
@@ -430,6 +434,9 @@ function upload_table!(
         throw(ArgumentError("frequency must be positive"))
     modes = Dict(:off => 0, :loop => 1, :one_shot => 2, :locked => 3, :locked_one_shot => 4)
     haskey(modes, mode) || throw(ArgumentError("unknown table mode :$mode"))
+    interpolations = Dict(:hold => 0, :linear => 1)
+    haskey(interpolations, interpolation) ||
+        throw(ArgumentError("unknown table interpolation :$interpolation"))
     multiplier >= 1 || throw(ArgumentError("multiplier must be at least 1"))
     0 <= phase < 1 || throw(ArgumentError("phase must be in [0, 1)"))
 
@@ -455,6 +462,7 @@ function upload_table!(
     )
     !isnothing(frequency) && setparam!(device, "table_freq", frequency)
     setparam!(device, "table_gain", gain)
+    setparam!(device, "table_interp", interpolations[interpolation])
     setparam!(device, "table_mult", multiplier)
     setparam!(device, "table_phase", phase)
     mode_value = modes[mode]

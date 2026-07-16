@@ -49,16 +49,31 @@ class TestSimulator(unittest.TestCase):
         np.testing.assert_allclose(data["out"], 1.0)
 
     def test_upload_table_helper(self):
-        self.dev.upload_table([0.0, 1.0, 0.0, -1.0], duration=0.1, gain=2.0)
+        self.dev.upload_table(
+            [0.0, 1.0, 0.0, -1.0],
+            duration=0.1,
+            gain=2.0,
+            interpolation="hold",
+        )
         self.assertEqual(self.sim.table, [0.0, 1.0, 0.0, -1.0])
         self.assertEqual(self.dev.get("table_len"), 4)
         self.assertAlmostEqual(self.dev.get("table_freq"), 10.0)
+        self.assertEqual(self.dev.get("table_interp"), 0)
         self.assertEqual(self.dev.get("table_mode"), 1)
+
+    def test_table_interpolation_changes_simulated_shape(self):
+        self.dev.upload_table([0.0, 1.0], freq=1000.0, interpolation="hold")
+        held = [self.sim._table_value(t) for t in (0.000125, 0.000375, 0.000625)]
+        np.testing.assert_allclose(held, [0.0, 0.0, 1.0])
+
+        self.dev.set("table_interp", 1)
+        linear = [self.sim._table_value(t) for t in (0.000125, 0.000375, 0.000625)]
+        np.testing.assert_allclose(linear, [0.25, 0.75, 0.75], atol=1e-6)
 
     def test_timing_diagnostics_match_firmware_registry(self):
         names = [param.name for param in self.dev.params]
         self.assertEqual(
-            names[22:29],
+            names[23:30],
             [
                 "wake_phase_min",
                 "wake_phase_max",
@@ -175,12 +190,15 @@ class TestSimulator(unittest.TestCase):
                         str(path),
                         "--duration",
                         "0.2",
+                        "--interpolation",
+                        "hold",
                     ]
                 )
             self.dev = Device("127.0.0.1", self.sim.port)
         self.assertEqual(result, 0)
         self.assertEqual(self.dev.get("table_len"), 4)
         self.assertAlmostEqual(self.dev.get("table_freq"), 5.0)
+        self.assertEqual(self.dev.get("table_interp"), 0)
 
     def test_bad_frame_drops_only_that_connection(self):
         self.dev.close()

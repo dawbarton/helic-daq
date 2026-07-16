@@ -25,6 +25,7 @@ pub const BASE_PARAMS: &[ParamDef] = &[
     ParamDef::read_only("table_len", ParamType::U16, 1),
     ParamDef::writable("table_freq", ParamType::F32, 1),
     ParamDef::writable("table_gain", ParamType::F32, 1),
+    ParamDef::writable("table_interp", ParamType::U32, 1),
     ParamDef::writable("table_mode", ParamType::U32, 1),
     ParamDef::writable("table_mult", ParamType::U32, 1),
     ParamDef::writable("table_phase", ParamType::F32, 1),
@@ -46,17 +47,18 @@ pub(super) const IDX_TABLE: usize = 14;
 pub(super) const IDX_TABLE_LEN: usize = 15;
 pub(super) const IDX_TABLE_FREQ: usize = 16;
 pub(super) const IDX_TABLE_GAIN: usize = 17;
-pub(super) const IDX_TABLE_MODE: usize = 18;
-pub(super) const IDX_TABLE_MULT: usize = 19;
-pub(super) const IDX_TABLE_PHASE: usize = 20;
-pub(super) const IDX_TABLE_TRIGGER: usize = 21;
-pub(super) const IDX_WAKE_PHASE_MIN: usize = 22;
-pub(super) const IDX_WAKE_PHASE_MAX: usize = 23;
-pub(super) const IDX_T_MEASURE_MAX: usize = 24;
-pub(super) const IDX_T_ACTUATE_MAX: usize = 25;
-pub(super) const IDX_T_REST_MAX: usize = 26;
-pub(super) const IDX_DIAG_RESET: usize = 27;
-pub(super) const IDX_COMMAND_BACKLOG_MAX: usize = 28;
+pub(super) const IDX_TABLE_INTERPOLATION: usize = 18;
+pub(super) const IDX_TABLE_MODE: usize = 19;
+pub(super) const IDX_TABLE_MULT: usize = 20;
+pub(super) const IDX_TABLE_PHASE: usize = 21;
+pub(super) const IDX_TABLE_TRIGGER: usize = 22;
+pub(super) const IDX_WAKE_PHASE_MIN: usize = 23;
+pub(super) const IDX_WAKE_PHASE_MAX: usize = 24;
+pub(super) const IDX_T_MEASURE_MAX: usize = 25;
+pub(super) const IDX_T_ACTUATE_MAX: usize = 26;
+pub(super) const IDX_T_REST_MAX: usize = 27;
+pub(super) const IDX_DIAG_RESET: usize = 28;
+pub(super) const IDX_COMMAND_BACKLOG_MAX: usize = 29;
 
 pub(super) const MAX_CTRL_PARAMS: usize = 8;
 pub(super) const MAX_RIG_PARAMS: usize = 8;

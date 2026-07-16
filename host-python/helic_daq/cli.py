@@ -154,6 +154,7 @@ def cmd_upload(args) -> None:
             freq=args.freq,
             gain=args.gain,
             mode=args.mode,
+            interpolation=args.interpolation,
             mult=args.mult,
             phase=args.phase,
         )
@@ -221,6 +222,12 @@ def main(argv=None) -> int:
         "--mode",
         choices=["off", "loop", "one-shot", "locked", "locked-one-shot"],
         default="loop",
+    )
+    p.add_argument(
+        "--interpolation",
+        choices=["hold", "linear"],
+        default="linear",
+        help="table interpolation order (default linear)",
     )
     p.add_argument("--mult", type=int, default=1, help="locked frequency multiplier")
     p.add_argument("--phase", type=float, default=0.0, help="locked phase offset in turns")

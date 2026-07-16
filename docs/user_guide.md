@@ -256,21 +256,42 @@ Upload 2–4096 finite samples from Python or a NumPy `.npy` file:
 
 ```python
 wave = [0.0, 1.0, 0.0, -1.0]
-dev.upload_table(wave, duration=0.2, gain=1.5, mode="loop")
+dev.upload_table(
+    wave,
+    duration=0.2,
+    gain=1.5,
+    mode="loop",
+    interpolation="hold",
+)
 ```
 
 In Julia, the corresponding call is:
 
 ```julia
-upload_table!(dev, Float32[0, 1, 0, -1]; duration=0.2, gain=1.5, mode=:loop)
+upload_table!(
+    dev,
+    Float32[0, 1, 0, -1];
+    duration=0.2,
+    gain=1.5,
+    mode=:loop,
+    interpolation=:hold,
+)
 ```
 
 In MATLAB:
 
 ```matlab
 device.uploadTable(single([0, 1, 0, -1]), ...
-    'Duration', 0.2, 'Gain', 1.5, 'Mode', "loop");
+    'Duration', 0.2, 'Gain', 1.5, 'Mode', "loop", ...
+    'Interpolation', "hold");
 ```
+
+Interpolation is selected independently of the playback mode. `linear`, the
+default, joins adjacent table values and interpolates the final value back to
+the first. `hold` uses zero-order hold: each table value remains constant for
+its complete phase interval, including the final value up to the period wrap.
+The underlying `table_interp` parameter is the mathematical interpolation
+order, with `0` for zero-order hold and `1` for linear interpolation.
 
 Free-running `loop` and `one-shot` modes use `table_freq`, set directly with
 `freq=` or as `1 / duration`. `locked` and `locked-one-shot` derive their

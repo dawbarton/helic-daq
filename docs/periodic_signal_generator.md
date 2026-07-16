@@ -41,6 +41,12 @@ runs the controller, and actuates the selected rig. It intentionally does not
 generate DMA-sized blocks: acquisition, feedback and output must complete for
 each individual sample.
 
+Waveform tables support independently selected interpolation order. Order 0
+is zero-order hold, keeping each table element constant over its complete
+phase interval. Order 1 is linear interpolation between adjacent elements,
+including the periodic segment from the final element back to the first.
+Linear interpolation remains the default.
+
 At 8 kHz and 150 MHz there are 18,750 cycles per tick. Two 16-harmonic series
 occupy only a small part of that budget, but timing claims must be checked on
 hardware through `loop_time_max`, `overruns` and the experiment's timing pin.

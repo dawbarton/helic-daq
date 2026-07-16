@@ -59,6 +59,7 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("table_len", "H", 1, False, 0),
         SimParam("table_freq", "f", 1, True, 0.0),
         SimParam("table_gain", "f", 1, True, 1.0),
+        SimParam("table_interp", "I", 1, True, 1),
         SimParam("table_mode", "I", 1, True, 0),
         SimParam("table_mult", "I", 1, True, 1),
         SimParam("table_phase", "f", 1, True, 0.0),
@@ -278,6 +279,8 @@ class Simulator:
                 return self._error(6, msg_type)
             if param.name == "table_gain" and not math.isfinite(value):
                 return self._error(6, msg_type)
+            if param.name == "table_interp" and value not in range(2):
+                return self._error(6, msg_type)
             if param.name == "table_mode" and value not in range(5):
                 return self._error(6, msg_type)
             if param.name == "table_mult" and value < 1:
@@ -420,9 +423,12 @@ class Simulator:
                     return 0.0
         position = phase * len(self.table)
         index = int(position)
-        fraction = position - index
-        following = (index + 1) % len(self.table)
-        value = self.table[index] + fraction * (self.table[following] - self.table[index])
+        if self._by_name["table_interp"].value == 0:
+            value = self.table[index]
+        else:
+            fraction = position - index
+            following = (index + 1) % len(self.table)
+            value = self.table[index] + fraction * (self.table[following] - self.table[index])
         return self._by_name["table_gain"].value * value
 
     def _values(self, index: int, rng: random.Random) -> list[float]:

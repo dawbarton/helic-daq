@@ -101,6 +101,7 @@ The v2 base registry is:
 | table_len | H | ro | active table length |
 | table_freq | f | rw | free-running table playback frequency, Hz |
 | table_gain | f | rw | table contribution gain |
+| table_interp | I | rw | interpolation order: 0 zero-order hold, 1 linear |
 | table_mode | I | rw | 0 off, 1 loop, 2 one-shot, 3 locked loop, 4 locked one-shot |
 | table_mult | I | rw | locked integer frequency multiplier, at least 1 |
 | table_phase | f | rw | locked phase offset in turns, in [0,1) |

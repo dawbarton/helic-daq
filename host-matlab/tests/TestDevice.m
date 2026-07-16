@@ -6,12 +6,12 @@ classdef TestDevice < matlab.unittest.TestCase
             device = helicdaq.Device("test", 'Transport', transport);
             cleanup = onCleanup(@() delete(device));
 
-            testCase.verifyEqual(height(device.Parameters), 12);
+            testCase.verifyEqual(height(device.Parameters), 13);
             testCase.verifyEqual(device.parameter('freq').Index, uint16(2));
             testCase.verifyEqual(device.getParameter('firmware'), "helic-daq test");
             information = device.status();
             testCase.verifyEqual(information.ProtocolVersion, uint8(2));
-            testCase.verifyEqual(information.ParameterCount, 12);
+            testCase.verifyEqual(information.ParameterCount, 13);
             testCase.verifyEqual(information.SourceCount, 2);
             testCase.verifyEqual(information.SampleRate, single(1000));
             testCase.verifyEqual(information.Uptime, seconds(42));
@@ -30,10 +30,11 @@ classdef TestDevice < matlab.unittest.TestCase
             device = helicdaq.Device("test", 'Transport', transport);
             cleanup = onCleanup(@() delete(device));
             device.uploadTable([0, 1, 0, -1], 'Duration', 0.2, ...
-                'Gain', 2, 'Mode', "one-shot");
+                'Gain', 2, 'Mode', "one-shot", 'Interpolation', "hold");
             testCase.verifyEqual(transport.parameterValue('table_len'), uint16(4));
             testCase.verifyEqual(transport.parameterValue('table_freq'), single(5));
             testCase.verifyEqual(transport.parameterValue('table_gain'), single(2));
+            testCase.verifyEqual(transport.parameterValue('table_interp'), uint32(0));
             testCase.verifyEqual(transport.parameterValue('table_mode'), uint32(2));
             testCase.verifyEqual(transport.parameterValue('table_trigger'), uint32(1));
         end

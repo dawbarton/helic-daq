@@ -41,7 +41,8 @@ Upload an arbitrary waveform with:
 
 ```matlab
 device.uploadTable(single([0, 1, 0, -1]), ...
-    'Duration', 0.2, 'Gain', 1.5, 'Mode', "loop");
+    'Duration', 0.2, 'Gain', 1.5, 'Mode', "loop", ...
+    'Interpolation', "hold");
 ```
 
 For continuous acquisition, combine `configureStream`, `StreamReceiver`,

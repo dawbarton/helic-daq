@@ -270,6 +270,7 @@ classdef Device < handle
 
         function uploadTable(obj, values, varargin)
             %UPLOADTABLE Stage and atomically activate an arbitrary waveform.
+            % Interpolation is "linear" or zero-order "hold".
             parser = inputParser;
             parser.addParameter('Duration', [], ...
                 @(value) isempty(value) || ...
@@ -280,6 +281,8 @@ classdef Device < handle
             parser.addParameter('Gain', 1, ...
                 @(value) isscalar(value) && isfinite(value));
             parser.addParameter('Mode', "loop", ...
+                @(value) ischar(value) || isstring(value));
+            parser.addParameter('Interpolation', "linear", ...
                 @(value) ischar(value) || isstring(value));
             parser.addParameter('Multiplier', 1, ...
                 @(value) isscalar(value) && isfinite(value) && ...
@@ -325,6 +328,16 @@ classdef Device < handle
                     error('helicdaq:TableMode', ...
                         'Unknown table mode ''%s''.', string(options.Mode));
             end
+            switch string(options.Interpolation)
+                case "hold"
+                    interpolation = 0;
+                case "linear"
+                    interpolation = 1;
+                otherwise
+                    error('helicdaq:TableInterpolation', ...
+                        'Unknown table interpolation ''%s''.', ...
+                        string(options.Interpolation));
+            end
 
             bytes = helicdaq.Protocol.packLE(values, 'single');
             chunkSize = floor((helicdaq.Protocol.MAX_PAYLOAD - 6) / 4) * 4;
@@ -340,6 +353,7 @@ classdef Device < handle
                 obj.setParameter('table_freq', frequency);
             end
             obj.setParameter('table_gain', options.Gain);
+            obj.setParameter('table_interp', interpolation);
             obj.setParameter('table_mult', options.Multiplier);
             obj.setParameter('table_phase', options.Phase);
             obj.setParameter('table_mode', mode);

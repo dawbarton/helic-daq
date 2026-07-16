@@ -90,6 +90,7 @@ function start_mock_device()
         (name = "table_len", type_code = 'H', count = 1, writable = false, value = UInt16(0)),
         (name = "table_freq", type_code = 'f', count = 1, writable = true, value = Float32(0)),
         (name = "table_gain", type_code = 'f', count = 1, writable = true, value = Float32(1)),
+        (name = "table_interp", type_code = 'I', count = 1, writable = true, value = UInt32(1)),
         (name = "table_mode", type_code = 'I', count = 1, writable = true, value = UInt32(0)),
         (name = "table_mult", type_code = 'I', count = 1, writable = true, value = UInt32(1)),
         (name = "table_phase", type_code = 'f', count = 1, writable = true, value = Float32(0)),
@@ -184,12 +185,12 @@ end
     mock = start_mock_device()
     device = Device("127.0.0.1"; port = mock.port)
     try
-        @test length(device.parameters) == 12
+        @test length(device.parameters) == 13
         @test parameter(device, :freq).index == 2
         @test device["firmware"] == "helic-daq test"
         @test status(device) == (
             protocol_version = UInt8(2),
-            n_params = 12,
+            n_params = 13,
             n_sources = 2,
             sample_rate = Float32(1000),
             uptime = 42.0,
@@ -202,10 +203,18 @@ end
         @test_throws ArgumentError getparams(device, (:freq, :freq))
         @test_throws DeviceError setparam!(device, :firmware, "x")
 
-        upload_table!(device, [0, 1, 0, -1]; duration = 0.2, gain = 2, mode = :one_shot)
+        upload_table!(
+            device,
+            [0, 1, 0, -1];
+            duration = 0.2,
+            gain = 2,
+            mode = :one_shot,
+            interpolation = :hold,
+        )
         @test device[:table_len] == 4
         @test device[:table_freq] == 5.0f0
         @test device[:table_gain] == 2.0f0
+        @test device[:table_interp] == UInt32(0)
         @test device[:table_mode] == UInt32(2)
         @test device[:table_trigger] == UInt32(1)
 

@@ -14,7 +14,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
-use helic_core::table::TableMode;
+use helic_core::table::{TableInterpolation, TableMode};
 use helic_proto::{ErrorCode, ParamType};
 
 use crate::rig::Rig;
@@ -151,6 +151,7 @@ enum ShadowUpdate {
     Forcing(FourierCoeffs<HARMONICS>),
     TableFreq(f32),
     TableGain(f32),
+    TableInterpolation(u32),
     TableMode(u32),
     TableMult(u32),
     TablePhase(f32),
@@ -170,6 +171,7 @@ pub struct ParamStore<C: Controller, R: Rig> {
     forcing: FourierCoeffs<HARMONICS>,
     table_freq_hz: f32,
     table_gain: f32,
+    table_interpolation: u32,
     table_mode: u32,
     table_mult: u32,
     table_phase: f32,
@@ -224,6 +226,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             forcing: FourierCoeffs::zero(),
             table_freq_hz: 0.0,
             table_gain: 1.0,
+            table_interpolation: TableInterpolation::Linear as u32,
             table_mode: 0,
             table_mult: 1,
             table_phase: 0.0,
@@ -350,6 +353,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             IDX_TABLE_LEN => out.copy_from_slice(&table::active_len().to_le_bytes()),
             IDX_TABLE_FREQ => out.copy_from_slice(&self.table_freq_hz.to_le_bytes()),
             IDX_TABLE_GAIN => out.copy_from_slice(&self.table_gain.to_le_bytes()),
+            IDX_TABLE_INTERPOLATION => out.copy_from_slice(&self.table_interpolation.to_le_bytes()),
             IDX_TABLE_MODE => out.copy_from_slice(&self.table_mode.to_le_bytes()),
             IDX_TABLE_MULT => out.copy_from_slice(&self.table_mult.to_le_bytes()),
             IDX_TABLE_PHASE => out.copy_from_slice(&self.table_phase.to_le_bytes()),
@@ -464,6 +468,15 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 }
                 (RtCommand::SetTableGain(gain), ShadowUpdate::TableGain(gain))
             }
+            IDX_TABLE_INTERPOLATION => {
+                let interpolation = u32::from_le_bytes(data.try_into().unwrap());
+                let interpolation_value =
+                    TableInterpolation::from_u32(interpolation).ok_or(ErrorCode::BadValue)?;
+                (
+                    RtCommand::SetTableInterpolation(interpolation_value),
+                    ShadowUpdate::TableInterpolation(interpolation),
+                )
+            }
             IDX_TABLE_MODE => {
                 let mode = u32::from_le_bytes(data.try_into().unwrap());
                 let mode_value = TableMode::from_u32(mode).ok_or(ErrorCode::BadValue)?;
@@ -546,6 +559,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             ShadowUpdate::Forcing(coeffs) => self.forcing = coeffs,
             ShadowUpdate::TableFreq(freq) => self.table_freq_hz = freq,
             ShadowUpdate::TableGain(gain) => self.table_gain = gain,
+            ShadowUpdate::TableInterpolation(interpolation) => {
+                self.table_interpolation = interpolation
+            }
             ShadowUpdate::TableMode(mode) => self.table_mode = mode,
             ShadowUpdate::TableMult(multiplier) => self.table_mult = multiplier,
             ShadowUpdate::TablePhase(phase) => self.table_phase = phase,
