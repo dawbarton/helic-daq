@@ -122,11 +122,14 @@ running.
 Experiment read-only values, rig parameters and controller parameters follow
 the base registry. For `cbc-rig`, these include `laser`,
 `laser_frames_received`, `laser_uart_errors`, `laser_parse_errors`,
-`laser_invalid_frames`, `laser_unexpected_values`, `rig_laser_range`, and
-`rig_out_channel`. The laser counters are monotonic totals since boot:
-complete first values, UART receive errors, parser resynchronisations,
-out-of-range/error readings, and unexpected additional output values,
-respectively. Controller names depend on the compile-time selected controller.
+`laser_invalid_frames`, `laser_unexpected_values`, `laser_sync_errors`,
+`rig_laser_range`, and `rig_out_channel`. The laser counters are monotonic
+totals since binary-stream synchronisation: complete first values, UART
+receive errors, parser resynchronisations, out-of-range/error readings, and
+unexpected additional output values, respectively. `laser_sync_errors`
+separately counts UART and parser faults while acquiring eight consecutive
+well-formed distance frames after `OUTPUT RS422`. Controller names depend on
+the compile-time selected controller.
 
 Fourier coefficients use `[mean, a_1..a_K, b_1..b_K]`, representing
 `mean + Σ_k a_k cos(kθ) + b_k sin(kθ)`. The default build uses K = 16.

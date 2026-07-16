@@ -183,6 +183,7 @@ async fn laser_task(parts: LaserParts) -> ! {
             &telemetry::LASER_PARSE_ERRORS,
             &telemetry::LASER_INVALID_FRAMES,
             &telemetry::LASER_UNEXPECTED_VALUES,
+            &telemetry::LASER_SYNC_ERRORS,
         ),
     )
     .await

@@ -16,6 +16,7 @@ const NO_OUTPUT_REDUCTION: &[u8] = b"OUTREDUCEDEVICE NONE\n";
 const DISTANCE_ONLY: &[u8] = b"OUTADD_RS422 NONE\n";
 const OUTPUT_RS422: &[u8] = b"OUTPUT RS422\n";
 const REQUIRED_BAUD: u32 = 921_600;
+const SYNC_FRAMES: u8 = 8;
 const SUPPORTED_BAUDS: [u32; 11] = [
     921_600, 1_000_000, 691_200, 460_800, 256_000, 230_400, 128_000, 115_200, 56_000, 19_200, 9_600,
 ];
@@ -42,6 +43,7 @@ pub struct LaserCounters {
     parse_errors: &'static AtomicU32,
     invalid_frames: &'static AtomicU32,
     unexpected_values: &'static AtomicU32,
+    sync_errors: &'static AtomicU32,
 }
 
 impl LaserCounters {
@@ -51,6 +53,7 @@ impl LaserCounters {
         parse_errors: &'static AtomicU32,
         invalid_frames: &'static AtomicU32,
         unexpected_values: &'static AtomicU32,
+        sync_errors: &'static AtomicU32,
     ) -> Self {
         Self {
             frames_received,
@@ -58,6 +61,7 @@ impl LaserCounters {
             parse_errors,
             invalid_frames,
             unexpected_values,
+            sync_errors,
         }
     }
 }
@@ -276,11 +280,19 @@ pub async fn laser_run(
     let mut parser = Parser::new();
     let mut buf = [0u8; 32];
     let mut first_distance_logged = false;
+    let mut synchronised = false;
+    let mut clean_frames = 0u8;
     loop {
         let received = match rx.read(&mut buf).await {
             Ok(received) => received,
             Err(_) => {
-                counters.uart_errors.fetch_add(1, Ordering::Relaxed);
+                if synchronised {
+                    counters.uart_errors.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    counters.sync_errors.fetch_add(1, Ordering::Relaxed);
+                    clean_frames = 0;
+                }
+                parser = Parser::new();
                 // A floating disconnected line can generate enough
                 // framing-error interrupts to starve core 0; retain the
                 // hardware pull-up and back off after errors as defence in
@@ -293,17 +305,36 @@ pub async fn laser_run(
             let value = match parser.push_event(byte) {
                 ParseEvent::Pending => continue,
                 ParseEvent::Resynchronised => {
-                    counters.parse_errors.fetch_add(1, Ordering::Relaxed);
+                    if synchronised {
+                        counters.parse_errors.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        counters.sync_errors.fetch_add(1, Ordering::Relaxed);
+                        clean_frames = 0;
+                    }
                     continue;
                 }
                 ParseEvent::Value(value) => value,
             };
             if !value.first {
-                counters.unexpected_values.fetch_add(1, Ordering::Relaxed);
+                if synchronised {
+                    counters.unexpected_values.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    counters.sync_errors.fetch_add(1, Ordering::Relaxed);
+                    clean_frames = 0;
+                }
                 continue;
             }
 
-            counters.frames_received.fetch_add(1, Ordering::Relaxed);
+            if !synchronised {
+                clean_frames = clean_frames.saturating_add(1);
+                if clean_frames == SYNC_FRAMES {
+                    synchronised = true;
+                    info!("laser: binary stream synchronised");
+                }
+            }
+            if synchronised {
+                counters.frames_received.fetch_add(1, Ordering::Relaxed);
+            }
             let scale = DistanceScale::new(f32::from_bits(range_mm.load(Ordering::Relaxed)));
             match scale.convert(value.value) {
                 Reading::InRange(mm) => {
@@ -317,21 +348,27 @@ pub async fn laser_run(
                     destination.store(mm.to_bits(), Ordering::Relaxed);
                 }
                 Reading::BelowRange => {
-                    counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    if synchronised {
+                        counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    }
                     if !first_distance_logged {
                         warn!("laser: first distance raw={} is below range", value.value);
                         first_distance_logged = true;
                     }
                 }
                 Reading::AboveRange => {
-                    counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    if synchronised {
+                        counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    }
                     if !first_distance_logged {
                         warn!("laser: first distance raw={} is above range", value.value);
                         first_distance_logged = true;
                     }
                 }
                 Reading::Error(code) => {
-                    counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    if synchronised {
+                        counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    }
                     if !first_distance_logged {
                         warn!("laser: first distance is sensor error {}", code);
                         first_distance_logged = true;

@@ -345,6 +345,9 @@ budgets.
   error value rather than an in-range distance.
 - `laser_unexpected_values`: additional values after the distance value. This
   should remain zero because startup selects distance-only output.
+- `laser_sync_errors`: UART/parser events while acquiring the initial eight
+  consecutive distance frames. This may be non-zero when firmware attaches to
+  a sensor that was already streaming; it is separate from steady-state loss.
 
 If something looks wrong, the same numbers appear once a second in the
 debug-probe log, along with connection events.

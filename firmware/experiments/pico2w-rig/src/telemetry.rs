@@ -11,6 +11,7 @@ pub static LASER_UART_ERRORS: AtomicU32 = AtomicU32::new(0);
 pub static LASER_PARSE_ERRORS: AtomicU32 = AtomicU32::new(0);
 pub static LASER_INVALID_FRAMES: AtomicU32 = AtomicU32::new(0);
 pub static LASER_UNEXPECTED_VALUES: AtomicU32 = AtomicU32::new(0);
+pub static LASER_SYNC_ERRORS: AtomicU32 = AtomicU32::new(0);
 
 pub const EXTRA_PARAMS: &[ExtraParam] = &[
     ExtraParam::f32("laser", &LASER_VALUE),
@@ -19,4 +20,5 @@ pub const EXTRA_PARAMS: &[ExtraParam] = &[
     ExtraParam::u32("laser_parse_errors", &LASER_PARSE_ERRORS),
     ExtraParam::u32("laser_invalid_frames", &LASER_INVALID_FRAMES),
     ExtraParam::u32("laser_unexpected_values", &LASER_UNEXPECTED_VALUES),
+    ExtraParam::u32("laser_sync_errors", &LASER_SYNC_ERRORS),
 ];

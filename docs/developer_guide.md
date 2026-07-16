@@ -326,7 +326,9 @@ Core 0 never touches loop state. Four mechanisms keep communication bounded:
   without sharing live loop state between cores. The optoNCDT task also
   publishes monotonic frame, UART-error, parser-resynchronisation,
   invalid-frame, and unexpected-value counters so its independent 8 kHz input
-  rate can be compared with RT ticks under core-0 load.
+  rate can be compared with RT ticks under core-0 load. Boundary faults while
+  acquiring eight consecutive well-formed frames are separated into
+  `laser_sync_errors`.
 
 The laser UART uses a 256-byte interrupt-drained receive ring. Reading one
 three-byte DMA transfer at a time leaves the peripheral briefly unarmed after
