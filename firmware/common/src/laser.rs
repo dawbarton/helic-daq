@@ -100,6 +100,43 @@ pub async fn configured_laser_run(
 }
 
 async fn detect_baudrate(uart: &mut Uart<'static, Async>) -> Option<u32> {
+    // On an RP2350 restart the sensor may still be streaming. The first byte
+    // seen after UART enable can then begin mid-character and report a framing
+    // error even at the correct baud. Retry the stop command at the required
+    // rate before trying any other baud: once the sensor receives it, the
+    // next reply is quiet ASCII and the normal configuration can proceed.
+    uart.set_baudrate(REQUIRED_BAUD);
+    for attempt in 1..=3 {
+        info!(
+            "laser: stopping old stream at {} baud (attempt {})",
+            REQUIRED_BAUD, attempt
+        );
+        if uart.write(OUTPUT_NONE).await.is_err() {
+            continue;
+        }
+
+        let mut trace = ReplyTrace::default();
+        match wait_for_reply(uart, &mut trace)
+            .with_timeout(Duration::from_millis(200))
+            .await
+        {
+            Ok(Ok(CommandReply::Ok | CommandReply::Error(_))) => {
+                info!(
+                    "laser: detected {} baud after {} reply bytes; trailing {:?}",
+                    REQUIRED_BAUD, trace.bytes_received, trace.trailing
+                );
+                return Some(REQUIRED_BAUD);
+            }
+            Ok(Err(error)) => {
+                warn!(
+                    "laser: stop attempt {} receive error {:?} after {} bytes",
+                    attempt, error, trace.bytes_received
+                );
+            }
+            Err(_) => {}
+        }
+    }
+
     for baudrate in SUPPORTED_BAUDS {
         uart.set_baudrate(baudrate);
         info!("laser: probing {} baud", baudrate);
