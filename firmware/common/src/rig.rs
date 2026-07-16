@@ -19,6 +19,7 @@ pub const GENERATED_SOURCES: &[(&str, &str)] = &[
     ("forcing", "V"),
     ("table", "V"),
     ("out", "V"),
+    ("cmd_epoch", "count"),
 ];
 
 pub const fn source_count<R: Rig>() -> usize {

@@ -42,6 +42,8 @@ pub const COMMAND_QUEUE_LEN: usize = 32;
 /// coefficient sets could consume the whole period. Remaining commands stay in
 /// FIFO order for the next tick and are observable through the backlog maximum.
 pub const COMMANDS_PER_TICK: usize = 2;
+/// Mask for a command epoch that remains exactly representable as `f32`.
+const COMMAND_EPOCH_MASK: u32 = (1 << 24) - 1;
 pub type CommandProducer = Producer<'static, RtCommand>;
 pub type CommandConsumer = Consumer<'static, RtCommand>;
 
@@ -142,6 +144,7 @@ fn run_rt_tick<R: Rig>(
     phase: &mut PhaseAccumulator,
     target_coeffs: &mut FourierCoeffs<HARMONICS>,
     forcing_coeffs: &mut FourierCoeffs<HARMONICS>,
+    command_epoch: &mut u32,
     table_player: &mut TablePlayer,
     active_table: &mut &'static WaveTable,
     index: &mut u32,
@@ -202,6 +205,10 @@ fn run_rt_tick<R: Rig>(
         // the boundary while the fixed loop above still bounds the work.
         let backlog = commands_applied + commands.len();
         COMMAND_BACKLOG_MAX.fetch_max(backlog as u32, Ordering::Relaxed);
+        // Every value through 2^24 - 1 is exactly representable in the f32
+        // stream. Wrapping there preserves exact modular deltas indefinitely.
+        *command_epoch =
+            (*command_epoch).wrapping_add(commands_applied as u32) & COMMAND_EPOCH_MASK;
     }
 
     let mut values = [0.0; MAX_SOURCES];
@@ -224,6 +231,7 @@ fn run_rt_tick<R: Rig>(
     values[generated + 1] = forcing;
     values[generated + 2] = table_out;
     values[generated + 3] = out;
+    values[generated + 4] = *command_epoch as f32;
     #[cfg(feature = "diag-skip-record-enqueue")]
     let _ = &values;
 
@@ -272,6 +280,7 @@ struct RtLoopState<R: Rig, T: TickSource> {
     phase: PhaseAccumulator,
     target_coeffs: FourierCoeffs<HARMONICS>,
     forcing_coeffs: FourierCoeffs<HARMONICS>,
+    command_epoch: u32,
     table_player: TablePlayer,
     active_table: &'static WaveTable,
     index: u32,
@@ -318,6 +327,7 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
         phase: PhaseAccumulator::new(),
         target_coeffs: FourierCoeffs::zero(),
         forcing_coeffs: FourierCoeffs::zero(),
+        command_epoch: 0,
         table_player: TablePlayer::new(),
         active_table: table::active(),
         index: 0,
@@ -348,6 +358,7 @@ fn run_hot_loop<R: Rig, T: TickSource>(mut state: RtLoopState<R, T>) -> ! {
             &mut state.phase,
             &mut state.target_coeffs,
             &mut state.forcing_coeffs,
+            &mut state.command_epoch,
             &mut state.table_player,
             &mut state.active_table,
             &mut state.index,

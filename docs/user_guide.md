@@ -250,6 +250,16 @@ MATLAB captures are tables with `index` followed by the requested source
 variables. Units are in `Properties.VariableUnits`; cumulative device-side
 drops and UDP packet loss are in `Properties.UserData`.
 
+Every experiment also exposes the `cmd_epoch` stream source. It starts at zero
+and increments once for each queued parameter command applied by the real-time
+core. The first full-rate record with a changed epoch is therefore the first
+record affected by the command; a jump of two means two commands took effect
+at that boundary. The counter wraps modulo 2²⁴, and hosts should compare it
+modulo 2²⁴. With stream decimation or record loss, a change still proves that
+commands were applied, but the omitted effective sample cannot be recovered.
+Direct diagnostic resets and staged table blocks do not advance it; committing
+a staged table does.
+
 ### Arbitrary waveform tables
 
 Upload 2–4096 finite samples from Python or a NumPy `.npy` file:

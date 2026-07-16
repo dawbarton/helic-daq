@@ -142,8 +142,9 @@ spin-polls the IO bank's raw
 edge-detect latch from SRAM. The ADC-free whirl and Pico 2W rigs use the same
 runner with the PWM peripheral's latched wrap flag. Each tick then runs
 
-1. apply at most two queued commands (updates land at a sample boundary;
-   excess commands remain FIFO-ordered for later ticks);
+1. apply at most two queued commands and advance the wrapping `cmd_epoch`
+   once per command (updates land at a sample boundary; excess commands
+   remain FIFO-ordered for later ticks);
 2. SPI read of the 144-bit frame (~12 µs at 12 MHz) and scaling to volts;
 3. one `PhaseAccumulator::step()`, then evaluation of the **target** and
    **forcing** Fourier series against the same phase (all harmonics of
@@ -277,7 +278,7 @@ tick; a non-zero maximum is not a timing failure, but persistent `Busy` replies
 or a maximum near the queue capacity indicates an undersized control path.
 
 **3. Streaming-heavy check** (when the change touches records, streaming or
-the network): capture all 13 sources for 8000 records and `adc0,out` for
+the network): capture all 14 sources for 8000 records and `adc0,out` for
 60000 records:
 
 ```sh
@@ -413,10 +414,11 @@ closest. An experiment crate has a deliberately predictable anatomy:
    `helic-drivers`, and RP2350 mechanisms in `firmware/common`.
 
 Controller telemetry is appended after rig inputs, and the common loop then
-appends `target`, `forcing`, `table` and `out`; no experiment assigns those
-indices. Fourier and table parameters also arrive automatically through the
-common registry. Logic must remain in a host-testable crate: an experiment
-that grows algorithms rather than pin glue is the signal to move code out.
+appends `target`, `forcing`, `table`, `out` and `cmd_epoch`; no experiment
+assigns those indices. Fourier and table parameters also arrive automatically
+through the common registry. Logic must remain in a host-testable crate: an
+experiment that grows algorithms rather than pin glue is the signal to move
+code out.
 
 Verify with the root host tests, a release build and clippy of the complete
 firmware workspace, and all host-language suites. Then flash the single new
@@ -488,8 +490,12 @@ mode, then record:
 ```sh
 helic-daq get loop_time_last loop_time_max overruns tick_timeouts records_dropped
 helic-daq sources
-helic-daq capture --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,target,forcing,table,out --seconds 30
-helic-daq --host 192.168.1.238 capture --sources pitch,yaw,rev_period,rpm,rev_pulse,rpm_valid,target,forcing,table,out --seconds 30
+helic-daq capture \
+  --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,target,forcing,table,out,cmd_epoch \
+  --seconds 30
+helic-daq --host 192.168.1.238 capture \
+  --sources pitch,yaw,rev_period,rpm,rev_pulse,rpm_valid,target,forcing,table,out,cmd_epoch \
+  --seconds 30
 ```
 
 At 8 kHz, require `loop_time_max < 125`, zero overruns/tick timeouts on a
@@ -517,9 +523,9 @@ experiment merely to make it look used.
 Experiment inputs are declared by `Rig::INPUTS`; write their values in the
 same order from `Rig::measure`. Controller-internal signals are declared by
 `Controller::TELEMETRY` and filled by `telemetry`. The common loop appends
-`target`, `forcing`, `table` and `out`, so neither rigs nor controllers manage
-numeric slots. Protocol-v2 source discovery exposes this assembled table to
-the host at every connection.
+`target`, `forcing`, `table`, `out` and the wrapping `cmd_epoch`, so neither
+rigs nor controllers manage numeric slots. Protocol-v2 source discovery
+exposes this assembled table to the host at every connection.
 
 ## Hardware bring-up notes
 

@@ -118,6 +118,14 @@ intentionally matches it.
 
 ## Not yet verified on hardware
 
+- The generic `cmd_epoch` source and resulting 14-source CBC stream layout.
+  The implementation and simulator exercise modulo-2²⁴ command counting, but
+  the additional per-tick source and command-boundary transitions still need
+  the ordered all-source and sustained CBC hardware regressions.
+  A 2026-07-16 attempt flashed `helic-daq 0.1.0 809ecc6-dirty`, but the runner
+  could not connect to `192.168.1.235`: ARP remained incomplete and the HELIC
+  Ethernet adaptor received zero packets. No timing or streaming evidence was
+  obtained from that attempt.
 - Long phase-locked arbitrary table operation.
 - `fw-whirl-rig` and `fw-pico2w-rig`. They build with the firmware workspace
   and their portable logic has host tests, but neither has been exercised as

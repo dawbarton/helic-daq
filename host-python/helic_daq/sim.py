@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from . import protocol
 from .protocol import MsgType, ProtocolError, StreamHeader
 
+COMMAND_EPOCH_MASK = (1 << 24) - 1
+
 
 @dataclass
 class SimParam:
@@ -90,6 +92,7 @@ def default_sources() -> list[tuple[str, str]]:
         ("forcing", "V"),
         ("table", "V"),
         ("out", "V"),
+        ("cmd_epoch", "count"),
     ]
 
 
@@ -120,6 +123,7 @@ class Simulator:
         self._closed = threading.Event()
         self._connection: socket.socket | None = None
         self._stream_generation = 0
+        self._cmd_epoch = 0
         self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._listener.bind((host, port))
@@ -293,33 +297,39 @@ class Simulator:
                 value < 0.0 or value >= 4.0 or not value.is_integer()
             ):
                 return self._error(6, msg_type)
-            param.value = value
-            if param.name == "diag_reset" and value:
-                for name in (
-                    "loop_time_max",
-                    "clock_jitter",
-                    "overruns",
-                    "tick_timeouts",
-                    "records_dropped",
-                    "wake_phase_min",
-                    "wake_phase_max",
-                    "t_measure_max",
-                    "t_actuate_max",
-                    "t_rest_max",
-                    "cmd_backlog_max",
-                    "laser_uart_errors",
-                    "laser_parse_errors",
-                    "laser_invalid_frames",
-                    "laser_unexpected_values",
-                    "laser_sync_errors",
-                ):
-                    self._by_name[name].value = 0
-                param.value = 0
-            if param.name == "table_trigger" and value:
-                self._table_trigger_time = (
-                    self._by_name["ticks"].value / self._by_name["sample_freq"].value
-                )
-                param.value = 0
+            queues_command = param.name != "diag_reset" and not (
+                param.name in ("ctrl_reset", "table_trigger") and value == 0
+            )
+            with self._lock:
+                param.value = value
+                if param.name == "diag_reset" and value:
+                    for name in (
+                        "loop_time_max",
+                        "clock_jitter",
+                        "overruns",
+                        "tick_timeouts",
+                        "records_dropped",
+                        "wake_phase_min",
+                        "wake_phase_max",
+                        "t_measure_max",
+                        "t_actuate_max",
+                        "t_rest_max",
+                        "cmd_backlog_max",
+                        "laser_uart_errors",
+                        "laser_parse_errors",
+                        "laser_invalid_frames",
+                        "laser_unexpected_values",
+                        "laser_sync_errors",
+                    ):
+                        self._by_name[name].value = 0
+                    param.value = 0
+                if param.name == "table_trigger" and value:
+                    self._table_trigger_time = (
+                        self._by_name["ticks"].value / self._by_name["sample_freq"].value
+                    )
+                    param.value = 0
+                if queues_command:
+                    self._cmd_epoch = (self._cmd_epoch + 1) & COMMAND_EPOCH_MASK
             return msg_type, b""
         if msg_type == MsgType.SET_BLOCK:
             if len(payload) < 6:
@@ -346,8 +356,10 @@ class Simulator:
             values = self._staging[:length]
             if not all(math.isfinite(value) for value in values):
                 return self._error(6, msg_type)
-            self.table = values.copy()
-            self._by_name["table_len"].value = length
+            with self._lock:
+                self.table = values.copy()
+                self._by_name["table_len"].value = length
+                self._cmd_epoch = (self._cmd_epoch + 1) & COMMAND_EPOCH_MASK
             return msg_type, b""
         if msg_type == MsgType.STREAM_SETUP:
             if len(payload) < 7:
@@ -432,17 +444,19 @@ class Simulator:
         return self._by_name["table_gain"].value * value
 
     def _values(self, index: int, rng: random.Random) -> list[float]:
-        sample_rate = self._by_name["sample_freq"].value
-        t = index / sample_rate
-        theta = 2.0 * math.pi * self._by_name["freq"].value * t
-        target = self._fourier(self._by_name["target_coeffs"].value, theta)
-        forcing = self._fourier(self._by_name["forcing_coeffs"].value, theta)
-        table = self._table_value(t)
-        out = target + forcing + table
-        inputs = [out + rng.gauss(0.0, self.noise) for _ in range(8)]
-        laser = 25.0 + 0.1 * math.sin(theta) + rng.gauss(0.0, self.noise)
-        self._by_name["laser"].value = laser
-        return inputs + [laser, target, forcing, table, out]
+        with self._lock:
+            sample_rate = self._by_name["sample_freq"].value
+            t = index / sample_rate
+            theta = 2.0 * math.pi * self._by_name["freq"].value * t
+            target = self._fourier(self._by_name["target_coeffs"].value, theta)
+            forcing = self._fourier(self._by_name["forcing_coeffs"].value, theta)
+            table = self._table_value(t)
+            out = target + forcing + table
+            inputs = [out + rng.gauss(0.0, self.noise) for _ in range(8)]
+            laser = 25.0 + 0.1 * math.sin(theta) + rng.gauss(0.0, self.noise)
+            self._by_name["laser"].value = laser
+            command_epoch = self._cmd_epoch
+        return inputs + [laser, target, forcing, table, out, float(command_epoch)]
 
     def _stream(self, generation: int) -> None:
         with self._lock:

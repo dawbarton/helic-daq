@@ -143,12 +143,23 @@ in this table. The table is assembled as:
 
 1. experiment inputs;
 2. controller telemetry;
-3. `target`, `forcing`, `table`, `out`, all in volts.
+3. `target`, `forcing`, `table`, and `out`, all in volts;
+4. `cmd_epoch`, in counts.
 
 Names are unique ASCII strings of at most 15 bytes; units are at most 7
 bytes. `cbc-rig` currently begins with `adc0` through `adc7` in volts and
 `laser` in millimetres. Hosts resolve requested source names from this table;
 there are no protocol-wide fixed source ids.
+
+`cmd_epoch` starts at zero and advances once for every `RtCommand` that core 1
+applies at a sample boundary. It wraps modulo 2²⁴, so every emitted value is
+an exactly representable `f32`; hosts calculate changes modulo 2²⁴. The record
+containing the advanced value is the first record affected by those commands.
+A jump of two means that two commands were applied at the same boundary.
+Operations that do not enter the command queue, including `SetBlock` and
+`diag_reset`, do not advance it; a table `Commit` does. Decimation or record
+loss can bound an update between observed records but cannot recover an
+omitted effective sample index.
 
 ## Stream channel (UDP :2351)
 

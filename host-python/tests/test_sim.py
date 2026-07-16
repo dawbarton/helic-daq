@@ -14,7 +14,7 @@ from helic_daq import Device, protocol
 from helic_daq import cli
 from helic_daq.discovery import find_devices
 from helic_daq.protocol import MsgType
-from helic_daq.sim import Simulator
+from helic_daq.sim import COMMAND_EPOCH_MASK, Simulator
 
 
 class TestSimulator(unittest.TestCase):
@@ -36,6 +36,33 @@ class TestSimulator(unittest.TestCase):
         self.assertEqual(data["lost_packets"], 0)
         self.assertGreater(np.ptp(data["forcing"]), 0.1)
         np.testing.assert_allclose(data["forcing"], data["out"], atol=1e-6)
+
+    def test_command_epoch_tracks_rt_commands_and_wraps_exactly(self):
+        initial = self.dev.capture(["cmd_epoch"], samples=1, port=0)
+        self.assertEqual(initial["cmd_epoch"][0], 0.0)
+
+        self.dev.set("freq", 10.0)
+        self.dev.set("diag_reset", 1)
+        self.dev.set("ctrl_reset", 0)
+        changed = self.dev.capture(["cmd_epoch"], samples=1, port=0)
+        self.assertEqual(changed["cmd_epoch"][0], 1.0)
+
+        table = self.dev.param("table")
+        raw = np.asarray([0.0, 1.0], dtype="<f4").tobytes()
+        self.dev._request(
+            MsgType.SET_BLOCK,
+            protocol.encode_set_block(table.index, 0, raw),
+        )
+        staged = self.dev.capture(["cmd_epoch"], samples=1, port=0)
+        self.assertEqual(staged["cmd_epoch"][0], 1.0)
+        self.dev._request(MsgType.COMMIT, protocol.encode_commit(table.index, 2))
+        committed = self.dev.capture(["cmd_epoch"], samples=1, port=0)
+        self.assertEqual(committed["cmd_epoch"][0], 2.0)
+
+        self.sim._cmd_epoch = COMMAND_EPOCH_MASK
+        self.dev.set("table_gain", 2.0)
+        wrapped = self.dev.capture(["cmd_epoch"], samples=1, port=0)
+        self.assertEqual(wrapped["cmd_epoch"][0], 0.0)
 
     def test_staged_table_is_committed_and_streamed(self):
         table = self.dev.param("table")
