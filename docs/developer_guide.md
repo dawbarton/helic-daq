@@ -133,7 +133,8 @@ core 1 (real-time)                       core 0 (everything else)
 The AD7609's CONVST pin is driven by **PWM slice 4** as a free-running
 output. The sampling instant is therefore crystal-timed; software load
 cannot move it. Sample-rate presets map to exact divider/wrap pairs from
-the 150 MHz system clock (`config.rs::SampleRate::pwm_params`).
+the 150 MHz system clock (`helic_fw_common::SampleRate::pwm_params`,
+re-exported through each experiment's `config.rs`).
 
 The software pipeline is edge-triggered on the BUSY falling edge
 (conversion complete). CBC uses the mandatory synchronous runner, which
@@ -542,8 +543,8 @@ matlab -batch "runTests()"
 ```
 
 CI (GitHub Actions) runs fmt + clippy `-D warnings` + tests for the host
-crates, the firmware cross-build, and the Python and Julia suites. The MATLAB
-suite is run locally because CI has no MATLAB runner. The Rust, Python, Julia,
+crates, the firmware cross-build, and the Python, Julia, and MATLAB suites
+(MATLAB via `matlab-actions/setup-matlab`). The Rust, Python, Julia,
 and MATLAB protocol implementations share known-answer vectors from
 [protocol.md](protocol.md), so codec drift fails every implementation's tests.
 

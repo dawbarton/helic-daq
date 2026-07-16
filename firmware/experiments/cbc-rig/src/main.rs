@@ -113,12 +113,6 @@ fn main() -> ! {
         )
     });
 
-    // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without it
-    // the floating line free-runs into a UART framing/break interrupt storm
-    // that livelocks core 0; an external 10k pull-up to 3V3 holds the line in
-    // the idle (mark) state so a disconnected/quiet sensor just parks in
-    // `rx.read().await`. See docs/developer_guide.md known gaps.
-    //
     // Bounded self-healing for lost embassy-time alarms; see `time_watchdog`.
     helic_fw_common::time_watchdog::start();
 
@@ -133,6 +127,12 @@ fn main() -> ! {
             channels.record_rx
         )));
         spawner.spawn(unwrap!(blink(b.led)));
+        // laser_task requires a pull-up on the optoNCDT RX pin (GP1). Without
+        // it the floating line free-runs into a UART framing/break interrupt
+        // storm that livelocks core 0; an external 10k pull-up to 3V3 holds
+        // the line in the idle (mark) state so a disconnected/quiet sensor
+        // just parks in `rx.read().await`. See docs/developer_guide.md known
+        // gaps.
         spawner.spawn(unwrap!(laser_task(b.laser)));
         spawner.spawn(unwrap!(status_task()));
     });

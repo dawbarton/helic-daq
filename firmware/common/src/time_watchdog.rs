@@ -21,7 +21,8 @@
 //! embassy-time stall is therefore bounded at ~50 ms.
 //!
 //! Call [`start`] once on core 0 (the core that runs embassy-time's alarm
-//! IRQ) after the executor is up, and bind [`TimeWatchdogHandler`] to
+//! IRQ) any time after `embassy_rp::init` — the experiments call it just
+//! before starting the core-0 executor — and bind [`TimeWatchdogHandler`] to
 //! `TIMER0_IRQ_1` in the experiment's `bind_interrupts!`.
 
 use embassy_rp::interrupt::typelevel::{Handler, Interrupt, TIMER0_IRQ_1};

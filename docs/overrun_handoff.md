@@ -265,7 +265,7 @@ with Device("192.168.1.235") as dev:
     print(dev.status())
     counters = (
         "ticks", "loop_time_last", "loop_time_max", "clock_jitter",
-        "overruns", "tick_timeouts", "records_dropped", "adc_errors",
+        "overruns", "tick_timeouts", "records_dropped",
     )
     print(dict(zip(counters, dev.get(*counters))))
 PY

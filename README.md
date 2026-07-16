@@ -64,8 +64,8 @@ cd ../host-matlab && matlab -batch "runTests()"
 ```
 
 CI also gates both Rust workspaces with formatting and clippy warnings as
-errors, and tests the Python and Julia packages. The MATLAB suite is currently
-local. See the developer guide for the complete check set.
+errors, and tests the Python, Julia, and MATLAB packages. See the developer
+guide for the complete check set.
 
 ## Flash and connect
 
