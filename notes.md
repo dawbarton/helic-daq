@@ -41,6 +41,20 @@ rtc analogue cape:
   24.813969 mm to 24.816301 mm, with zero UDP packet loss. After
   `diag_reset`, the run had zero clock jitter, overruns, tick timeouts, record
   drops, and command backlog, with a 35 µs maximum loop time;
+- core-0 laser/network contention on release firmware `f77e670`. A
+  240000-record, 30 s capture of all 13 CBC sources ran while the same TCP
+  connection issued 3002 diagnostic requests at 100 Hz; a second 30 s pass
+  used an unthrottled loop and completed 17635 requests, approximately
+  587 requests/s. Both passes had contiguous indices, zero source or UDP
+  drops, no TCP or receiver errors, and zero clock jitter, overruns, tick
+  timeouts, and record drops. The maximum loop time was 35 µs and 36 µs,
+  respectively. With the stationary, quantised target, the longest unchanged
+  laser run was 642 ticks under maximum load and 826 ticks in an immediate
+  unstressed 30 s control capture, so the stress did not introduce an
+  observable sustained stale-value interval. The current telemetry exposes
+  only the latest laser value, not a parsed-frame sequence or error counter;
+  this establishes clean DAQ transport and no observable UART starvation,
+  but does not prove that every individual sensor frame was consumed;
 - the mandatory synchronous SRAM real-time loop: zero overruns, zero clock
   jitter and a constant 36 µs wake
   phase at 8 kHz under idle, TCP polling, 1000-record capture, 8000-record
