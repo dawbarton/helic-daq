@@ -92,6 +92,26 @@ result and 34 µs loop maxima. Finally, 100 complete coefficient replacements
 interleaved with 100 scalar frequency changes produced a 38 µs maximum, zero
 errors and `cmd_backlog_max = 1`. Outputs were returned to zero afterwards.
 
+Waveform interpolation was verified on 2026-07-16 with release image
+`ce44daf`, using DAC channel A looped back to ADC0 on the all-unipolar analogue
+cape. The standard 8 kHz CBC regression sustained 8000.0–8000.3 ticks/s
+through five-second idle and TCP-poll phases and an 8000-record `adc0,out`
+capture. Every phase had zero overruns, tick timeouts, clock jitter, record
+drops, UDP loss, and index gaps; wake phase remained exactly 36 µs, and
+maximum loop time was 34 µs. A two-point `[0.5, 2.5] V` table at 20 Hz was
+then captured for 4000 records in each interpolation mode with `table`, `out`,
+and `adc0`. Linear order 1 produced 601 distinct rounded table values with
+10 mV per-sample ramps; `table == out`, and the ADC0 fit had gain 0.99998,
+0.115 mV offset, and 10.0 mV RMS residual. Zero-order hold order 0 produced
+only the commanded two levels and 20 transitions over ten periods. Away from
+the transitions, ADC0 medians were 0.49995 V and 2.50023 V, with 85.5 µV and
+85.3 µV standard deviations respectively. Both waveform captures had zero
+UDP loss, index gaps, overruns, timeouts, clock jitter, and record drops;
+maximum loop time was 36 µs, with a fixed 36 µs wake phase. The table,
+forcing, and target outputs were disabled afterwards; a final 512-record
+capture reported `table == out == 0`, with ADC0 at 2.68 mV mean and 2.90 mV
+maximum absolute value.
+
 The default firmware was returned to `PassThrough` after PID testing. The
 current analogue cape is all-unipolar, and the CBC `DAC_POLARITY` array
 intentionally matches it.
