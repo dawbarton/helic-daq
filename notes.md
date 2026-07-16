@@ -78,6 +78,18 @@ intentionally matches it.
   behaviour has been checked. CBC now sends the documented startup commands
   over GP0, but that bidirectional command-and-stream path is software-only
   until exercised with the sensor and RS422 hardware.
+
+  Initial bidirectional bring-up on 2026-07-16 flashed release firmware
+  `20c76a5` through the debug probe with an ISL3177E and the ILD1420-50 wired
+  to GP0/GP1. Ethernet and the real-time loop started normally. After clearing
+  diagnostics, a five-second window held `loop_time_max = 34 us`, with zero
+  clock jitter, overruns, tick timeouts, record drops and command backlog, but
+  the host-visible laser value remained exactly `0.0`. No valid in-range
+  binary measurement was therefore demonstrated. The current firmware does
+  not expose whether startup failed through an `Exxx` reply, UART error or
+  reply timeout; add bounded command-status diagnostics or probe both
+  differential pairs before changing polarity or declaring the sensor path
+  operational.
 - Long phase-locked arbitrary table operation.
 - `fw-whirl-rig` and `fw-pico2w-rig`. They build with the firmware workspace
   and their portable logic has host tests, but neither has been exercised as
