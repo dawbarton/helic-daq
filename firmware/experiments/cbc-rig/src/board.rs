@@ -5,9 +5,7 @@
 //! path; and GP14 to the tick timing output. Behaviour lives in `rig.rs`.
 
 use embassy_rp::gpio::{Input, Level, Output, Pull};
-use embassy_rp::peripherals::{
-    CORE1, DMA_CH1, DMA_CH4, PIN_0, PIN_1, PIN_7, PIN_8, PWM_SLICE4, SPI1, UART0,
-};
+use embassy_rp::peripherals::{CORE1, PIN_0, PIN_1, PIN_7, PIN_8, PWM_SLICE4, SPI1, UART0};
 use embassy_rp::spi::{self, Async, Blocking, Spi};
 use embassy_rp::{Peri, Peripherals};
 use helic_drivers::ad7609::ConfigPins;
@@ -27,8 +25,6 @@ pub struct LaserParts {
     pub uart: Peri<'static, UART0>,
     pub tx: Peri<'static, PIN_0>,
     pub rx: Peri<'static, PIN_1>,
-    pub tx_dma: Peri<'static, DMA_CH4>,
-    pub rx_dma: Peri<'static, DMA_CH1>,
 }
 
 /// Unassembled core-1 resources. Fields are visible only to `rig.rs`, which
@@ -94,8 +90,6 @@ impl Board {
                 uart: p.UART0,
                 tx: p.PIN_0,
                 rx: p.PIN_1,
-                tx_dma: p.DMA_CH4,
-                rx_dma: p.DMA_CH1,
             },
             eth: EthernetParts {
                 spi: eth_spi,

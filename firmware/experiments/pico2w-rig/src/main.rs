@@ -14,7 +14,7 @@ use embassy_executor::{Executor, Spawner};
 use embassy_rp::bind_interrupts;
 use embassy_rp::block::ImageDef;
 use embassy_rp::multicore::{spawn_core1, Stack as CoreStack};
-use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, PIO1, UART0};
+use embassy_rp::peripherals::{DMA_CH0, PIO1, UART0};
 use embassy_rp::pio;
 use embassy_rp::uart;
 use embassy_time::Timer;
@@ -47,16 +47,16 @@ pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 // PIO1 and DMA0 belong to the CYW43439 backend; the remaining handlers serve
 // the laser UART and hardware sample clock.
 bind_interrupts!(pub struct Irqs {
-    UART0_IRQ => uart::InterruptHandler<UART0>;
+    UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
     PIO1_IRQ_0 => pio::InterruptHandler<PIO1>;
     TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
-    DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>,
-        embassy_rp::dma::InterruptHandler<DMA_CH1>;
+    DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>;
 });
 
 // StaticCell supplies permanent task and queue storage without a heap.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
+static LASER_RX_BUFFER: StaticCell<[u8; 256]> = StaticCell::new();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -166,7 +166,13 @@ async fn blink(mut control: cyw43::Control<'static>) -> ! {
 async fn laser_task(parts: LaserParts) -> ! {
     let mut config = uart::Config::default();
     config.baudrate = 921_600;
-    let rx = uart::UartRx::new(parts.uart, parts.rx, Irqs, parts.rx_dma, config);
+    let rx = uart::BufferedUartRx::new(
+        parts.uart,
+        Irqs,
+        parts.rx,
+        LASER_RX_BUFFER.init([0; 256]),
+        config,
+    );
     helic_fw_common::laser::laser_run(
         rx,
         &telemetry::LASER_RANGE_MM,

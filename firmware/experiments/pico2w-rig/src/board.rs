@@ -5,7 +5,7 @@
 //! DAC behaviour and the sample pipeline adaptation live in `rig.rs`.
 
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{CORE1, DMA_CH1, PIN_1, PWM_SLICE4, SPI1, UART0};
+use embassy_rp::peripherals::{CORE1, PIN_1, PWM_SLICE4, SPI1, UART0};
 use embassy_rp::spi::{Blocking, Spi};
 use embassy_rp::{Peri, Peripherals};
 use helic_fw_common::net::cyw43::WifiParts;
@@ -22,7 +22,6 @@ pub struct Board {
 pub struct LaserParts {
     pub uart: Peri<'static, UART0>,
     pub rx: Peri<'static, PIN_1>,
-    pub rx_dma: Peri<'static, DMA_CH1>,
 }
 
 /// Complete core-1 ownership bundle, assembled only after the core hand-off.
@@ -50,7 +49,6 @@ impl Board {
             laser: LaserParts {
                 uart: p.UART0,
                 rx: p.PIN_1,
-                rx_dma: p.DMA_CH1,
             },
             wifi: WifiParts {
                 pio: p.PIO1,

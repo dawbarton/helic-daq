@@ -3,8 +3,9 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use defmt::{info, warn};
-use embassy_rp::uart::{Async, Uart, UartRx};
+use embassy_rp::uart::{BufferedUart, BufferedUartRx};
 use embassy_time::{Duration, Timer, WithTimeout};
+use embedded_io_async::{Read, Write};
 use helic_drivers::optoncdt::{
     CommandReply, CommandReplyParser, DistanceScale, ParseEvent, Parser, Reading,
 };
@@ -67,7 +68,7 @@ impl LaserCounters {
 /// therefore followed by a bounded wait for the documented `->` prompt; any
 /// interleaved measurements are discarded until configuration is complete.
 pub async fn configured_laser_run(
-    mut uart: Uart<'static, Async>,
+    mut uart: BufferedUart,
     measrate_command: &'static [u8],
     range_mm: &'static AtomicU32,
     destination: &'static AtomicU32,
@@ -99,7 +100,7 @@ pub async fn configured_laser_run(
     laser_run(rx, range_mm, destination, counters).await
 }
 
-async fn detect_baudrate(uart: &mut Uart<'static, Async>) -> Option<u32> {
+async fn detect_baudrate(uart: &mut BufferedUart) -> Option<u32> {
     // On an RP2350 restart the sensor may still be streaming. The first byte
     // seen after UART enable can then begin mid-character and report a framing
     // error even at the correct baud. Retry the stop command at the required
@@ -111,7 +112,7 @@ async fn detect_baudrate(uart: &mut Uart<'static, Async>) -> Option<u32> {
             "laser: stopping old stream at {} baud (attempt {})",
             REQUIRED_BAUD, attempt
         );
-        if uart.write(OUTPUT_NONE).await.is_err() {
+        if uart.write_all(OUTPUT_NONE).await.is_err() {
             continue;
         }
 
@@ -140,7 +141,7 @@ async fn detect_baudrate(uart: &mut Uart<'static, Async>) -> Option<u32> {
     for baudrate in SUPPORTED_BAUDS {
         uart.set_baudrate(baudrate);
         info!("laser: probing {} baud", baudrate);
-        if uart.write(GET_USER_LEVEL).await.is_err() {
+        if uart.write_all(GET_USER_LEVEL).await.is_err() {
             continue;
         }
 
@@ -175,7 +176,7 @@ async fn detect_baudrate(uart: &mut Uart<'static, Async>) -> Option<u32> {
     None
 }
 
-async fn configure(uart: &mut Uart<'static, Async>, measrate_command: &'static [u8]) -> bool {
+async fn configure(uart: &mut BufferedUart, measrate_command: &'static [u8]) -> bool {
     // Stop any existing binary stream first so subsequent ASCII replies are
     // quiet and unambiguous. The reply parser still tolerates values already
     // in flight, as required when the sensor retained an earlier RS422 setup.
@@ -188,7 +189,7 @@ async fn configure(uart: &mut Uart<'static, Async>, measrate_command: &'static [
     ];
     for (name, command) in commands {
         info!("laser: sending {}", name);
-        if let Err(error) = uart.write(command).await {
+        if let Err(error) = uart.write_all(command).await {
             warn!("laser: {} transmit error: {:?}", name, error);
             return false;
         }
@@ -231,7 +232,7 @@ async fn configure(uart: &mut Uart<'static, Async>, measrate_command: &'static [
 }
 
 async fn wait_for_reply(
-    uart: &mut Uart<'static, Async>,
+    uart: &mut BufferedUart,
     trace: &mut ReplyTrace,
 ) -> Result<CommandReply, embassy_rp::uart::Error> {
     let mut parser = CommandReplyParser::new();
@@ -246,24 +247,28 @@ async fn wait_for_reply(
 }
 
 pub async fn laser_run(
-    mut rx: UartRx<'static, Async>,
+    mut rx: BufferedUartRx,
     range_mm: &'static AtomicU32,
     destination: &'static AtomicU32,
     counters: LaserCounters,
 ) -> ! {
     let mut parser = Parser::new();
-    let mut buf = [0u8; 3];
+    let mut buf = [0u8; 32];
     let mut first_distance_logged = false;
     loop {
-        if rx.read(&mut buf).await.is_err() {
-            counters.uart_errors.fetch_add(1, Ordering::Relaxed);
-            // A floating disconnected line can generate enough framing-error
-            // interrupts to starve core 0; retain the hardware pull-up and
-            // back off after errors as defence in depth.
-            Timer::after_millis(10).await;
-            continue;
-        }
-        for byte in buf {
+        let received = match rx.read(&mut buf).await {
+            Ok(received) => received,
+            Err(_) => {
+                counters.uart_errors.fetch_add(1, Ordering::Relaxed);
+                // A floating disconnected line can generate enough
+                // framing-error interrupts to starve core 0; retain the
+                // hardware pull-up and back off after errors as defence in
+                // depth.
+                Timer::after_millis(10).await;
+                continue;
+            }
+        };
+        for &byte in &buf[..received] {
             let value = match parser.push_event(byte) {
                 ParseEvent::Pending => continue,
                 ParseEvent::Resynchronised => {

@@ -24,7 +24,7 @@ use embassy_rp::bind_interrupts;
 use embassy_rp::block::ImageDef;
 use embassy_rp::gpio::Output;
 use embassy_rp::multicore::{spawn_core1, Stack as CoreStack};
-use embassy_rp::peripherals::{DMA_CH1, DMA_CH2, DMA_CH3, DMA_CH4, UART0};
+use embassy_rp::peripherals::{DMA_CH2, DMA_CH3, UART0};
 use embassy_rp::uart;
 use embassy_time::Timer;
 use helic_fw_common::comms;
@@ -57,12 +57,10 @@ pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 bind_interrupts!(pub struct Irqs {
     // Embassy turns this declarative list into type-safe interrupt tokens.
     // Bind only peripherals owned by this experiment.
-    UART0_IRQ => uart::InterruptHandler<UART0>;
+    UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
     TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
-    DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH1>,
-        embassy_rp::dma::InterruptHandler<DMA_CH2>,
-        embassy_rp::dma::InterruptHandler<DMA_CH3>,
-        embassy_rp::dma::InterruptHandler<DMA_CH4>;
+    DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH2>,
+        embassy_rp::dma::InterruptHandler<DMA_CH3>;
 });
 
 // Embedded async tasks live for the whole firmware run. StaticCell performs a
@@ -70,6 +68,8 @@ bind_interrupts!(pub struct Irqs {
 // a heap allocator. Queue capacities are fixed for the same reason.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
+static LASER_TX_BUFFER: StaticCell<[u8; 64]> = StaticCell::new();
+static LASER_RX_BUFFER: StaticCell<[u8; 256]> = StaticCell::new();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -188,13 +188,13 @@ async fn blink(mut led: Output<'static>) -> ! {
 async fn laser_task(parts: LaserParts) -> ! {
     let mut uart_config = uart::Config::default();
     uart_config.baudrate = 921_600;
-    let uart = uart::Uart::new(
+    let uart = uart::BufferedUart::new(
         parts.uart,
         parts.tx,
         parts.rx,
         Irqs,
-        parts.tx_dma,
-        parts.rx_dma,
+        LASER_TX_BUFFER.init([0; 64]),
+        LASER_RX_BUFFER.init([0; 256]),
         uart_config,
     );
     helic_fw_common::laser::configured_laser_run(
