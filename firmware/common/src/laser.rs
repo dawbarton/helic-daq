@@ -204,6 +204,9 @@ async fn configure(uart: &mut BufferedUart, measrate_command: &'static [u8]) -> 
                     "laser: {} accepted after {} bytes; trailing {:?}",
                     name, trace.bytes_received, trace.trailing
                 );
+                if name == "OUTPUT NONE" {
+                    drain_stopped_stream(uart).await;
+                }
             }
             Ok(Ok(CommandReply::Error(code))) => {
                 warn!(
@@ -229,6 +232,24 @@ async fn configure(uart: &mut BufferedUart, measrate_command: &'static [u8]) -> 
         }
     }
     true
+}
+
+async fn drain_stopped_stream(uart: &mut BufferedUart) {
+    // Buffered RX deliberately preserves bytes and error flags while core 0
+    // is descheduled. Once OUTPUT NONE has stopped the sensor, consume any
+    // binary tail and pre-command framing state so measurement counters begin
+    // at the clean OUTPUT RS422 boundary.
+    let mut buf = [0u8; 32];
+    loop {
+        match uart
+            .read(&mut buf)
+            .with_timeout(Duration::from_millis(2))
+            .await
+        {
+            Ok(Ok(_) | Err(_)) => {}
+            Err(_) => return,
+        }
+    }
 }
 
 async fn wait_for_reply(
