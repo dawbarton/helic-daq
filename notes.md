@@ -41,20 +41,21 @@ rtc analogue cape:
   24.813969 mm to 24.816301 mm, with zero UDP packet loss. After
   `diag_reset`, the run had zero clock jitter, overruns, tick timeouts, record
   drops, and command backlog, with a 35 µs maximum loop time;
-- core-0 laser/network contention on release firmware `f77e670`. A
-  240000-record, 30 s capture of all 13 CBC sources ran while the same TCP
-  connection issued 3002 diagnostic requests at 100 Hz; a second 30 s pass
-  used an unthrottled loop and completed 17635 requests, approximately
-  587 requests/s. Both passes had contiguous indices, zero source or UDP
-  drops, no TCP or receiver errors, and zero clock jitter, overruns, tick
-  timeouts, and record drops. The maximum loop time was 35 µs and 36 µs,
-  respectively. With the stationary, quantised target, the longest unchanged
-  laser run was 642 ticks under maximum load and 826 ticks in an immediate
-  unstressed 30 s control capture, so the stress did not introduce an
-  observable sustained stale-value interval. The current telemetry exposes
-  only the latest laser value, not a parsed-frame sequence or error counter;
-  this establishes clean DAQ transport and no observable UART starvation,
-  but does not prove that every individual sensor frame was consumed;
+- counter-based core-0 laser/network contention on release firmware
+  `7169e0d`. The continuously armed UART ring and discovered
+  `laser_frames_received`, UART, parser, invalid-frame, unexpected-value, and
+  synchronisation counters were exercised after `diag_reset`. A 30 s idle
+  interval received 240015 laser frames during 240019 RT ticks
+  (−16.7 ppm), with every laser fault counter at zero. A subsequent 120.25 s
+  capture streamed 960000 records of all 13 CBC sources while the TCP
+  connection issued 868 unthrottled tick requests. It received 962033 laser
+  frames during 962053 RT ticks (−20.8 ppm), with zero UART errors, parser
+  resynchronisations, invalid frames, unexpected values, synchronisation
+  errors, source drops, UDP sequence gaps, index gaps, clock jitter, overruns,
+  tick timeouts, or record drops. Maximum loop time was 35 µs. The independent
+  sensor and RP2350 clocks therefore remained rate-matched within 21 ppm, and
+  no individual steady-state laser frame loss was observed under maximum
+  tested network load;
 - the mandatory synchronous SRAM real-time loop: zero overruns, zero clock
   jitter and a constant 36 µs wake
   phase at 8 kHz under idle, TCP polling, 1000-record capture, 8000-record
@@ -165,6 +166,16 @@ firmware sample rate, disable output reduction and additional values, then
 select `OUTPUT RS422`. Command replies and the `->` prompt are discarded
 before binary parsing starts. The full command exchange and a real 8 kHz
 binary stream were verified with an ILD1420-50 and ISL3177E on 2026-07-16.
+The receive side uses a continuously interrupt-drained 4096-byte ring,
+approximately 170 ms at 8 kHz, so short core-0 stalls do not leave the UART
+unarmed or overflow its hardware FIFO.
+
+Debugger detachment can briefly halt the MCU while the independently powered
+sensor continues transmitting. In the final stress session this left one UART
+event and two parser resynchronisations before the test baseline. Writing
+`diag_reset` after detaching cleared those event counters; none advanced
+during either the idle or stressed measurement interval. The lifetime
+`laser_frames_received` counter is deliberately not reset.
 
 The initial bring-up produced no receive bytes at any supported baud despite
 valid GP0 activity, while the real-time loop remained healthy. Correcting the
