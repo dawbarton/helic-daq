@@ -112,20 +112,31 @@ forcing, and target outputs were disabled afterwards; a final 512-record
 capture reported `table == out == 0`, with ADC0 at 2.68 mV mean and 2.90 mV
 maximum absolute value.
 
+The generic `cmd_epoch` source and 14-source CBC stream layout were exercised
+on 2026-07-16 with release image `100825a`. An 8000-record full-rate capture of
+all 14 sources and a sustained 60000-record `adc0,out` capture both had
+contiguous indices, zero UDP loss, zero device drops, zero overruns, and zero
+tick timeouts. Wake phase remained exactly 36 µs, and maximum loop time was
+35 µs. In a focused full-rate `forcing,out,cmd_epoch` stream, a constant
+forcing-coefficient write advanced the epoch from 15 to 16 at sample 885064;
+that same record was the first with `forcing == out == 0.25 V`. The transition
+had no UDP loss or record drops. Outputs were returned to zero afterwards.
+Two initial automated flash-and-connect attempts saw incomplete ARP, although
+the probe log reported W5500 link-up after 2.104 s; the subsequent no-flash
+control and streaming sessions worked normally.
+
 The default firmware was returned to `PassThrough` after PID testing. The
 current analogue cape is all-unipolar, and the CBC `DAC_POLARITY` array
 intentionally matches it.
 
 ## Not yet verified on hardware
 
-- The generic `cmd_epoch` source and resulting 14-source CBC stream layout.
-  The implementation and simulator exercise modulo-2²⁴ command counting, but
-  the additional per-tick source and command-boundary transitions still need
-  the ordered all-source and sustained CBC hardware regressions.
-  A 2026-07-16 attempt flashed `helic-daq 0.1.0 809ecc6-dirty`, but the runner
-  could not connect to `192.168.1.235`: ARP remained incomplete and the HELIC
-  Ethernet adaptor received zero packets. No timing or streaming evidence was
-  obtained from that attempt.
+- Release image `100825a` consistently reported `clock_jitter = 1 µs` after a
+  clean `diag_reset` in idle, TCP-poll, 14-source capture, sustained capture
+  and a final two-second idle check. The fixed 36 µs wake phase, 35 µs maximum
+  loop time and exact tick rate remained healthy, but the CBC acceptance limit
+  is zero clock jitter. Reproduce and explain this result; do not relax the
+  limit to accommodate it.
 - Long phase-locked arbitrary table operation.
 - `fw-whirl-rig` and `fw-pico2w-rig`. They build with the firmware workspace
   and their portable logic has host tests, but neither has been exercised as
