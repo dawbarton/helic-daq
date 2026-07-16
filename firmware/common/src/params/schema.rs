@@ -74,6 +74,6 @@ const fn encoded_defs_len(defs: &[ParamDef]) -> usize {
 }
 
 const MAX_REGISTRY_ENCODED_LEN: usize = encoded_defs_len(BASE_PARAMS)
-    + (MAX_EXTRA_PARAMS + MAX_RIG_PARAMS + MAX_CTRL_PARAMS)
-        * (helic_proto::payload::MAX_NAME_LEN + 5);
+    + MAX_EXTRA_PARAMS * (helic_proto::payload::MAX_PARAM_NAME_LEN + 5)
+    + (MAX_RIG_PARAMS + MAX_CTRL_PARAMS) * (helic_proto::payload::MAX_NAME_LEN + 5);
 const _: () = assert!(MAX_REGISTRY_ENCODED_LEN <= helic_proto::MAX_PAYLOAD);

@@ -202,6 +202,13 @@ async fn laser_task(parts: LaserParts) -> ! {
         config::LASER_MEASRATE_COMMAND,
         &telemetry::LASER_RANGE_MM,
         &telemetry::LASER_VALUE,
+        helic_fw_common::laser::LaserCounters::new(
+            &telemetry::LASER_FRAMES_RECEIVED,
+            &telemetry::LASER_UART_ERRORS,
+            &telemetry::LASER_PARSE_ERRORS,
+            &telemetry::LASER_INVALID_FRAMES,
+            &telemetry::LASER_UNEXPECTED_VALUES,
+        ),
     )
     .await
 }

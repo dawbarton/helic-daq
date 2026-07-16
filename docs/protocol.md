@@ -51,8 +51,8 @@ no final XOR. A response has the request type, or type 255 with payload
 
 Parameter type codes are Python `struct` characters: `B b H h I i f c` for
 u8, i8, u16, i16, u32, i32, f32 and char. A value occupies
-`count × sizeof(type)` bytes; char arrays are NUL-padded strings. Names are
-ASCII and at most 15 bytes.
+`count × sizeof(type)` bytes; char arrays are NUL-padded strings. Parameter
+names are ASCII and at most 23 bytes.
 
 `SetPar` rejects non-finite f32 values. `SetBlock` stages a slice of a long
 array starting at an element offset; `Commit` atomically activates the first
@@ -74,9 +74,10 @@ Error codes are: 1 bad frame, 2 unknown type, 3 bad index, 4 bad length,
 
 GetParams returns each complete definition in registry order, so names and
 metadata cannot become misaligned. Hosts must discover by name and must not
-cache indices across connections. Parameter and source names are ASCII and at
-most 15 bytes; source units are ASCII and at most 7 bytes. Firmware reserves
-25% of the control payload as discovery headroom.
+cache indices across connections. Parameter names are ASCII and at most
+23 bytes. Source names are ASCII and at most 15 bytes; source units are ASCII
+and at most 7 bytes. Firmware reserves 25% of the control payload as discovery
+headroom.
 
 The v2 base registry is:
 
@@ -119,9 +120,13 @@ phase. `diag_reset` clears the `*_max`/`*_min` diagnostics along with
 running.
 
 Experiment read-only values, rig parameters and controller parameters follow
-the base registry. For `cbc-rig`, these include `laser`, `rig_laser_range` and
-`rig_out_channel`. Controller names depend on the
-compile-time selected controller.
+the base registry. For `cbc-rig`, these include `laser`,
+`laser_frames_received`, `laser_uart_errors`, `laser_parse_errors`,
+`laser_invalid_frames`, `laser_unexpected_values`, `rig_laser_range`, and
+`rig_out_channel`. The laser counters are monotonic totals since boot:
+complete first values, UART receive errors, parser resynchronisations,
+out-of-range/error readings, and unexpected additional output values,
+respectively. Controller names depend on the compile-time selected controller.
 
 Fourier coefficients use `[mean, a_1..a_K, b_1..b_K]`, representing
 `mean + Σ_k a_k cos(kθ) + b_k sin(kθ)`. The default build uses K = 16.

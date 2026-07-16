@@ -2,6 +2,7 @@
 
 use crate::ParamType;
 
+pub const MAX_PARAM_NAME_LEN: usize = 23;
 pub const MAX_NAME_LEN: usize = 15;
 pub const MAX_UNIT_LEN: usize = 7;
 
@@ -19,7 +20,7 @@ pub fn encode_param(
     count: u16,
     writable: bool,
 ) -> Result<usize, PayloadError> {
-    if name.len() > MAX_NAME_LEN || !name.is_ascii() {
+    if name.len() > MAX_PARAM_NAME_LEN || !name.is_ascii() {
         return Err(PayloadError::InvalidText);
     }
     let n = name.len() + 5;
@@ -91,8 +92,15 @@ mod tests {
     #[test]
     fn discovery_text_limits_are_enforced() {
         let mut buf = [0u8; 32];
+        assert!(encode_param(&mut buf, "laser_frames_received", ParamType::U32, 1, false).is_ok());
         assert_eq!(
-            encode_param(&mut buf, "sixteen_byte_name", ParamType::F32, 1, true),
+            encode_param(
+                &mut buf,
+                "twenty_four_byte_name_xx",
+                ParamType::F32,
+                1,
+                true
+            ),
             Err(PayloadError::InvalidText)
         );
         assert_eq!(

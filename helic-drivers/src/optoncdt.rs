@@ -26,6 +26,17 @@ pub struct RawValue {
     pub first: bool,
 }
 
+/// Outcome of feeding one byte to the binary measurement parser.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParseEvent {
+    /// The byte advanced a partial value without completing it.
+    Pending,
+    /// One complete output value was decoded.
+    Value(RawValue),
+    /// Flag bits did not match the expected L/M/H sequence.
+    Resynchronised,
+}
+
 /// Result of consuming one complete ASCII command reply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandReply {
@@ -118,23 +129,36 @@ impl Parser {
     /// Feed one byte; returns a value when its final (H) byte arrives.
     #[inline]
     pub fn push(&mut self, byte: u8) -> Option<RawValue> {
+        match self.push_event(byte) {
+            ParseEvent::Value(value) => Some(value),
+            ParseEvent::Pending | ParseEvent::Resynchronised => None,
+        }
+    }
+
+    /// Feed one byte and report malformed sequences as resynchronisations.
+    ///
+    /// An L-byte received mid-value both reports the truncated value and
+    /// starts the next candidate value, so recovery does not discard a good
+    /// byte.
+    #[inline]
+    pub fn push_event(&mut self, byte: u8) -> ParseEvent {
         let flags = byte >> 6;
         let data = (byte & 0x3F) as u32;
         match (self.stage, flags) {
             (0, 0b00) => {
                 self.acc = data;
                 self.stage = 1;
-                None
+                ParseEvent::Pending
             }
             (1, 0b01) => {
                 self.acc |= data << 6;
                 self.stage = 2;
-                None
+                ParseEvent::Pending
             }
             (2, 0b10) | (2, 0b11) => {
                 let value = self.acc | (data << 12);
                 self.stage = 0;
-                Some(RawValue {
+                ParseEvent::Value(RawValue {
                     value,
                     first: flags == 0b10,
                 })
@@ -144,11 +168,11 @@ impl Parser {
             (_, 0b00) => {
                 self.acc = data;
                 self.stage = 1;
-                None
+                ParseEvent::Resynchronised
             }
             _ => {
                 self.stage = 0;
-                None
+                ParseEvent::Resynchronised
             }
         }
     }
@@ -251,12 +275,30 @@ mod tests {
         // discarded, and the next full measurement parsed correctly.
         p.push(good[1]);
         p.push(good[2]);
-        assert_eq!(p.push(good[0]), None);
+        assert_eq!(p.push_event(good[0]), ParseEvent::Pending);
         assert_eq!(p.push(good[1]), None);
         assert_eq!(
             p.push(good[2]),
             Some(RawValue {
                 value: 12345,
+                first: true
+            })
+        );
+    }
+
+    #[test]
+    fn reports_out_of_sequence_bytes_while_recovering() {
+        let mut p = Parser::new();
+        assert_eq!(p.push_event(0b0100_0001), ParseEvent::Resynchronised);
+        assert_eq!(p.push_event(0b1000_0010), ParseEvent::Resynchronised);
+
+        let good = encode(1234, true);
+        assert_eq!(p.push_event(good[0]), ParseEvent::Pending);
+        assert_eq!(p.push_event(good[1]), ParseEvent::Pending);
+        assert_eq!(
+            p.push_event(good[2]),
+            ParseEvent::Value(RawValue {
+                value: 1234,
                 first: true
             })
         );
@@ -269,7 +311,7 @@ mod tests {
         p.push(good[0]);
         // A fresh L-byte arrives instead of the M-byte (previous value was
         // truncated): parsing restarts from the new L-byte.
-        assert_eq!(p.push(good[0]), None);
+        assert_eq!(p.push_event(good[0]), ParseEvent::Resynchronised);
         assert_eq!(p.push(good[1]), None);
         assert_eq!(
             p.push(good[2]),

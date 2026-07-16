@@ -323,7 +323,10 @@ Core 0 never touches loop state. Four mechanisms keep communication bounded:
   never blocks on it; overflow drops the record and increments
   `records_dropped`.
 - **Scalars**: `AtomicU32` statics expose diagnostics and latest sensor values
-  without sharing live loop state between cores.
+  without sharing live loop state between cores. The optoNCDT task also
+  publishes monotonic frame, UART-error, parser-resynchronisation,
+  invalid-frame, and unexpected-value counters so its independent 8 kHz input
+  rate can be compared with RT ticks under core-0 load.
 
 In `whirl-rig`, PIO0 SM0 drives a shared SSI clock and samples the contiguous
 pitch and yaw pins with one `in pins, 2` instruction. Each hardware-latched

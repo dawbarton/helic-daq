@@ -5,7 +5,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use defmt::{info, warn};
 use embassy_rp::uart::{Async, Uart, UartRx};
 use embassy_time::{Duration, Timer, WithTimeout};
-use helic_drivers::optoncdt::{CommandReply, CommandReplyParser, DistanceScale, Parser, Reading};
+use helic_drivers::optoncdt::{
+    CommandReply, CommandReplyParser, DistanceScale, ParseEvent, Parser, Reading,
+};
 
 const OUTPUT_NONE: &[u8] = b"OUTPUT NONE\n";
 const GET_USER_LEVEL: &[u8] = b"GETUSERLEVEL\n";
@@ -31,6 +33,34 @@ impl ReplyTrace {
     }
 }
 
+/// Monotonic diagnostics for one optoNCDT receive task.
+#[derive(Clone, Copy)]
+pub struct LaserCounters {
+    frames_received: &'static AtomicU32,
+    uart_errors: &'static AtomicU32,
+    parse_errors: &'static AtomicU32,
+    invalid_frames: &'static AtomicU32,
+    unexpected_values: &'static AtomicU32,
+}
+
+impl LaserCounters {
+    pub const fn new(
+        frames_received: &'static AtomicU32,
+        uart_errors: &'static AtomicU32,
+        parse_errors: &'static AtomicU32,
+        invalid_frames: &'static AtomicU32,
+        unexpected_values: &'static AtomicU32,
+    ) -> Self {
+        Self {
+            frames_received,
+            uart_errors,
+            parse_errors,
+            invalid_frames,
+            unexpected_values,
+        }
+    }
+}
+
 /// Configure an optoNCDT command channel, then publish its binary measurements.
 ///
 /// Replies and binary values share the RS422 receive stream. Each command is
@@ -41,6 +71,7 @@ pub async fn configured_laser_run(
     measrate_command: &'static [u8],
     range_mm: &'static AtomicU32,
     destination: &'static AtomicU32,
+    counters: LaserCounters,
 ) -> ! {
     loop {
         let Some(baudrate) = detect_baudrate(&mut uart).await else {
@@ -65,7 +96,7 @@ pub async fn configured_laser_run(
     }
     info!("laser: configuration complete; parsing binary measurements");
     let (_, rx) = uart.split();
-    laser_run(rx, range_mm, destination).await
+    laser_run(rx, range_mm, destination, counters).await
 }
 
 async fn detect_baudrate(uart: &mut Uart<'static, Async>) -> Option<u32> {
@@ -181,12 +212,14 @@ pub async fn laser_run(
     mut rx: UartRx<'static, Async>,
     range_mm: &'static AtomicU32,
     destination: &'static AtomicU32,
+    counters: LaserCounters,
 ) -> ! {
     let mut parser = Parser::new();
     let mut buf = [0u8; 3];
     let mut first_distance_logged = false;
     loop {
         if rx.read(&mut buf).await.is_err() {
+            counters.uart_errors.fetch_add(1, Ordering::Relaxed);
             // A floating disconnected line can generate enough framing-error
             // interrupts to starve core 0; retain the hardware pull-up and
             // back off after errors as defence in depth.
@@ -194,35 +227,52 @@ pub async fn laser_run(
             continue;
         }
         for byte in buf {
-            let Some(value) = parser.push(byte) else {
-                continue;
+            let value = match parser.push_event(byte) {
+                ParseEvent::Pending => continue,
+                ParseEvent::Resynchronised => {
+                    counters.parse_errors.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                ParseEvent::Value(value) => value,
             };
-            if value.first {
-                let scale = DistanceScale::new(f32::from_bits(range_mm.load(Ordering::Relaxed)));
-                match scale.convert(value.value) {
-                    Reading::InRange(mm) => {
-                        if !first_distance_logged {
-                            info!(
-                                "laser: first in-range measurement raw={} distance={} mm",
-                                value.value, mm
-                            );
-                            first_distance_logged = true;
-                        }
-                        destination.store(mm.to_bits(), Ordering::Relaxed);
+            if !value.first {
+                counters.unexpected_values.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
+
+            counters.frames_received.fetch_add(1, Ordering::Relaxed);
+            let scale = DistanceScale::new(f32::from_bits(range_mm.load(Ordering::Relaxed)));
+            match scale.convert(value.value) {
+                Reading::InRange(mm) => {
+                    if !first_distance_logged {
+                        info!(
+                            "laser: first in-range measurement raw={} distance={} mm",
+                            value.value, mm
+                        );
+                        first_distance_logged = true;
                     }
-                    Reading::BelowRange if !first_distance_logged => {
+                    destination.store(mm.to_bits(), Ordering::Relaxed);
+                }
+                Reading::BelowRange => {
+                    counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    if !first_distance_logged {
                         warn!("laser: first distance raw={} is below range", value.value);
                         first_distance_logged = true;
                     }
-                    Reading::AboveRange if !first_distance_logged => {
+                }
+                Reading::AboveRange => {
+                    counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    if !first_distance_logged {
                         warn!("laser: first distance raw={} is above range", value.value);
                         first_distance_logged = true;
                     }
-                    Reading::Error(code) if !first_distance_logged => {
+                }
+                Reading::Error(code) => {
+                    counters.invalid_frames.fetch_add(1, Ordering::Relaxed);
+                    if !first_distance_logged {
                         warn!("laser: first distance is sensor error {}", code);
                         first_distance_logged = true;
                     }
-                    Reading::BelowRange | Reading::AboveRange | Reading::Error(_) => {}
                 }
             }
         }

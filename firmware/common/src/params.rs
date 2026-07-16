@@ -233,9 +233,15 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         let mut encoded_len = 0;
         for i in 0..self.count() {
             let def = self.def(i).unwrap();
+            let max_name_len =
+                if (BASE_PARAMS.len()..BASE_PARAMS.len() + self.extras.len()).contains(&i) {
+                    helic_proto::payload::MAX_PARAM_NAME_LEN
+                } else {
+                    helic_proto::payload::MAX_NAME_LEN
+                };
             assert!(
-                def.name.len() <= helic_proto::payload::MAX_NAME_LEN && def.name.is_ascii(),
-                "parameter names must be ASCII and at most 15 bytes"
+                def.name.len() <= max_name_len && def.name.is_ascii(),
+                "parameter name is non-ASCII or exceeds its category limit"
             );
             encoded_len += def.name.len() + 5;
             for j in 0..i {

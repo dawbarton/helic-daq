@@ -167,7 +167,19 @@ async fn laser_task(parts: LaserParts) -> ! {
     let mut config = uart::Config::default();
     config.baudrate = 921_600;
     let rx = uart::UartRx::new(parts.uart, parts.rx, Irqs, parts.rx_dma, config);
-    helic_fw_common::laser::laser_run(rx, &telemetry::LASER_RANGE_MM, &telemetry::LASER_VALUE).await
+    helic_fw_common::laser::laser_run(
+        rx,
+        &telemetry::LASER_RANGE_MM,
+        &telemetry::LASER_VALUE,
+        helic_fw_common::laser::LaserCounters::new(
+            &telemetry::LASER_FRAMES_RECEIVED,
+            &telemetry::LASER_UART_ERRORS,
+            &telemetry::LASER_PARSE_ERRORS,
+            &telemetry::LASER_INVALID_FRAMES,
+            &telemetry::LASER_UNEXPECTED_VALUES,
+        ),
+    )
+    .await
 }
 
 #[embassy_executor::task]

@@ -337,6 +337,14 @@ budgets.
 - `tick_timeouts`: non-zero means the selected tick source isn't responding;
   for `cbc-rig`, the ADC may not be wired or powered.
 - `records_dropped`: stream data lost because the host wasn't keeping up.
+- `laser_frames_received`: complete optoNCDT measurement frames parsed since
+  boot. Its rate should match the configured laser measuring rate.
+- `laser_uart_errors` / `laser_parse_errors`: UART receive faults and malformed
+  L/M/H byte sequences. Both should remain zero.
+- `laser_invalid_frames`: complete frames reporting a reserve-band or sensor
+  error value rather than an in-range distance.
+- `laser_unexpected_values`: additional values after the distance value. This
+  should remain zero because startup selects distance-only output.
 
 If something looks wrong, the same numbers appear once a second in the
 debug-probe log, along with connection events.

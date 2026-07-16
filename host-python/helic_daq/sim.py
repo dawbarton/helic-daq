@@ -71,6 +71,11 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("diag_reset", "I", 1, True, 0),
         SimParam("cmd_backlog_max", "I", 1, False, 0),
         SimParam("laser", "f", 1, False, 25.0),
+        SimParam("laser_frames_received", "I", 1, False, 0),
+        SimParam("laser_uart_errors", "I", 1, False, 0),
+        SimParam("laser_parse_errors", "I", 1, False, 0),
+        SimParam("laser_invalid_frames", "I", 1, False, 0),
+        SimParam("laser_unexpected_values", "I", 1, False, 0),
         SimParam("rig_laser_range", "f", 1, True, 50.0),
         SimParam("rig_out_channel", "f", 1, True, 0.0),
     ]
