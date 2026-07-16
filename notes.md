@@ -75,7 +75,9 @@ intentionally matches it.
 ## Not yet verified on hardware
 
 - An optoNCDT 1420 producing real binary measurements. Only disconnected-line
-  behaviour has been checked.
+  behaviour has been checked. CBC now sends the documented startup commands
+  over GP0, but that bidirectional command-and-stream path is software-only
+  until exercised with the sensor and RS422 hardware.
 - Long phase-locked arbitrary table operation.
 - `fw-whirl-rig` and `fw-pico2w-rig`. They build with the firmware workspace
   and their portable logic has host tests, but neither has been exercised as
@@ -138,9 +140,12 @@ now has an external 10 kΩ pull-up from GP1 to 3V3 and retains a 10 ms retry
 backoff. Keep the pull-up fitted; a firmware pull configured through
 `embassy-rp::gpio::Flex` is lost when the pin is converted to UART ownership.
 
-The sensor must be configured externally for binary output at 921.6 kBaud and
-8 kHz. Firmware currently receives only; GP0 is reserved for possible future
-sensor commands.
+CBC expects the factory 921.6 kBaud setting. At startup it uses GP0 through a
+TTL-to-RS422 transmitter to stop any old stream, set `MEASRATE` to the
+firmware sample rate, disable output reduction and additional values, then
+select `OUTPUT RS422`. Command replies and the `->` prompt are discarded
+before binary parsing starts. This transmit path and a real 8 kHz binary
+stream still require hardware verification.
 
 ### Ethernet and debug
 

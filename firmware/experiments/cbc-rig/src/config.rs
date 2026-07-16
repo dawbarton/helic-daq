@@ -22,6 +22,16 @@ pub const OUTPUT_CHANNEL: usize = 0;
 /// 10/25/50/100/200/500).
 pub const LASER_RANGE_MM: f32 = 50.0;
 
+/// optoNCDT measuring-rate command matched to the hardware sample clock.
+///
+/// The sensor command uses kHz, and must end in LF.
+pub const LASER_MEASRATE_COMMAND: &[u8] = match SAMPLE_RATE {
+    SampleRate::Hz1000 => b"MEASRATE 1\n",
+    SampleRate::Hz2000 => b"MEASRATE 2\n",
+    SampleRate::Hz4000 => b"MEASRATE 4\n",
+    SampleRate::Hz8000 => b"MEASRATE 8\n",
+};
+
 /// Static IPv4 address and prefix length. Configuration is not persisted;
 /// edit and reflash to change it.
 pub const NET_CONFIG: NetConfig = NetConfig::Static {

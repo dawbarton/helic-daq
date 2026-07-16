@@ -26,6 +26,66 @@ pub struct RawValue {
     pub first: bool,
 }
 
+/// Result of consuming one complete ASCII command reply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandReply {
+    /// The sensor returned its prompt without an error.
+    Ok,
+    /// The reply contained an `Exxx` sensor error code before the prompt.
+    Error(u16),
+}
+
+/// Parser for ASCII command replies multiplexed with binary measurements.
+///
+/// The sensor terminates every reply with the `->` prompt. Binary output may
+/// continue during command exchange, but a well-formed binary stream cannot
+/// contain this two-byte sequence because every third byte has its top bit
+/// set. The parser also remembers an `Exxx` error until the prompt arrives.
+#[derive(Debug, Default)]
+pub struct CommandReplyParser {
+    previous: u8,
+    window: u32,
+    error: Option<u16>,
+}
+
+impl CommandReplyParser {
+    pub const fn new() -> Self {
+        Self {
+            previous: 0,
+            window: 0,
+            error: None,
+        }
+    }
+
+    /// Feed one received byte, returning when the terminating prompt arrives.
+    pub fn push(&mut self, byte: u8) -> Option<CommandReply> {
+        self.window = (self.window << 8) | byte as u32;
+        let bytes = self.window.to_be_bytes();
+        if bytes[0] == b'E'
+            && bytes[1].is_ascii_digit()
+            && bytes[2].is_ascii_digit()
+            && bytes[3].is_ascii_digit()
+        {
+            self.error = Some(
+                u16::from(bytes[1] - b'0') * 100
+                    + u16::from(bytes[2] - b'0') * 10
+                    + u16::from(bytes[3] - b'0'),
+            );
+        }
+
+        let complete = self.previous == b'-' && byte == b'>';
+        self.previous = byte;
+        if complete {
+            Some(match self.error {
+                Some(code) => CommandReply::Error(code),
+                None => CommandReply::Ok,
+            })
+        } else {
+            None
+        }
+    }
+}
+
 /// Classification of a 16-bit distance value.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Reading {
@@ -248,5 +308,59 @@ mod tests {
         assert_eq!(scale.convert(64888), Reading::AboveRange);
         assert_eq!(scale.convert(65520), Reading::AboveRange);
         assert_eq!(scale.convert(65535), Reading::Error(65535));
+    }
+
+    #[test]
+    fn command_reply_waits_for_prompt_and_reports_errors() {
+        let mut ok = CommandReplyParser::new();
+        let mut result = None;
+        for byte in b"MEASRATE 8 ok\r\n->" {
+            result = ok.push(*byte).or(result);
+        }
+        assert_eq!(result, Some(CommandReply::Ok));
+
+        let mut error = CommandReplyParser::new();
+        let mut result = None;
+        for byte in b"E202 Access denied\r\n->" {
+            result = error.push(*byte).or(result);
+        }
+        assert_eq!(result, Some(CommandReply::Error(202)));
+    }
+
+    #[test]
+    fn command_reply_ignores_interleaved_binary_measurements() {
+        let mut reply = CommandReplyParser::new();
+        let mut result = None;
+        for byte in encode(12345, true)
+            .into_iter()
+            .chain(*b"OUTPUT NONE\r\n")
+            .chain(encode(23456, true))
+            .chain(*b"->")
+        {
+            result = reply.push(byte).or(result);
+        }
+        assert_eq!(result, Some(CommandReply::Ok));
+    }
+
+    #[test]
+    fn measurement_parser_ignores_ascii_replies_and_prompts() {
+        let mut parser = Parser::new();
+        let mut values = Vec::new();
+        for byte in b"MEASRATE 8 ok\r\n->"
+            .iter()
+            .copied()
+            .chain(encode(32768, true))
+        {
+            if let Some(value) = parser.push(byte) {
+                values.push(value);
+            }
+        }
+        assert_eq!(
+            values,
+            vec![RawValue {
+                value: 32768,
+                first: true
+            }]
+        );
     }
 }

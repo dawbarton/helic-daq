@@ -294,7 +294,7 @@ pass-through controller the output is simply `target + forcing`.
 |---|---|
 | Analogue in 0–7 | AD7609 inputs, ±10 V (or ±20 V, compile-time) |
 | Analogue out 0–3 | Per-channel polarity, set in `board.rs` (`DAC_POLARITY`): unipolar 0–4.096 V or bipolar ±4.096 V |
-| Laser | optoNCDT 1420 via RS422→TTL at 921.6 kBaud, 8 kHz output rate |
+| Laser | optoNCDT 1420 via bidirectional RS422↔TTL at 921.6 kBaud; CBC configures its rate to match the sample clock |
 | SSI clock (`whirl-rig`) | GP22, fanned out to both TTL→RS422 clock transmitters |
 | Pitch/yaw (`whirl-rig`) | RS422→TTL data on GP26/GP27 respectively |
 | Revolution pulse (`whirl-rig`) | Active-high 3.3 V input on GP28 |
@@ -303,8 +303,11 @@ Output-channel polarity must match your analogue board's output stages. The
 target design is two bipolar + two unipolar; the current build is **all four
 unipolar** (matching the interim bring-up board). The controller writes to
 output channel 0 by default. The laser sensor must be preconfigured (via
-Micro-Epsilon's tool) for binary output at 921.6 kBaud; the firmware only
-listens.
+Micro-Epsilon's tool) only if its baud rate has changed from the factory
+921.6 kBaud. CBC configures its measuring rate, disables output reduction and
+additional values, then selects binary RS422 output. This requires both UART
+directions through suitable TTL↔RS422 hardware; GP1 still needs the external
+idle-high pull-up.
 
 ## Things you set at compile time
 

@@ -24,7 +24,7 @@ use embassy_rp::bind_interrupts;
 use embassy_rp::block::ImageDef;
 use embassy_rp::gpio::Output;
 use embassy_rp::multicore::{spawn_core1, Stack as CoreStack};
-use embassy_rp::peripherals::{DMA_CH1, DMA_CH2, DMA_CH3, UART0};
+use embassy_rp::peripherals::{DMA_CH1, DMA_CH2, DMA_CH3, DMA_CH4, UART0};
 use embassy_rp::uart;
 use embassy_time::Timer;
 use helic_fw_common::comms;
@@ -61,7 +61,8 @@ bind_interrupts!(pub struct Irqs {
     TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH1>,
         embassy_rp::dma::InterruptHandler<DMA_CH2>,
-        embassy_rp::dma::InterruptHandler<DMA_CH3>;
+        embassy_rp::dma::InterruptHandler<DMA_CH3>,
+        embassy_rp::dma::InterruptHandler<DMA_CH4>;
 });
 
 // Embedded async tasks live for the whole firmware run. StaticCell performs a
@@ -187,8 +188,24 @@ async fn blink(mut led: Output<'static>) -> ! {
 async fn laser_task(parts: LaserParts) -> ! {
     let mut uart_config = uart::Config::default();
     uart_config.baudrate = 921_600;
-    let rx = uart::UartRx::new(parts.uart, parts.rx, Irqs, parts.rx_dma, uart_config);
-    helic_fw_common::laser::laser_run(rx, &telemetry::LASER_RANGE_MM, &telemetry::LASER_VALUE).await
+    let uart = uart::Uart::new(
+        parts.uart,
+        parts.tx,
+        parts.rx,
+        Irqs,
+        parts.tx_dma,
+        parts.rx_dma,
+        uart_config,
+    );
+    let (tx, rx) = uart.split();
+    helic_fw_common::laser::configured_laser_run(
+        tx,
+        rx,
+        config::LASER_MEASRATE_COMMAND,
+        &telemetry::LASER_RANGE_MM,
+        &telemetry::LASER_VALUE,
+    )
+    .await
 }
 
 /// Core 0: 1 Hz diagnostics over defmt.

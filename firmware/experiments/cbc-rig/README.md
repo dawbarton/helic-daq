@@ -10,8 +10,10 @@ through the `board-w6100` feature.
   the hardware sample clock and the BUSY falling edge starts each RT tick.
 - AD5064 four-channel DAC on the same core-1 SPI bus. The current configuration
   treats all channels as unipolar; this must match the fitted output stages.
-- Optional optoNCDT laser input on UART0 RX. A disconnected input requires the
-  external 10 kΩ pull-up on GP1 described in the project notes.
+- Optional optoNCDT laser on UART0 TX/RX through separate TTL↔RS422 paths.
+  Firmware configures the measuring rate and distance-only RS422 output at
+  startup. A disconnected input requires the external 10 kΩ pull-up on GP1
+  described in the project notes.
 - W5500 or W6100 Ethernet on the board's SPI0 interface.
 - GP14 timing output, high while the real-time tick body executes.
 

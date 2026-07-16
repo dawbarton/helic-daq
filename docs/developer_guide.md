@@ -564,11 +564,11 @@ Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses prob
 - Arbitrary table upload and playback are implemented and host-tested, but
   still require scope verification on hardware, including glitch-free
   re-commit and long phase-locked runs.
-- USB serial as a second transport, flash-persisted configuration, laser TX
-  for sensor configuration, per-period Fourier statistics and a filtered
-  random perturbation source are not implemented. The phase-wrap hook and
-  estimator interfaces leave room for the latter two without changing the
-  sample-clock architecture.
+- USB serial as a second transport, flash-persisted platform configuration,
+  per-period Fourier statistics and a filtered random perturbation source are
+  not implemented. CBC does configure the optoNCDT over UART TX at startup;
+  the phase-wrap hook and estimator interfaces leave room for the latter two
+  without changing the sample-clock architecture.
 
 The exact verification status changes as boards are exercised. Keep
 [../notes.md](../notes.md) current rather than adding status history here.

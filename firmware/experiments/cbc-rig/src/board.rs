@@ -1,11 +1,13 @@
 //! Auditable pin map and peripheral ownership for the wired CBC experiment.
 //!
-//! WIZnet reserves GP16–21 and GP25. CBC assigns GP1 to the optoNCDT UART;
+//! WIZnet reserves GP16–21 and GP25. CBC assigns GP0/1 to the optoNCDT UART;
 //! GP2–8 and GP13 to the AD7609; GP9–12 and GP15 to the shared ADC/DAC SPI
 //! path; and GP14 to the tick timing output. Behaviour lives in `rig.rs`.
 
 use embassy_rp::gpio::{Input, Level, Output, Pull};
-use embassy_rp::peripherals::{CORE1, DMA_CH1, PIN_1, PIN_7, PIN_8, PWM_SLICE4, SPI1, UART0};
+use embassy_rp::peripherals::{
+    CORE1, DMA_CH1, DMA_CH4, PIN_0, PIN_1, PIN_7, PIN_8, PWM_SLICE4, SPI1, UART0,
+};
 use embassy_rp::spi::{self, Async, Blocking, Spi};
 use embassy_rp::{Peri, Peripherals};
 use helic_drivers::ad7609::ConfigPins;
@@ -23,7 +25,9 @@ pub struct Board {
 /// UART resources assembled on core 0, where the interrupt token is available.
 pub struct LaserParts {
     pub uart: Peri<'static, UART0>,
+    pub tx: Peri<'static, PIN_0>,
     pub rx: Peri<'static, PIN_1>,
+    pub tx_dma: Peri<'static, DMA_CH4>,
     pub rx_dma: Peri<'static, DMA_CH1>,
 }
 
@@ -88,7 +92,9 @@ impl Board {
             },
             laser: LaserParts {
                 uart: p.UART0,
+                tx: p.PIN_0,
                 rx: p.PIN_1,
+                tx_dma: p.DMA_CH4,
                 rx_dma: p.DMA_CH1,
             },
             eth: EthernetParts {
