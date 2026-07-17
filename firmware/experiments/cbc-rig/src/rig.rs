@@ -171,8 +171,15 @@ impl Rig for CbcRig {
         // same voltage, so the differential drive (A - C) is zero until the
         // RT loop's first `actuate`. Without this, A would sit at 0 V while C
         // is at MID_RAIL, applying a one-tick full-scale negative drive.
-        if self.dac.write_volts(NEG_REF_CHANNEL, MID_RAIL).is_err()
-            || self.dac.write_volts(self.output_channel, MID_RAIL).is_err()
+        // C is written before A so the driven channel settles to match the
+        // reference last. `write_dac_channels_spaced` observes the AD5064's
+        // inter-word settling time, including a gap after the zeroing above.
+        if self
+            .write_dac_channels_spaced(&[
+                (NEG_REF_CHANNEL, MID_RAIL),
+                (self.output_channel, MID_RAIL),
+            ])
+            .is_err()
         {
             warn!("DAC common-mode setup failed");
         }
@@ -257,6 +264,28 @@ impl Rig for CbcRig {
 }
 
 impl CbcRig {
+    /// Inter-word settling time between consecutive AD5064 SPI writes. The
+    /// driver's timing note (helic-drivers `ad5064.rs`) requires ~3 µs between
+    /// sequential words; writing closer than this can corrupt an update.
+    const DAC_WORD_SETTLE_US: u64 = 3;
+
+    /// Write DAC channels to explicit voltages, spacing every SPI word by the
+    /// AD5064 inter-word settling time. This mirrors the driver's
+    /// `zero_all_with_delay` for arbitrary setpoints, which the shared driver
+    /// does not expose. The leading delay makes it safe to call immediately
+    /// after another DAC write (e.g. `zero_all_with_delay`).
+    ///
+    /// Startup only: it busy-waits and must never run on the per-tick path.
+    fn write_dac_channels_spaced(&mut self, setpoints: &[(usize, f32)]) -> Result<(), ()> {
+        for &(channel, volts) in setpoints {
+            embassy_time::block_for(embassy_time::Duration::from_micros(
+                Self::DAC_WORD_SETTLE_US,
+            ));
+            self.dac.write_volts(channel, volts).map_err(|_| ())?;
+        }
+        Ok(())
+    }
+
     /// Start the crystal-timed CONVST output after ADC and DAC setup.
     fn start_convst_pwm(&mut self, divider: u8, top: u16) -> Pwm<'static> {
         let (slice, pin) = self.convst.take().expect("CONVST PWM already started");
