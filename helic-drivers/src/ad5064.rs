@@ -7,14 +7,23 @@
 //! mapping per channel.
 //!
 //! Timing note carried over from rtc: the AD5064 requires ~3 µs between
-//! sequential words — the RT loop should space channel writes out rather
-//! than writing back-to-back.
+//! sequential words ([`WORD_SETTLE_US`]) — callers issuing several writes in
+//! quick succession must space them out rather than writing back-to-back.
+//! [`Ad5064::write_volts_with_delay`] and [`Ad5064::zero_all_with_delay`] do
+//! this for a batch; the single-word [`Ad5064::write_volts`] /
+//! [`Ad5064::write_code`] do not (see their docs). A per-tick RT write of one
+//! channel is already spaced by the tick period.
 
 use crate::AnalogOut;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 
 pub const CHANNELS: usize = 4;
+
+/// Minimum time between consecutive AD5064 SPI words. The part requires this
+/// inter-word settling time (see the module timing note); callers issuing more
+/// than one write in quick succession must space them by at least this much.
+pub const WORD_SETTLE_US: u32 = 3;
 
 /// AD5064 command codes (bits 27:24).
 #[derive(Clone, Copy, Debug)]
@@ -90,6 +99,13 @@ where
     }
 
     /// Write and update one channel with a raw code.
+    ///
+    /// This is a single, unspaced word. The AD5064 needs at least
+    /// [`WORD_SETTLE_US`] µs between consecutive words (see the module timing
+    /// note), so issuing several `write_code`/`write_volts` calls back-to-back
+    /// can corrupt an update — use [`Ad5064::write_volts_with_delay`] or
+    /// [`Ad5064::zero_all_with_delay`] to space a batch. A per-tick RT write of
+    /// one channel is already spaced by the tick period.
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn write_code(&mut self, channel: usize, code: u16) -> Result<(), E> {
         self.spi
@@ -97,6 +113,9 @@ where
     }
 
     /// Write and update one channel in volts (clamped to the channel range).
+    ///
+    /// Single, unspaced word: the same [`WORD_SETTLE_US`] µs inter-word timing
+    /// caveat as [`Ad5064::write_code`] applies when calling this repeatedly.
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn write_volts(&mut self, channel: usize, volts: f32) -> Result<(), E> {
         let code = code_for_volts(volts, self.polarity[channel], self.vref);
@@ -112,13 +131,35 @@ where
         Ok(())
     }
 
-    /// Set every channel to 0 V, spacing consecutive SPI words for parts
-    /// that require an inter-word settling time.
+    /// Set every channel to 0 V, spacing consecutive SPI words by
+    /// [`WORD_SETTLE_US`] µs for parts that require an inter-word settling time.
     pub fn zero_all_with_delay(&mut self, delay: &mut impl DelayNs) -> Result<(), E> {
         for ch in 0..CHANNELS {
             self.write_volts(ch, 0.0)?;
             if ch + 1 < CHANNELS {
-                delay.delay_us(3);
+                delay.delay_us(WORD_SETTLE_US);
+            }
+        }
+        Ok(())
+    }
+
+    /// Write several channels in volts, spacing consecutive SPI words by
+    /// [`WORD_SETTLE_US`] µs so the AD5064's inter-word settling time is
+    /// respected (see the module timing note). Each setpoint is a
+    /// `(channel, volts)` pair, written in order and clamped to the channel
+    /// range; the delay is inserted between words, not before the first or
+    /// after the last. Prefer this over a sequence of bare [`Ad5064::write_volts`]
+    /// calls whenever more than one channel is updated at once, e.g. defining
+    /// the outputs at startup. Not for the per-tick RT path.
+    pub fn write_volts_with_delay(
+        &mut self,
+        setpoints: &[(usize, f32)],
+        delay: &mut impl DelayNs,
+    ) -> Result<(), E> {
+        for (i, &(channel, volts)) in setpoints.iter().enumerate() {
+            self.write_volts(channel, volts)?;
+            if i + 1 < setpoints.len() {
+                delay.delay_us(WORD_SETTLE_US);
             }
         }
         Ok(())
@@ -235,5 +276,20 @@ mod tests {
         dac.zero_all_with_delay(&mut delay).unwrap();
         assert_eq!(dac.spi.written.len(), 16);
         assert_eq!(delay.calls_us, vec![3, 3, 3]);
+    }
+
+    #[test]
+    fn write_volts_with_delay_spaces_between_words_only() {
+        let mut dac = Ad5064::new(MockSpi::default(), [ChannelPolarity::Unipolar; 4], 4.096);
+        let mut delay = RecordingDelay::default();
+        // Three setpoints: expect three frames and two inter-word delays.
+        dac.write_volts_with_delay(&[(2, 2.048), (0, 2.048), (1, 0.0)], &mut delay)
+            .unwrap();
+        assert_eq!(dac.spi.written.len(), 12);
+        // Channel addresses appear in the written order (2, then 0, then 1).
+        assert_eq!(dac.spi.written[1] >> 4, 2);
+        assert_eq!(dac.spi.written[5] >> 4, 0);
+        assert_eq!(dac.spi.written[9] >> 4, 1);
+        assert_eq!(delay.calls_us, vec![WORD_SETTLE_US, WORD_SETTLE_US]);
     }
 }

@@ -159,29 +159,26 @@ impl Rig for CbcRig {
             &mut embassy_time::Delay,
         );
         self.adc_scale = self.adc.scale();
+        // Define every DAC output before the RT loop starts, spacing the writes
+        // for the AD5064's inter-word settling time (see the timing note in the
+        // helic-drivers ad5064 module). Channels A and C (the exciter's
+        // differential inputs) rest at the common-mode reference so the
+        // differential drive (A - C) is zero until the first `actuate`; unused B
+        // and D rest at 0 V. C is written before A so the driven channel settles
+        // to match the reference last. Output routing is locked to A, so the
+        // remaining unused channels are the fixed indices 1 (B) and 3 (D).
+        let startup_setpoints = [
+            (NEG_REF_CHANNEL, MID_RAIL),     // C: negative differential reference
+            (self.output_channel, MID_RAIL), // A: driven channel; rest = zero drive
+            (1, 0.0),                        // B: broken, held defined
+            (3, 0.0),                        // D: unused
+        ];
         if self
             .dac
-            .zero_all_with_delay(&mut embassy_time::Delay)
+            .write_volts_with_delay(&startup_setpoints, &mut embassy_time::Delay)
             .is_err()
         {
-            warn!("DAC zeroing failed");
-        }
-        // Establish the exciter's differential rest state: hold channel C at
-        // the common-mode reference and park the driven channel (A) at the
-        // same voltage, so the differential drive (A - C) is zero until the
-        // RT loop's first `actuate`. Without this, A would sit at 0 V while C
-        // is at MID_RAIL, applying a one-tick full-scale negative drive.
-        // C is written before A so the driven channel settles to match the
-        // reference last. `write_dac_channels_spaced` observes the AD5064's
-        // inter-word settling time, including a gap after the zeroing above.
-        if self
-            .write_dac_channels_spaced(&[
-                (NEG_REF_CHANNEL, MID_RAIL),
-                (self.output_channel, MID_RAIL),
-            ])
-            .is_err()
-        {
-            warn!("DAC common-mode setup failed");
+            warn!("DAC startup setup failed");
         }
         let (divider, top) = self.sample_rate.pwm_params();
         self.convst_pwm = Some(self.start_convst_pwm(divider, top));
@@ -264,28 +261,6 @@ impl Rig for CbcRig {
 }
 
 impl CbcRig {
-    /// Inter-word settling time between consecutive AD5064 SPI writes. The
-    /// driver's timing note (helic-drivers `ad5064.rs`) requires ~3 µs between
-    /// sequential words; writing closer than this can corrupt an update.
-    const DAC_WORD_SETTLE_US: u64 = 3;
-
-    /// Write DAC channels to explicit voltages, spacing every SPI word by the
-    /// AD5064 inter-word settling time. This mirrors the driver's
-    /// `zero_all_with_delay` for arbitrary setpoints, which the shared driver
-    /// does not expose. The leading delay makes it safe to call immediately
-    /// after another DAC write (e.g. `zero_all_with_delay`).
-    ///
-    /// Startup only: it busy-waits and must never run on the per-tick path.
-    fn write_dac_channels_spaced(&mut self, setpoints: &[(usize, f32)]) -> Result<(), ()> {
-        for &(channel, volts) in setpoints {
-            embassy_time::block_for(embassy_time::Duration::from_micros(
-                Self::DAC_WORD_SETTLE_US,
-            ));
-            self.dac.write_volts(channel, volts).map_err(|_| ())?;
-        }
-        Ok(())
-    }
-
     /// Start the crystal-timed CONVST output after ADC and DAC setup.
     fn start_convst_pwm(&mut self, divider: u8, top: u16) -> Pwm<'static> {
         let (slice, pin) = self.convst.take().expect("CONVST PWM already started");
