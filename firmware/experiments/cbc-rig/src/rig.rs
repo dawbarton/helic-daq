@@ -27,6 +27,17 @@ use crate::telemetry::{LASER_RANGE_MM, LASER_VALUE};
 /// DAC reference voltage fitted to the interim analogue board.
 pub const DAC_VREF: f32 = 4.096;
 
+/// Common-mode voltage for the exciter's differential current-controller
+/// input. Both the driven channel (A) and the fixed negative reference (C)
+/// rest here so that a logical output of zero produces zero differential
+/// drive. Exact half-scale of the unipolar DAC (2.048 V).
+pub const MID_RAIL: f32 = DAC_VREF / 2.0;
+
+/// DAC channel wired to the negative differential input of the exciter
+/// current controller (AD5064 channel C). Held constant at `MID_RAIL`; it is
+/// never driven by the real-time loop.
+pub const NEG_REF_CHANNEL: usize = 2;
+
 // Raw chip-select access is the one place pin identity cannot be recovered
 // from Embassy's erased Output. Keep these beside the unsafe construction and
 // in lockstep with board.rs's auditable pin map.
@@ -155,6 +166,16 @@ impl Rig for CbcRig {
         {
             warn!("DAC zeroing failed");
         }
+        // Establish the exciter's differential rest state: hold channel C at
+        // the common-mode reference and park the driven channel (A) at the
+        // same voltage, so the differential drive (A - C) is zero until the
+        // RT loop's first `actuate`. Without this, A would sit at 0 V while C
+        // is at MID_RAIL, applying a one-tick full-scale negative drive.
+        if self.dac.write_volts(NEG_REF_CHANNEL, MID_RAIL).is_err()
+            || self.dac.write_volts(self.output_channel, MID_RAIL).is_err()
+        {
+            warn!("DAC common-mode setup failed");
+        }
         let (divider, top) = self.sample_rate.pwm_params();
         self.convst_pwm = Some(self.start_convst_pwm(divider, top));
     }
@@ -177,8 +198,13 @@ impl Rig for CbcRig {
     fn actuate(&mut self, out: f32) {
         #[cfg(feature = "diag-skip-dac")]
         let _ = out;
+        // Bias the logical command onto the common-mode reference so `out` is
+        // the signed differential drive (A - C): out = 0 rests at MID_RAIL,
+        // matching channel C. No sign inversion (A up = more drive). The DAC
+        // driver clamps the final voltage into the unipolar 0-4.096 V range.
         #[cfg(not(feature = "diag-skip-dac"))]
-        self.dac_raw.write_volts(self.output_channel, out);
+        self.dac_raw
+            .write_volts(self.output_channel, MID_RAIL + out);
     }
 
     #[unsafe(link_section = ".data.ram_func")]
@@ -211,13 +237,11 @@ impl Rig for CbcRig {
     fn normalise_param(id: u16, value: f32) -> Option<f32> {
         match id {
             0 if value.is_finite() && value > 0.0 => Some(value),
-            1 if value.is_finite()
-                && value >= 0.0
-                && value < DAC_POLARITY.len() as f32
-                && value == value as usize as f32 =>
-            {
-                Some(value)
-            }
+            // Output routing is fixed to channel A (`OUTPUT_CHANNEL`): channel
+            // B is broken and channel C holds the differential reference, so
+            // neither may be selected as the driven output. Only the wired
+            // channel is accepted; any other request is rejected.
+            1 if value == OUTPUT_CHANNEL as f32 => Some(value),
             _ => None,
         }
     }
