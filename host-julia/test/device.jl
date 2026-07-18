@@ -136,6 +136,7 @@ function start_mock_device()
             selected_ids = UInt8[]
             stream_count = UInt32(0)
             stream_decimation = UInt16(1)
+            recent_port = nothing
             try
                 while true
                     request = try
@@ -189,6 +190,29 @@ function start_mock_device()
                     elseif request.message_type == UInt8(P.STREAM_START)
                         io = IOBuffer(request.payload)
                         send_stream_to = P._read_le(io, UInt16)
+                    elseif request.message_type == UInt8(P.QUIET_STREAM_START)
+                        io = IOBuffer(request.payload)
+                        recent_port = P._read_le(io, UInt16)
+                    elseif request.message_type == UInt8(P.BROKER_INFO)
+                        io = IOBuffer()
+                        P._write_le(io, P.BROKER_EXTENSION_VERSION)
+                        P._write_le(io, UInt8(31))
+                        P._write_le(io, UInt16(15))
+                        P._write_le(io, UInt32(10_000))
+                        P._write_le(io, UInt32(4_000))
+                        P._write_le(io, stream_decimation)
+                        P._write_le(io, UInt32(0))
+                        P._write_le(io, UInt16(1))
+                        P._write_le(io, UInt8(length(selected_ids)))
+                        write(io, selected_ids)
+                        payload = take!(io)
+                    elseif request.message_type == UInt8(P.GET_RECENT)
+                        io = IOBuffer(request.payload)
+                        stream_count = P._read_le(io, UInt32)
+                        payload = request.payload
+                        send_stream_to = recent_port
+                    elseif request.message_type == UInt8(P.SET_CLIENT_QUIET)
+                        # The test peer has no live-forwarding state.
                     elseif request.message_type != UInt8(P.STREAM_STOP)
                         error("unsupported mock request $(request.message_type)")
                     end
@@ -263,6 +287,14 @@ end
         @test result[:index] == UInt64[100, 102, 104, 106]
         @test result[:adc0] == Float32[0, 1, 2, 3]
         @test result[:out] == Float32[0, 2, 4, 6]
+
+        information = broker_info(device)
+        @test information.history_capacity == 10.0
+        @test information.sources == ["adc0", "out"]
+        recent = capture_recent(device; samples = 4, port = 0, timeout = 1)
+        @test recent[:index] == UInt64[100, 102, 104, 106]
+        @test recent[:out] == Float32[0, 2, 4, 6]
+        set_stream_quiet!(device, false)
     finally
         close(device)
         wait(mock.task)

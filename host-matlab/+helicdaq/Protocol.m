@@ -13,6 +13,8 @@ classdef Protocol
         MAX_PAYLOAD = 1024
         PARAM_PAGE_HEADER_LENGTH = 4
         STREAM_HEADER_LENGTH = 20
+        BROKER_INFO_HEADER_LENGTH = 21
+        BROKER_EXTENSION_VERSION = uint8(1)
         ERROR_BUSY = uint8(7)
 
         GET_PARAMS = uint8(1)
@@ -25,6 +27,10 @@ classdef Protocol
         STREAM_START = uint8(8)
         STREAM_STOP = uint8(9)
         STATUS = uint8(10)
+        BROKER_INFO = uint8(128)
+        QUIET_STREAM_START = uint8(129)
+        GET_RECENT = uint8(130)
+        SET_CLIENT_QUIET = uint8(131)
         ERROR = uint8(255)
 
         BEACON_REQUEST = uint8([hex2dec('48'), hex2dec('4C'), 1])
@@ -345,12 +351,51 @@ classdef Protocol
             %ERRORNAME Return the protocol description for a device error code.
             names = ["bad frame", "unknown message type", ...
                 "bad parameter index", "bad length", "parameter is read-only", ...
-                "bad value", "device busy"];
+                "bad value", "device busy", ...
+                "client is not attached to the stream", ...
+                "client is not quiet", "no stream is active", ...
+                "insufficient stream history"];
             if code >= 1 && code <= numel(names)
                 name = names(double(code));
             else
                 name = "code " + string(code);
             end
+        end
+
+        function information = decodeBrokerInfo(payload)
+            %DECODEBROKERINFO Decode broker state and selected source ids.
+            payload = reshape(uint8(payload), 1, []);
+            if numel(payload) < helicdaq.Protocol.BROKER_INFO_HEADER_LENGTH
+                error('helicdaq:ProtocolError', ...
+                    'Broker information is truncated.');
+            end
+            if payload(1) ~= helicdaq.Protocol.BROKER_EXTENSION_VERSION
+                error('helicdaq:ProtocolError', ...
+                    'Unsupported broker extension version %d.', payload(1));
+            end
+            state = payload(2);
+            [capabilities, offset] = helicdaq.Protocol.unpackLE( ...
+                payload, 'uint16', 1, 3);
+            [capacityMs, offset] = helicdaq.Protocol.unpackLE( ...
+                payload, 'uint32', 1, offset);
+            [available, offset] = helicdaq.Protocol.unpackLE( ...
+                payload, 'uint32', 1, offset);
+            [decimation, offset] = helicdaq.Protocol.unpackLE( ...
+                payload, 'uint16', 1, offset);
+            [count, offset] = helicdaq.Protocol.unpackLE( ...
+                payload, 'uint32', 1, offset);
+            [clients, offset] = helicdaq.Protocol.unpackLE( ...
+                payload, 'uint16', 1, offset);
+            nSources = double(payload(offset));
+            if numel(payload) ~= helicdaq.Protocol.BROKER_INFO_HEADER_LENGTH + nSources
+                error('helicdaq:ProtocolError', ...
+                    'Broker information source count is inconsistent.');
+            end
+            information = struct('State', state, 'Capabilities', capabilities, ...
+                'HistoryCapacityMilliseconds', capacityMs, ...
+                'HistoryAvailableRecords', available, 'Decimation', decimation, ...
+                'Count', count, 'ConnectedClients', clients, ...
+                'SourceIds', payload(offset + 1:end));
         end
     end
 

@@ -96,6 +96,24 @@ class TestPayload(unittest.TestCase):
             b"\x0c\x00\x04\x03\x02\x01",
         )
 
+    def test_broker_info_payload(self):
+        payload = bytes.fromhex(
+            "01 1f 0f 00 10 27 00 00 2a 00 00 00 04 00 "
+            "00 00 00 00 02 00 03 00 08 0c"
+        )
+        information = protocol.decode_broker_info(payload)
+        self.assertEqual(information.state, 0x1F)
+        self.assertEqual(information.capabilities, 0x000F)
+        self.assertEqual(information.history_capacity_ms, 10_000)
+        self.assertEqual(information.history_available_records, 42)
+        self.assertEqual(information.decimation, 4)
+        self.assertEqual(information.count, 0)
+        self.assertEqual(information.connected_clients, 2)
+        self.assertEqual(information.sources, (0, 8, 12))
+
+        with self.assertRaises(ProtocolError):
+            protocol.decode_broker_info(payload[:-1])
+
     def test_malformed_discovery_rejected(self):
         with self.assertRaises(ProtocolError):
             protocol.decode_params(b"freq\0f")

@@ -7,6 +7,8 @@ alongside the Rust and Python implementations.
 module Protocol
 
 export BEACON_REQUEST,
+    BROKER_EXTENSION_VERSION,
+    BROKER_INFO_HEADER_LEN,
     CONTROL_PORT,
     DISCOVERY_PORT,
     ERROR_BUSY,
@@ -24,6 +26,7 @@ export BEACON_REQUEST,
     ProtocolError,
     StreamHeader,
     decode_beacon_response,
+    decode_broker_info,
     decode_frame,
     decode_param_page,
     decode_params,
@@ -47,6 +50,8 @@ const TRAILER_LEN = 2
 const MAX_PAYLOAD = 1024
 const PARAM_PAGE_HEADER_LEN = 4
 const STREAM_HEADER_LEN = 20
+const BROKER_INFO_HEADER_LEN = 21
+const BROKER_EXTENSION_VERSION = UInt8(1)
 # Error code (payload byte 1 of an Error response) the device returns while a
 # table commit is still pending; hosts may retry.
 const ERROR_BUSY = UInt8(7)
@@ -59,6 +64,10 @@ const ERROR_NAMES = Dict{UInt8, String}(
     5 => "parameter is read-only",
     6 => "bad value",
     7 => "device busy",
+    8 => "client is not attached to the stream",
+    9 => "client is not quiet",
+    10 => "no stream is active",
+    11 => "insufficient stream history",
 )
 
 @enum MessageType::UInt8 begin
@@ -72,6 +81,10 @@ const ERROR_NAMES = Dict{UInt8, String}(
     STREAM_START = 8
     STREAM_STOP = 9
     STATUS = 10
+    BROKER_INFO = 0x80
+    QUIET_STREAM_START = 0x81
+    GET_RECENT = 0x82
+    SET_CLIENT_QUIET = 0x83
     ERROR = 0xff
 end
 
@@ -80,6 +93,37 @@ struct ProtocolError <: Exception
 end
 
 Base.showerror(io::IO, error::ProtocolError) = print(io, error.message)
+
+"""Decode the broker extension state and selected source ids."""
+function decode_broker_info(payload::AbstractVector{UInt8})
+    length(payload) >= BROKER_INFO_HEADER_LEN ||
+        throw(ProtocolError("broker information is truncated"))
+    io = IOBuffer(payload)
+    version = _read_le(io, UInt8)
+    version == BROKER_EXTENSION_VERSION ||
+        throw(ProtocolError("unsupported broker extension version $version"))
+    state = _read_le(io, UInt8)
+    capabilities = _read_le(io, UInt16)
+    history_capacity_ms = _read_le(io, UInt32)
+    history_available_records = _read_le(io, UInt32)
+    decimation = _read_le(io, UInt16)
+    count = _read_le(io, UInt32)
+    connected_clients = _read_le(io, UInt16)
+    n_sources = Int(_read_le(io, UInt8))
+    length(payload) == BROKER_INFO_HEADER_LEN + n_sources ||
+        throw(ProtocolError("broker information source count is inconsistent"))
+    sources = read(io, n_sources)
+    return (;
+        state,
+        capabilities,
+        history_capacity_ms,
+        history_available_records,
+        decimation,
+        count,
+        connected_clients,
+        sources,
+    )
+end
 
 struct BeaconResponse
     version::UInt8

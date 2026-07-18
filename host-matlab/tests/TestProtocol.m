@@ -121,6 +121,21 @@ classdef TestProtocol < matlab.unittest.TestCase
                 helicdaq.Protocol.encodeStreamHeader(header));
             testCase.verifyEqual(decoded, header);
         end
+
+        function brokerInformation(testCase)
+            payload = TestProtocol.hexBytes( ...
+                '01 1F 0F 00 10 27 00 00 2A 00 00 00 04 00 00 00 00 00 02 00 03 00 08 0C');
+            information = helicdaq.Protocol.decodeBrokerInfo(payload);
+            testCase.verifyEqual(information.State, uint8(31));
+            testCase.verifyEqual(information.Capabilities, uint16(15));
+            testCase.verifyEqual(information.HistoryCapacityMilliseconds, uint32(10000));
+            testCase.verifyEqual(information.HistoryAvailableRecords, uint32(42));
+            testCase.verifyEqual(information.Decimation, uint16(4));
+            testCase.verifyEqual(information.ConnectedClients, uint16(2));
+            testCase.verifyEqual(information.SourceIds, uint8([0, 8, 12]));
+            testCase.verifyError(@() helicdaq.Protocol.decodeBrokerInfo(payload(1:end - 1)), ...
+                'helicdaq:ProtocolError');
+        end
     end
 
     methods (Static, Access = private)

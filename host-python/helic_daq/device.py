@@ -357,6 +357,35 @@ class Device:
         """Start streaming to this host's `port` (UDP)."""
         self._request(MsgType.STREAM_START, struct.pack("<H", port))
 
+    def stream_start_quiet(self, port: int = protocol.STREAM_PORT) -> None:
+        """Start or attach to a broker stream without live UDP forwarding."""
+        self._request(MsgType.QUIET_STREAM_START, struct.pack("<H", port))
+
+    def stream_set_quiet(self, quiet: bool) -> None:
+        """Enable or disable live forwarding for this broker client."""
+        self._request(MsgType.SET_CLIENT_QUIET, bytes([bool(quiet)]))
+
+    def broker_info(self) -> dict:
+        """Return shared and client-local broker state.
+
+        A direct MCU reports the normal unknown-message error for this method.
+        """
+        information = protocol.decode_broker_info(self._request(MsgType.BROKER_INFO))
+        try:
+            source_names = [self.sources[index].name for index in information.sources]
+        except IndexError:
+            raise ProtocolError("broker selected an unknown source id") from None
+        return {
+            "state": information.state,
+            "capabilities": information.capabilities,
+            "history_capacity_s": information.history_capacity_ms / 1000.0,
+            "history_available_records": information.history_available_records,
+            "decimation": information.decimation,
+            "count": information.count,
+            "connected_clients": information.connected_clients,
+            "sources": source_names,
+        }
+
     def stream_stop(self) -> None:
         self._request(MsgType.STREAM_STOP)
 
@@ -387,3 +416,34 @@ class Device:
                 return rx.capture(samples, names)
             finally:
                 self.stream_stop()
+
+    def capture_recent(
+        self,
+        samples: int | None = None,
+        seconds: float | None = None,
+        port: int = protocol.STREAM_PORT,
+    ):
+        """Attach quietly and return recent records from an active broker stream.
+
+        Give either ``samples`` (records after decimation) or ``seconds``. The
+        client remains attached and quiet after the capture.
+        """
+        if (samples is None) == (seconds is None):
+            raise ValueError("specify exactly one of samples / seconds")
+        information = self.broker_info()
+        if samples is None:
+            if seconds <= 0:
+                raise ValueError("seconds must be positive")
+            samples = max(
+                1,
+                int(seconds * self.status()["sample_rate"] / information["decimation"]),
+            )
+        if not 1 <= samples <= 0xFFFFFFFF:
+            raise ValueError("samples must fit a positive uint32")
+        with StreamReceiver(port=port) as rx:
+            rx.prime(self.host)
+            self.stream_start_quiet(rx.port)
+            response = self._request(MsgType.GET_RECENT, struct.pack("<I", samples))
+            if response != struct.pack("<I", samples):
+                raise ProtocolError("broker recent-capture response is inconsistent")
+            return rx.capture(samples, information["sources"])

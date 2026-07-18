@@ -371,6 +371,38 @@ function start_stream!(device::Device, port::Integer = Protocol.STREAM_PORT)
     return device
 end
 
+"""Start or attach to a broker stream without live UDP forwarding."""
+function start_stream_quiet!(device::Device, port::Integer = Protocol.STREAM_PORT)
+    payload = IOBuffer()
+    Protocol._write_le(payload, UInt16(port))
+    _request(device, Protocol.QUIET_STREAM_START, take!(payload))
+    return device
+end
+
+"""Enable or disable live broker forwarding for this client."""
+function set_stream_quiet!(device::Device, quiet::Bool)
+    _request(device, Protocol.SET_CLIENT_QUIET, UInt8[quiet])
+    return device
+end
+
+"""Return shared and client-local broker state with source names resolved."""
+function broker_info(device::Device)
+    information = Protocol.decode_broker_info(_request(device, Protocol.BROKER_INFO))
+    all(source < length(device.sources) for source in information.sources) ||
+        throw(Protocol.ProtocolError("broker selected an unknown source id"))
+    names = [device.sources[Int(source) + 1].name for source in information.sources]
+    return (;
+        information.state,
+        information.capabilities,
+        history_capacity = information.history_capacity_ms / 1000,
+        information.history_available_records,
+        information.decimation,
+        information.count,
+        information.connected_clients,
+        sources = names,
+    )
+end
+
 """Stop an active stream."""
 stop_stream!(device::Device) = (_request(device, Protocol.STREAM_STOP); device)
 
@@ -404,6 +436,42 @@ function capture(
         if started && isopen(device)
             stop_stream!(device)
         end
+        isopen(receiver) && close(receiver)
+    end
+end
+
+"""Attach quietly and return recent records from an active broker stream."""
+function capture_recent(
+        device::Device;
+        samples::Union{Nothing, Integer} = nothing,
+        seconds::Union{Nothing, Real} = nothing,
+        port::Integer = Protocol.STREAM_PORT,
+        timeout::Real = 2.0,
+    )
+    isnothing(samples) == isnothing(seconds) &&
+        throw(ArgumentError("specify exactly one of samples or seconds"))
+    information = broker_info(device)
+    if isnothing(samples)
+        seconds > 0 || throw(ArgumentError("seconds must be positive"))
+        samples = max(
+            1,
+            floor(Int, seconds * status(device).sample_rate / information.decimation),
+        )
+    end
+    1 <= samples <= typemax(UInt32) ||
+        throw(ArgumentError("samples must fit a positive UInt32"))
+    receiver = StreamReceiver(; port, timeout)
+    try
+        prime!(receiver, device.host)
+        start_stream_quiet!(device, receiver.port)
+        payload = IOBuffer()
+        Protocol._write_le(payload, UInt32(samples))
+        request = take!(payload)
+        response = _request(device, Protocol.GET_RECENT, request)
+        response == request ||
+            throw(Protocol.ProtocolError("broker recent-capture response is inconsistent"))
+        return capture(receiver, samples, information.sources)
+    finally
         isopen(receiver) && close(receiver)
     end
 end

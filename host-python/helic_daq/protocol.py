@@ -24,6 +24,8 @@ HEADER_LEN = 6
 TRAILER_LEN = 2
 MAX_PAYLOAD = 1024
 PARAM_PAGE_HEADER_LEN = 4
+BROKER_INFO_HEADER_LEN = 21
+BROKER_EXTENSION_VERSION = 1
 
 
 # Control message types.
@@ -38,6 +40,10 @@ class MsgType:
     STREAM_START = 8
     STREAM_STOP = 9
     STATUS = 10
+    BROKER_INFO = 0x80
+    QUIET_STREAM_START = 0x81
+    GET_RECENT = 0x82
+    SET_CLIENT_QUIET = 0x83
     ERROR = 0xFF
 
 
@@ -53,6 +59,10 @@ ERROR_NAMES = {
     5: "parameter is read-only",
     6: "bad value",
     7: "device busy",
+    8: "client is not attached to the stream",
+    9: "client is not quiet",
+    10: "no stream is active",
+    11: "insufficient stream history",
 }
 
 class ProtocolError(Exception):
@@ -66,6 +76,43 @@ class BeaconResponse:
     mac: bytes
     experiment: str
     firmware: str
+
+
+@dataclass(frozen=True)
+class BrokerInfo:
+    """State reported by a HELIC-DAQ broker extension endpoint."""
+
+    state: int
+    capabilities: int
+    history_capacity_ms: int
+    history_available_records: int
+    decimation: int
+    count: int
+    connected_clients: int
+    sources: tuple[int, ...]
+
+
+def decode_broker_info(payload: bytes) -> BrokerInfo:
+    """Decode the fixed broker-state header and selected source ids."""
+    if len(payload) < BROKER_INFO_HEADER_LEN:
+        raise ProtocolError("broker information is truncated")
+    version, state, capabilities, capacity, available, decimation, count, clients, n_sources = (
+        struct.unpack_from("<BBHIIHIHB", payload)
+    )
+    if version != BROKER_EXTENSION_VERSION:
+        raise ProtocolError(f"unsupported broker extension version {version}")
+    if len(payload) != BROKER_INFO_HEADER_LEN + n_sources:
+        raise ProtocolError("broker information source count is inconsistent")
+    return BrokerInfo(
+        state,
+        capabilities,
+        capacity,
+        available,
+        decimation,
+        count,
+        clients,
+        tuple(payload[BROKER_INFO_HEADER_LEN:]),
+    )
 
 
 def _fixed_ascii(value: str) -> bytes:

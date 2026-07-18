@@ -71,5 +71,21 @@ classdef TestDevice < matlab.unittest.TestCase
             testCase.verifyEqual(height(data), 4);
             testCase.verifyEqual(data.index, uint64([100; 102; 104; 106]));
         end
+
+        function brokerStateAndRecentCapture(testCase)
+            transport = FakeTransport();
+            device = helicdaq.Device("test", 'Transport', transport);
+            cleanup = onCleanup(@() delete(device));
+            device.configureStream(["adc0", "out"], 'Decimation', 2);
+            information = device.brokerInfo();
+            testCase.verifyEqual(information.HistoryCapacity, seconds(10));
+            testCase.verifyEqual(information.Sources.Name, ["adc0"; "out"]);
+            receiver = FakeCaptureReceiver();
+            data = device.captureRecent('Samples', 4, 'Receiver', receiver);
+            testCase.verifyEqual(height(data), 4);
+            testCase.verifyEqual(receiver.PrimeHost, "test");
+            testCase.verifyEqual(data.Properties.VariableUnits, {'', 'V', 'V'});
+            device.setStreamQuiet(false);
+        end
     end
 end

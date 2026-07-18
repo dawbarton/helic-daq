@@ -212,6 +212,34 @@ classdef Device < handle
                 helicdaq.Protocol.packLE(uint16(port), 'uint16'));
         end
 
+        function startStreamQuiet(obj, port)
+            %STARTSTREAMQUIET Start or attach without live UDP forwarding.
+            validateattributes(port, {'numeric'}, ...
+                {'scalar', 'integer', 'positive', '<=', 65535});
+            obj.request(helicdaq.Protocol.QUIET_STREAM_START, ...
+                helicdaq.Protocol.packLE(uint16(port), 'uint16'));
+        end
+
+        function setStreamQuiet(obj, quiet)
+            %SETSTREAMQUIET Enable or disable forwarding for this client.
+            validateattributes(quiet, {'logical'}, {'scalar'});
+            obj.request(helicdaq.Protocol.SET_CLIENT_QUIET, uint8(quiet));
+        end
+
+        function information = brokerInfo(obj)
+            %BROKERINFO Return shared and client-local broker state.
+            information = helicdaq.Protocol.decodeBrokerInfo( ...
+                obj.request(helicdaq.Protocol.BROKER_INFO, uint8([])));
+            rows = double(information.SourceIds) + 1;
+            if any(rows > height(obj.Sources))
+                error('helicdaq:ProtocolError', ...
+                    'Broker selected an unknown source id.');
+            end
+            information.HistoryCapacity = ...
+                seconds(double(information.HistoryCapacityMilliseconds) / 1000);
+            information.Sources = obj.Sources(rows, :);
+        end
+
         function stopStream(obj)
             %STOPSTREAM Stop an active stream.
             obj.request(helicdaq.Protocol.STREAM_STOP, uint8([]));
@@ -266,6 +294,57 @@ classdef Device < handle
             streamCleanup = onCleanup(@() obj.stopStreamSafely());
             data = receiver.capture(nRecords, resolved.Name);
             data.Properties.VariableUnits = cellstr([""; resolved.Unit].');
+        end
+
+        function data = captureRecent(obj, varargin)
+            %CAPTURERECENT Attach quietly and collect recent broker records.
+            parser = inputParser;
+            parser.addParameter('Samples', [], ...
+                @(value) isempty(value) || (isscalar(value) && value > 0));
+            parser.addParameter('Seconds', [], ...
+                @(value) isempty(value) || (isscalar(value) && value > 0));
+            parser.addParameter('Port', helicdaq.Protocol.STREAM_PORT, ...
+                @(value) isscalar(value) && isfinite(value) && ...
+                fix(value) == value && value >= 0 && value <= 65535);
+            parser.addParameter('Timeout', 2, ...
+                @(value) isscalar(value) && isfinite(value) && value > 0);
+            parser.addParameter('Receiver', [], @(value) true);
+            parser.parse(varargin{:});
+            options = parser.Results;
+            if isempty(options.Samples) == isempty(options.Seconds)
+                error('helicdaq:CaptureLength', ...
+                    'Specify exactly one of Samples or Seconds.');
+            end
+            information = obj.brokerInfo();
+            if isempty(options.Samples)
+                currentStatus = obj.status();
+                nRecords = max(1, floor(options.Seconds * ...
+                    double(currentStatus.SampleRate) / double(information.Decimation)));
+            else
+                nRecords = options.Samples;
+            end
+            validateattributes(nRecords, {'numeric'}, ...
+                {'scalar', 'integer', 'positive', '<=', double(intmax('uint32'))});
+            if isempty(options.Receiver)
+                receiver = helicdaq.StreamReceiver('Timeout', options.Timeout, ...
+                    'Port', options.Port);
+                receiverCleanup = onCleanup(@() delete(receiver)); %#ok<NASGU>
+            else
+                receiver = options.Receiver;
+            end
+            if ismethod(receiver, 'prime')
+                receiver.prime(obj.Host, helicdaq.Protocol.STREAM_PORT);
+            end
+            obj.startStreamQuiet(receiver.Port);
+            request = helicdaq.Protocol.packLE(uint32(nRecords), 'uint32');
+            response = obj.request(helicdaq.Protocol.GET_RECENT, request);
+            if ~isequal(response, request)
+                error('helicdaq:ProtocolError', ...
+                    'Broker recent-capture response is inconsistent.');
+            end
+            data = receiver.capture(nRecords, information.Sources.Name);
+            data.Properties.VariableUnits = ...
+                cellstr([""; information.Sources.Unit].');
         end
 
         function uploadTable(obj, values, varargin)

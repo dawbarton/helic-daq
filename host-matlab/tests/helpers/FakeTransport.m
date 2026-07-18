@@ -95,6 +95,15 @@ classdef FakeTransport < handle
                 case helicdaq.Protocol.STREAM_START
                     [streamPort, ~] = helicdaq.Protocol.unpackLE( ...
                         request.Payload, 'uint16', 1, 1);
+                case helicdaq.Protocol.QUIET_STREAM_START
+                    [streamPort, ~] = helicdaq.Protocol.unpackLE( ...
+                        request.Payload, 'uint16', 1, 1);
+                case helicdaq.Protocol.BROKER_INFO
+                    payload = obj.brokerInfoPayload();
+                case helicdaq.Protocol.GET_RECENT
+                    payload = request.Payload;
+                case helicdaq.Protocol.SET_CLIENT_QUIET
+                    % The mock has no live-forwarding state.
                 case helicdaq.Protocol.STREAM_STOP
                     % No state is needed for the finite mock stream.
                 otherwise
@@ -168,6 +177,17 @@ classdef FakeTransport < handle
                 payload = [payload, uint8(char(obj.Sources.Name(row))), uint8(0), ...
                     uint8(char(obj.Sources.Unit(row))), uint8(0)]; %#ok<AGROW>
             end
+        end
+
+        function payload = brokerInfoPayload(obj)
+            payload = [helicdaq.Protocol.BROKER_EXTENSION_VERSION, uint8(31), ...
+                helicdaq.Protocol.packLE(uint16(15), 'uint16'), ...
+                helicdaq.Protocol.packLE(uint32(10000), 'uint32'), ...
+                helicdaq.Protocol.packLE(uint32(4000), 'uint32'), ...
+                helicdaq.Protocol.packLE(obj.StreamDecimation, 'uint16'), ...
+                helicdaq.Protocol.packLE(obj.StreamCount, 'uint32'), ...
+                helicdaq.Protocol.packLE(uint16(2), 'uint16'), ...
+                uint8(numel(obj.StreamIds)), obj.StreamIds];
         end
 
         function payload = getPayload(obj, request)

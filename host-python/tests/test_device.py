@@ -2,8 +2,10 @@
 
 import struct
 import unittest
+from unittest.mock import Mock, patch
 
 from helic_daq import Device, DeviceError, protocol
+from helic_daq.device import Source
 from helic_daq.protocol import ProtocolError
 
 from helic_daq.sim import SimParam, Simulator, default_params
@@ -15,6 +17,29 @@ class NonProgressingSimulator(Simulator):
             (start,) = struct.unpack("<H", payload)
             return msg_type, struct.pack("<HH", start, start)
         return super()._handle(msg_type, payload, peer)
+
+
+class FakeRecentReceiver:
+    """Capture orchestration double with the StreamReceiver context API."""
+
+    last = None
+
+    def __init__(self, port):
+        self.port = 49152 if port == 0 else port
+        self.primed = None
+        FakeRecentReceiver.last = self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    def prime(self, host):
+        self.primed = host
+
+    def capture(self, samples, names):
+        return {"samples": samples, "names": names}
 
 
 class TestDevice(unittest.TestCase):
@@ -150,6 +175,37 @@ class TestDevice(unittest.TestCase):
         with Simulator(version=2) as old:
             with self.assertRaisesRegex(DeviceError, "protocol version mismatch: device 2, host 3"):
                 Device("127.0.0.1", port=old.port)
+
+    def test_broker_commands_are_unknown_on_direct_mcu(self):
+        with self.assertRaises(DeviceError) as caught:
+            self.dev.broker_info()
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_recent_capture_orchestration(self):
+        device = object.__new__(Device)
+        device.host = "127.0.0.1"
+        device.sources = [Source(0, "adc0", "V"), Source(1, "out", "V")]
+        information = bytes.fromhex(
+            "01 1f 0f 00 10 27 00 00 2a 00 00 00 02 00 "
+            "00 00 00 00 01 00 02 00 01"
+        )
+
+        def response(message_type, payload=b""):
+            if message_type == protocol.MsgType.BROKER_INFO:
+                return information
+            if message_type == protocol.MsgType.GET_RECENT:
+                return payload
+            return b""
+
+        device._request = Mock(side_effect=response)
+        with patch("helic_daq.device.StreamReceiver", FakeRecentReceiver):
+            capture = device.capture_recent(samples=4, port=0)
+        self.assertEqual(capture, {"samples": 4, "names": ["adc0", "out"]})
+        self.assertEqual(FakeRecentReceiver.last.primed, "127.0.0.1")
+        device._request.assert_any_call(
+            protocol.MsgType.QUIET_STREAM_START, struct.pack("<H", 49152)
+        )
+        device._request.assert_any_call(protocol.MsgType.GET_RECENT, struct.pack("<I", 4))
 
 
 if __name__ == "__main__":

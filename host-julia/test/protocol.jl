@@ -35,6 +35,19 @@ const P = HelicDAQ.Protocol
     @test sources == [(name = "adc0", unit = "V")]
     @test_throws P.ProtocolError P.decode_sources(UInt8[codeunits("adc0"); 0; UInt8('V')])
 
+    broker_payload = hex2bytes(
+        "011f0f00102700002a00000004000000000002000300080c",
+    )
+    broker = P.decode_broker_info(broker_payload)
+    @test broker.state == 0x1f
+    @test broker.capabilities == 0x000f
+    @test broker.history_capacity_ms == 10_000
+    @test broker.history_available_records == 42
+    @test broker.decimation == 4
+    @test broker.connected_clients == 2
+    @test broker.sources == UInt8[0, 8, 12]
+    @test_throws P.ProtocolError P.decode_broker_info(broker_payload[1:(end - 1)])
+
     for (code, value) in (
             ('B', UInt8(200)),
             ('b', Int8(-100)),
