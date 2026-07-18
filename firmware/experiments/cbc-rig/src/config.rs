@@ -22,6 +22,34 @@ pub const OUTPUT_CHANNEL: usize = 0;
 /// 10/25/50/100/200/500).
 pub const LASER_RANGE_MM: f32 = 50.0;
 
+// --- Output safety limits (enforced by the firmware safety gate) ---------
+//
+// These are hard constraints applied on core 1 after the controller/forcing/
+// table sum, before the DAC write. They are compile-time here (edit and
+// reflash to change). See `docs/firmware-safety-stage-design.md`.
+
+/// Upper bound on the DAC output voltage driven to the exciter current
+/// controller (channel A). Set below the 4.096 V DAC rail. The gate clamps the
+/// logical differential command so that `MID_RAIL + out` never exceeds this.
+pub const DAC_OUT_CEILING_V: f32 = 4.0;
+
+/// Lower bound on the same channel voltage. Chosen symmetric about `MID_RAIL`
+/// for the interim unipolar output stage, giving a symmetric differential
+/// drive window. A future bipolar output stage will re-home the common mode
+/// and turn these into independent ± limits.
+pub const DAC_OUT_FLOOR_V: f32 = 0.096;
+
+/// Safe tip-displacement window (laser, mm). Outside this the gate latches a
+/// fault and holds the actuator quiet until the host re-arms. Conservative
+/// bounds about the ~25 mm resting point.
+pub const DISPLACEMENT_MIN_MM: f32 = 10.0;
+pub const DISPLACEMENT_MAX_MM: f32 = 40.0;
+
+/// Quiet the actuator if the laser has published no new frame for this long
+/// (blind-feedback guard). Converted to a tick count from the sample rate in
+/// `rig.rs`.
+pub const LASER_STALE_AFTER_S: f32 = 0.02;
+
 /// optoNCDT measuring-rate command matched to the hardware sample clock.
 ///
 /// The sensor command uses kHz, and must end in LF.

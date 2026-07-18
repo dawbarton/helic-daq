@@ -31,6 +31,9 @@ pub async fn control_run<C: Controller, R: Rig>(
         serve(&mut socket, &mut store).await;
         // Stop streaming when the controlling connection goes away.
         STREAM.lock(|s| s.borrow_mut().enabled = false);
+        // Comms-loss quieting: a dropped control connection disarms the output
+        // immediately (inert for a rig that is not safety-gated).
+        crate::rt_loop::safety_disarm();
         socket.close();
         info!("control: client disconnected");
     }

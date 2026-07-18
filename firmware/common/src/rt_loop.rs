@@ -104,6 +104,57 @@ pub static T_MEASURE_MAX_US: AtomicU32 = AtomicU32::new(0);
 pub static T_ACTUATE_MAX_US: AtomicU32 = AtomicU32::new(0);
 pub static T_REST_MAX_US: AtomicU32 = AtomicU32::new(0);
 
+// Output safety state (see `safety_gate`). Only consulted for a rig whose
+// `Rig::SAFETY_GATED` is set; on other experiments these stay at their defaults
+// and the gate is compiled out. `SAFETY_ARMED` starts 0 so the output is quiet
+// after every flash/reset until the host explicitly arms it.
+pub static SAFETY_ARMED: AtomicU32 = AtomicU32::new(0);
+pub static SAFETY_TRIPPED: AtomicU32 = AtomicU32::new(0);
+pub static SAFETY_CLAMP_TICKS: AtomicU32 = AtomicU32::new(0);
+pub static SAFETY_QUIET_TICKS: AtomicU32 = AtomicU32::new(0);
+
+/// Arm the output and clear any latched fault trip. Called from core 0 when
+/// the host writes the `arm` parameter. The trip is cleared first so that a
+/// still-present fault re-latches on the next tick rather than being masked.
+pub fn safety_arm() {
+    SAFETY_TRIPPED.store(0, Ordering::Relaxed);
+    SAFETY_ARMED.store(1, Ordering::Relaxed);
+}
+
+/// Disarm the output immediately (quiet the actuator). Called from core 0 on
+/// an explicit `arm = 0` and on control-connection loss. The latched trip, if
+/// any, is left set so it remains visible until a deliberate re-arm.
+pub fn safety_disarm() {
+    SAFETY_ARMED.store(0, Ordering::Relaxed);
+}
+
+/// Per-tick output safety gate: decide what is actually driven from the
+/// summed actuator command. Runs on core 1 inside the tick, before `actuate`,
+/// only for a rig with `Rig::SAFETY_GATED` set.
+///
+/// - a fault reported by the rig latches `SAFETY_TRIPPED`;
+/// - while tripped or disarmed the actuator is held at the rig's safe output;
+/// - otherwise the command is passed through the rig's hard clamp.
+#[unsafe(link_section = ".data.ram_func")]
+#[inline]
+fn safety_gate<R: Rig>(rig: &mut R, inputs: &[f32], out_cmd: f32) -> f32 {
+    if rig.output_fault(inputs) {
+        SAFETY_TRIPPED.store(1, Ordering::Relaxed);
+    }
+    let tripped = SAFETY_TRIPPED.load(Ordering::Relaxed) != 0;
+    let armed = SAFETY_ARMED.load(Ordering::Relaxed) != 0;
+    if tripped || !armed {
+        SAFETY_QUIET_TICKS.fetch_add(1, Ordering::Relaxed);
+        rig.safe_output()
+    } else {
+        let applied = rig.clamp_output(out_cmd);
+        if applied != out_cmd {
+            SAFETY_CLAMP_TICKS.fetch_add(1, Ordering::Relaxed);
+        }
+        applied
+    }
+}
+
 /// Reset the resettable timing diagnostics (maxima and event counters) so a
 /// test condition can be measured from a clean slate. Total counters such as
 /// `TICKS` are deliberately left running. Safe to call from core 0.
@@ -119,6 +170,10 @@ pub fn reset_diagnostics() {
     T_ACTUATE_MAX_US.store(0, Ordering::Relaxed);
     T_REST_MAX_US.store(0, Ordering::Relaxed);
     COMMAND_BACKLOG_MAX.store(0, Ordering::Relaxed);
+    // Safety-event tick counters are resettable diagnostics; the armed and
+    // latched-trip states are deliberately left untouched by a diag reset.
+    SAFETY_CLAMP_TICKS.store(0, Ordering::Relaxed);
+    SAFETY_QUIET_TICKS.store(0, Ordering::Relaxed);
 }
 
 static SIN_LUT: StaticCell<SinLut> = StaticCell::new();
@@ -220,7 +275,14 @@ fn run_rt_tick<R: Rig>(
     let forcing = forcing_coeffs.evaluate(lut, theta);
     let controller_out = controller.tick(&values[..n_inputs], target, dt);
     let table_out = table_player.step(active_table, theta, period_start);
-    let out = controller_out + forcing + table_out;
+    let out_cmd = controller_out + forcing + table_out;
+    // Hard output safety stage. For a non-gated rig this is a compile-time
+    // no-op (the const is false), so the summed command is applied verbatim.
+    let out = if R::SAFETY_GATED {
+        safety_gate::<R>(rig, &values[..n_inputs], out_cmd)
+    } else {
+        out_cmd
+    };
     let a0 = now_us();
     rig.actuate(out);
     let actuate_us = now_us().wrapping_sub(a0);
@@ -375,7 +437,7 @@ pub async fn status_run() -> ! {
     loop {
         ticker.next().await;
         info!(
-            "ticks {} | loop {}/{} us | jitter {} us | overruns {} | tick timeouts {} | dropped {} | cmd backlog {}",
+            "ticks {} | loop {}/{} us | jitter {} us | overruns {} | tick timeouts {} | dropped {} | cmd backlog {} | armed {} tripped {} clamp {} quiet {}",
             TICKS.load(Ordering::Relaxed),
             LOOP_TIME_LAST_US.load(Ordering::Relaxed),
             LOOP_TIME_MAX_US.load(Ordering::Relaxed),
@@ -384,6 +446,10 @@ pub async fn status_run() -> ! {
             TICK_TIMEOUTS.load(Ordering::Relaxed),
             RECORDS_DROPPED.load(Ordering::Relaxed),
             COMMAND_BACKLOG_MAX.load(Ordering::Relaxed),
+            SAFETY_ARMED.load(Ordering::Relaxed),
+            SAFETY_TRIPPED.load(Ordering::Relaxed),
+            SAFETY_CLAMP_TICKS.load(Ordering::Relaxed),
+            SAFETY_QUIET_TICKS.load(Ordering::Relaxed),
         );
     }
 }

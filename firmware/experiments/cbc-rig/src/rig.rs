@@ -13,6 +13,7 @@ use embassy_rp::{pac, Peri};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use fixed::traits::ToFixed;
+use helic_core::safety::{clamp_channel_command, StaleCounter};
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
 use helic_drivers::ad7609::Ad7609;
 use helic_fw_common::analog_spi::{HotSpiConfig, RawSpiDevice, SramAd5064};
@@ -21,8 +22,15 @@ use helic_fw_common::SampleRate;
 use static_cell::StaticCell;
 
 use crate::board::CbcParts;
-use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
-use crate::telemetry::{LASER_RANGE_MM, LASER_VALUE};
+use crate::config::{
+    ActiveController, DAC_OUT_CEILING_V, DAC_OUT_FLOOR_V, DISPLACEMENT_MAX_MM, DISPLACEMENT_MIN_MM,
+    LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, LASER_STALE_AFTER_S, OUTPUT_CHANNEL,
+};
+use crate::telemetry::{LASER_FRAMES_RECEIVED, LASER_RANGE_MM, LASER_VALUE};
+
+/// Index of the laser distance within the measured input vector, after the
+/// eight ADC channels. Mirrors the `INPUTS` order and `measure`'s `values[8]`.
+const LASER_INPUT: usize = 8;
 
 /// DAC reference voltage fitted to the interim analogue board.
 pub const DAC_VREF: f32 = 4.096;
@@ -80,6 +88,9 @@ pub struct CbcRig {
     adc_scale: f32,
     adc_last: [i32; 8],
     output_channel: usize,
+    /// Blind-feedback guard: flags the laser feed as stale when its frame
+    /// counter stops advancing (see `output_fault`).
+    laser_stale: StaleCounter,
 }
 
 impl CbcParts {
@@ -128,6 +139,10 @@ impl CbcParts {
             adc_scale: 0.0,
             adc_last: [0; 8],
             output_channel: OUTPUT_CHANNEL,
+            // Tolerate this many unchanged laser frames before quieting. At
+            // 8 kHz the laser publishes ~one frame per tick, so the window is
+            // a small multiple of the frame interval.
+            laser_stale: StaleCounter::new((LASER_STALE_AFTER_S * sample_rate.hz()) as u32),
         };
         (rig, tick)
     }
@@ -147,6 +162,10 @@ impl Rig for CbcRig {
         ("adc7", "V"),
         ("laser", "mm"),
     ];
+
+    // The exciter is driven through a feedback path that can go unstable, so
+    // this rig opts into the shared per-tick output safety gate.
+    const SAFETY_GATED: bool = true;
 
     type Ctrl = ActiveController;
 
@@ -209,6 +228,37 @@ impl Rig for CbcRig {
         #[cfg(not(feature = "diag-skip-dac"))]
         self.dac_raw
             .write_volts(self.output_channel, MID_RAIL + out);
+    }
+
+    #[inline]
+    #[unsafe(link_section = ".data.ram_func")]
+    fn clamp_output(&self, out: f32) -> f32 {
+        // Hard amplitude ceiling: clamp the logical differential command so
+        // the driven channel voltage `MID_RAIL + out` stays inside the safe
+        // DAC window. Applied after the controller/forcing/table sum, so no
+        // single stage can push the exciter past it. The AD5064 driver's own
+        // 0-4.096 V clamp remains as a final backstop.
+        clamp_channel_command(out, MID_RAIL, DAC_OUT_FLOOR_V, DAC_OUT_CEILING_V)
+    }
+
+    #[inline]
+    fn safe_output(&self) -> f32 {
+        // Logical zero → channel A at MID_RAIL → zero differential drive.
+        0.0
+    }
+
+    #[unsafe(link_section = ".data.ram_func")]
+    fn output_fault(&mut self, inputs: &[f32]) -> bool {
+        // Blind-feedback guard: the laser frame counter must keep advancing.
+        let stale = self
+            .laser_stale
+            .observe(LASER_FRAMES_RECEIVED.load(Ordering::Relaxed));
+        // Displacement excursion: laser distance out of the safe window (or
+        // non-finite) trips the gate.
+        let d = inputs[LASER_INPUT];
+        let out_of_range =
+            !d.is_finite() || !(DISPLACEMENT_MIN_MM..=DISPLACEMENT_MAX_MM).contains(&d);
+        stale || out_of_range
     }
 
     #[unsafe(link_section = ".data.ram_func")]

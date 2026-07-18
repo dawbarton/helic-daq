@@ -14,6 +14,7 @@ pub mod lut;
 pub mod phase;
 pub mod pid;
 pub mod rpm;
+pub mod safety;
 pub mod table;
 
 pub use controller::{Controller, PassThrough, PidController};
@@ -23,4 +24,5 @@ pub use generator::{FourierCoeffs, GenSample, PeriodicGenerator};
 pub use lut::SinLut;
 pub use phase::PhaseAccumulator;
 pub use pid::{Pid, PidConfig};
+pub use safety::{clamp_channel_command, StaleCounter};
 pub use table::{TableInterpolation, TableMode, TablePlayer, WaveTable, MAX_TABLE_LEN};

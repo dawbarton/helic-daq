@@ -37,6 +37,15 @@ pub const BASE_PARAMS: &[ParamDef] = &[
     ParamDef::read_only("t_rest_max", ParamType::U32, 1),
     ParamDef::writable("diag_reset", ParamType::U32, 1),
     ParamDef::read_only("cmd_backlog_max", ParamType::U32, 1),
+    // Output safety stage. Present on every experiment for a uniform host
+    // interface, but only acted on when the rig sets `Rig::SAFETY_GATED`;
+    // otherwise `arm` writes are inert and `safety` reads 0. `safety` is a
+    // bitfield (see IDX_SAFETY) so the whole gate state is one pollable word;
+    // the exact clamp/quiet tick counts stay in the RT atomics and the status
+    // log. Kept to two entries because the base registry is near its
+    // single-frame discovery budget.
+    ParamDef::writable("arm", ParamType::U32, 1),
+    ParamDef::read_only("safety", ParamType::U32, 1),
 ];
 
 pub(super) const IDX_FREQ: usize = 10;
@@ -59,9 +68,14 @@ pub(super) const IDX_T_ACTUATE_MAX: usize = 26;
 pub(super) const IDX_T_REST_MAX: usize = 27;
 pub(super) const IDX_DIAG_RESET: usize = 28;
 pub(super) const IDX_COMMAND_BACKLOG_MAX: usize = 29;
+pub(super) const IDX_ARM: usize = 30;
+pub(super) const IDX_SAFETY: usize = 31;
 
 pub(super) const MAX_CTRL_PARAMS: usize = 8;
-pub(super) const MAX_RIG_PARAMS: usize = 8;
+// Reserve reclaimed from 8 to make single-frame discovery room for the two
+// safety base params; no experiment declares more than two rig params, so six
+// remains ample headroom.
+pub(super) const MAX_RIG_PARAMS: usize = 6;
 pub(super) const MAX_EXTRA_PARAMS: usize = 8;
 pub(super) const DISCOVERY_HEADROOM: usize = helic_proto::MAX_PAYLOAD * 3 / 4;
 

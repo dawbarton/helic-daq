@@ -187,11 +187,44 @@ impl TickSource for PwmWrapSpinTick {
 pub trait Rig {
     const INPUTS: &'static [(&'static str, &'static str)];
 
+    /// Opt in to the shared per-tick safety gate (see `rt_loop::safety_gate`).
+    /// When `false` (the default) the summed actuator command is applied
+    /// verbatim and the gate compiles away entirely, so experiments that do
+    /// not drive a hazardous actuator are behaviourally unchanged. An
+    /// experiment that sets this `true` must implement the hooks below to
+    /// give the gate meaningful limits and a safe state.
+    const SAFETY_GATED: bool = false;
+
     type Ctrl: Controller;
 
     fn init(&mut self);
     fn measure(&mut self, values: &mut [f32]);
     fn actuate(&mut self, out: f32);
+
+    /// Hard output limit applied to the summed actuator command every tick,
+    /// after the controller/forcing/table sum and before `actuate`. A buggy
+    /// or unstable controller cannot drive beyond what this returns. Only
+    /// consulted when [`SAFETY_GATED`](Self::SAFETY_GATED) is set. Default:
+    /// identity (no clamp).
+    fn clamp_output(&self, out: f32) -> f32 {
+        out
+    }
+
+    /// Value actuated when the output is disarmed or a fault is latched.
+    /// Should correspond to zero drive for the fitted output stage. Only
+    /// consulted when [`SAFETY_GATED`](Self::SAFETY_GATED) is set. Default: 0.
+    fn safe_output(&self) -> f32 {
+        0.0
+    }
+
+    /// Latching fault condition evaluated on this tick's measured inputs
+    /// (e.g. displacement excursion, stale sensor). `&mut self` lets the rig
+    /// track per-tick state such as sensor staleness. Once it returns `true`
+    /// the gate latches the trip until the host re-arms. Only consulted when
+    /// [`SAFETY_GATED`](Self::SAFETY_GATED) is set. Default: never faults.
+    fn output_fault(&mut self, _inputs: &[f32]) -> bool {
+        false
+    }
 
     fn tick_start(&mut self) {}
     fn tick_end(&mut self) {}

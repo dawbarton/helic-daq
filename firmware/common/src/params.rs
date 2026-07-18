@@ -387,6 +387,23 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
+            // `arm` reads back the current armed state (there is no separate
+            // shadow: the RT loop owns the authoritative flag).
+            IDX_ARM => {
+                out.copy_from_slice(&rt_loop::SAFETY_ARMED.load(Ordering::Relaxed).to_le_bytes())
+            }
+            // `safety` packs the whole gate state into one pollable word:
+            // bit0 armed, bit1 latched trip, bit2 clamped since last reset,
+            // bit3 quieted since last reset. The exact clamp/quiet tick counts
+            // remain in the RT atomics and the status log.
+            IDX_SAFETY => {
+                let armed = (rt_loop::SAFETY_ARMED.load(Ordering::Relaxed) != 0) as u32;
+                let tripped = (rt_loop::SAFETY_TRIPPED.load(Ordering::Relaxed) != 0) as u32;
+                let clamped = (rt_loop::SAFETY_CLAMP_TICKS.load(Ordering::Relaxed) != 0) as u32;
+                let quieted = (rt_loop::SAFETY_QUIET_TICKS.load(Ordering::Relaxed) != 0) as u32;
+                let flags = armed | (tripped << 1) | (clamped << 2) | (quieted << 3);
+                out.copy_from_slice(&flags.to_le_bytes());
+            }
             i if i < BASE_PARAMS.len() + self.extras.len() => {
                 self.extras[i - BASE_PARAMS.len()].get(out)
             }
@@ -520,6 +537,16 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                     for extra in self.extras {
                         extra.reset_diagnostic();
                     }
+                }
+                return Ok(());
+            }
+            IDX_ARM => {
+                // Applied directly on core 0 (like `diag_reset`) so the
+                // safety-critical disarm path has no command-queue latency.
+                if u32::from_le_bytes(data.try_into().unwrap()) != 0 {
+                    rt_loop::safety_arm();
+                } else {
+                    rt_loop::safety_disarm();
                 }
                 return Ok(());
             }
