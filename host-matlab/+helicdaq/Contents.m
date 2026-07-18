@@ -1,4 +1,4 @@
-% HELICDAQ MATLAB interface to HELIC-DAQ protocol v2.
+% HELICDAQ MATLAB interface to HELIC-DAQ protocol v3.
 %
 % Classes
 %   Device          - TCP control connection and finite-capture interface.

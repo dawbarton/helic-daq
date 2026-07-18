@@ -25,7 +25,7 @@ dev.upload_table(
 )
 ```
 
-For host-side development without hardware, run the protocol-v2 simulator:
+For host-side development without hardware, run the protocol-v3 simulator:
 
 ```sh
 python3 -m helic_daq.sim

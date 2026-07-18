@@ -1,6 +1,6 @@
 # HelicDAQ.jl
 
-Julia interface to HELIC-DAQ protocol v2. It discovers parameter and source
+Julia interface to HELIC-DAQ protocol v3. It discovers parameter and source
 registries on every connection, supports atomic waveform-table upload, and
 returns streamed captures through the Tables.jl interface.
 

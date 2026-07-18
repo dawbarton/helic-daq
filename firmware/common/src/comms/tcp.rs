@@ -115,19 +115,21 @@ fn handle<C: Controller, R: Rig>(
     };
     match msg {
         MsgType::GetParams => {
-            let mut off = 0;
-            for i in 0..store.count() {
-                let def = store.def(i).unwrap();
-                off += payload::encode_param(
-                    &mut resp[off..],
-                    def.name,
-                    def.ty,
-                    def.count,
-                    def.writable,
-                )
-                .map_err(|_| ErrorCode::BadLength)?;
+            let start =
+                payload::decode_param_page_request(payload).map_err(|_| ErrorCode::BadLength)?;
+            let total = u16::try_from(store.count()).map_err(|_| ErrorCode::BadLength)?;
+            if start > total {
+                return Err(ErrorCode::BadIndex);
             }
-            Ok(off)
+            payload::encode_param_page(resp, start, total, |index| {
+                store
+                    .def(index as usize)
+                    .map(|def| (def.name, def.ty, def.count, def.writable))
+            })
+            .map_err(|error| match error {
+                payload::PayloadError::InvalidIndex => ErrorCode::BadIndex,
+                _ => ErrorCode::BadLength,
+            })
         }
         MsgType::GetSources => {
             let mut off = 0;
@@ -228,7 +230,9 @@ fn handle<C: Controller, R: Rig>(
         }
         MsgType::Status => {
             resp[0] = VERSION;
-            resp[1..3].copy_from_slice(&(store.count() as u16).to_le_bytes());
+            let parameter_count =
+                u16::try_from(store.count()).expect("validated parameter count fits u16");
+            resp[1..3].copy_from_slice(&parameter_count.to_le_bytes());
             resp[3] = source_count::<R>() as u8;
             resp[4..8].copy_from_slice(&store.sample_rate().hz().to_le_bytes());
             let uptime_ms = Instant::now().as_millis() as u32;

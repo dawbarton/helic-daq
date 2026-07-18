@@ -1,10 +1,20 @@
 """Device tests against the public simulator over real TCP loopback."""
 
+import struct
 import unittest
 
 from helic_daq import Device, DeviceError, protocol
+from helic_daq.protocol import ProtocolError
 
-from helic_daq.sim import Simulator
+from helic_daq.sim import SimParam, Simulator, default_params
+
+
+class NonProgressingSimulator(Simulator):
+    def _handle(self, msg_type, payload, peer):
+        if msg_type == protocol.MsgType.GET_PARAMS:
+            (start,) = struct.unpack("<H", payload)
+            return msg_type, struct.pack("<HH", start, start)
+        return super()._handle(msg_type, payload, peer)
 
 
 class TestDevice(unittest.TestCase):
@@ -29,6 +39,25 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(coeffs.count, 33)
         self.assertTrue(coeffs.writable)
         self.assertFalse(self.dev.params[0].writable)
+
+    def test_multi_page_discovery_preserves_late_parameter_indices(self):
+        params = default_params(8000.0)
+        params.extend(
+            SimParam(f"paged_extra_{index:03d}", "f", 1, True, float(index))
+            for index in range(50)
+        )
+        with Simulator(params=params) as simulator:
+            with Device("127.0.0.1", port=simulator.port) as device:
+                late = device.param("paged_extra_049")
+                self.assertEqual(late.index, len(params) - 1)
+                self.assertEqual(device.get(late.name), 49.0)
+                device.set(late.name, 12.5)
+                self.assertEqual(device.get(late.name), 12.5)
+
+    def test_non_progressing_parameter_page_is_rejected(self):
+        with NonProgressingSimulator() as simulator:
+            with self.assertRaisesRegex(ProtocolError, "did not advance"):
+                Device("127.0.0.1", port=simulator.port)
 
     def test_get_scalar_and_string(self):
         self.assertEqual(self.dev.get("firmware"), "helic-daq sim")
@@ -118,8 +147,8 @@ class TestDevice(unittest.TestCase):
         )
 
     def test_protocol_version_mismatch_is_clear(self):
-        with Simulator(version=1) as old:
-            with self.assertRaisesRegex(DeviceError, "protocol version mismatch: device 1, host 2"):
+        with Simulator(version=2) as old:
+            with self.assertRaisesRegex(DeviceError, "protocol version mismatch: device 2, host 3"):
                 Device("127.0.0.1", port=old.port)
 
 

@@ -92,7 +92,7 @@ function Device(
                     "host $(Protocol.VERSION)",
             ),
         )
-        _discover!(device)
+        _discover!(device, initial_status.n_params)
         length(device.parameters) == initial_status.n_params ||
             throw(Protocol.ProtocolError("parameter discovery length does not match Status"))
         length(device.sources) == initial_status.n_sources ||
@@ -161,8 +161,32 @@ function _request(device::Device, message_type, payload = UInt8[])
     return response.payload
 end
 
-function _discover!(device::Device)
-    definitions = Protocol.decode_params(_request(device, Protocol.GET_PARAMS))
+function _discover!(device::Device, n_params::Integer)
+    definitions = NamedTuple[]
+    start = 0
+    while start < n_params
+        page = Protocol.decode_param_page(
+            _request(device, Protocol.GET_PARAMS, Protocol.encode_param_page_request(start)),
+        )
+        page.start == start || throw(
+            Protocol.ProtocolError(
+                "parameter page starts at $(page.start), expected $start",
+            ),
+        )
+        page.next_index <= n_params ||
+            throw(Protocol.ProtocolError("parameter page exceeds Status parameter count"))
+        page.next_index > start ||
+            throw(Protocol.ProtocolError("parameter page did not advance"))
+        length(page.definitions) == page.next_index - start || throw(
+            Protocol.ProtocolError(
+                "parameter page definition count does not match its indices",
+            ),
+        )
+        append!(definitions, page.definitions)
+        start = Int(page.next_index)
+    end
+    allunique(definition.name for definition in definitions) ||
+        throw(Protocol.ProtocolError("parameter discovery contains duplicate names"))
     device.parameters = [
         Parameter(UInt16(index - 1), def.name, def.type_code, Int(def.count), def.writable) for
             (index, def) in enumerate(definitions)

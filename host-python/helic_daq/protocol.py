@@ -11,7 +11,7 @@ import struct
 from dataclasses import dataclass
 
 MAGIC = 0x4C48  # little-endian ASCII "HL"
-VERSION = 2
+VERSION = 3
 CONTROL_PORT = 2350
 STREAM_PORT = 2351
 DISCOVERY_PORT = 2352
@@ -23,6 +23,7 @@ BEACON_RESPONSE_LEN = _BEACON_RESPONSE.size
 HEADER_LEN = 6
 TRAILER_LEN = 2
 MAX_PAYLOAD = 1024
+PARAM_PAGE_HEADER_LEN = 4
 
 
 # Control message types.
@@ -142,8 +143,27 @@ def _nul_string(payload: bytes, offset: int) -> tuple[str, int]:
     return value, end + 1
 
 
+def encode_param_page_request(start: int) -> bytes:
+    """Encode the first parameter index requested from a discovery page."""
+    if not 0 <= start <= 0xFFFF:
+        raise ProtocolError(f"parameter page start out of range ({start})")
+    return struct.pack("<H", start)
+
+
+def decode_param_page(
+    payload: bytes,
+) -> tuple[int, int, list[tuple[str, str, int, bool]]]:
+    """Decode one paged GetParams response."""
+    if len(payload) < PARAM_PAGE_HEADER_LEN:
+        raise ProtocolError("parameter page header truncated")
+    start, next_index = struct.unpack_from("<HH", payload)
+    if next_index < start:
+        raise ProtocolError("parameter page index range is reversed")
+    return start, next_index, decode_params(payload[PARAM_PAGE_HEADER_LEN:])
+
+
 def decode_params(payload: bytes) -> list[tuple[str, str, int, bool]]:
-    """Decode a GetParams response in registry order."""
+    """Decode contiguous parameter definitions in registry order."""
     params, offset = [], 0
     while offset < len(payload):
         name, offset = _nul_string(payload, offset)

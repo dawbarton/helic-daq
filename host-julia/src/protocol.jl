@@ -1,4 +1,4 @@
-"""Wire-level codecs for HELIC-DAQ protocol v2.
+"""Wire-level codecs for HELIC-DAQ protocol v3.
 
 Everything is little-endian. The authoritative description is
 `docs/protocol.md`; its known-answer vectors are tested against this module
@@ -14,6 +14,7 @@ export BEACON_REQUEST,
     HEADER_LEN,
     MAGIC,
     MAX_PAYLOAD,
+    PARAM_PAGE_HEADER_LEN,
     STREAM_HEADER_LEN,
     STREAM_PORT,
     TRAILER_LEN,
@@ -24,24 +25,27 @@ export BEACON_REQUEST,
     StreamHeader,
     decode_beacon_response,
     decode_frame,
+    decode_param_page,
     decode_params,
     decode_sources,
     decode_stream_header,
     encode_beacon_response,
     encode_commit,
     encode_frame,
+    encode_param_page_request,
     encode_set_block,
     encode_stream_header,
     crc16
 
 const MAGIC = UInt16(0x4c48)  # little-endian ASCII "HL"
-const VERSION = UInt8(2)
+const VERSION = UInt8(3)
 const CONTROL_PORT = 2350
 const STREAM_PORT = 2351
 const DISCOVERY_PORT = 2352
 const HEADER_LEN = 6
 const TRAILER_LEN = 2
 const MAX_PAYLOAD = 1024
+const PARAM_PAGE_HEADER_LEN = 4
 const STREAM_HEADER_LEN = 20
 # Error code (payload byte 1 of an Error response) the device returns while a
 # table commit is still pending; hosts may retry.
@@ -160,6 +164,24 @@ function decode_frame(frame::AbstractVector{UInt8})
     crc16(@view frame[3:(HEADER_LEN + payload_length)]) == stored_crc ||
         throw(ProtocolError("CRC mismatch"))
     return (message_type = message_type, sequence = sequence, payload = payload)
+end
+
+function encode_param_page_request(start::Integer)
+    0 <= start <= typemax(UInt16) ||
+        throw(ProtocolError("parameter page start out of range ($start)"))
+    io = IOBuffer()
+    _write_le(io, UInt16(start))
+    return take!(io)
+end
+
+function decode_param_page(payload::AbstractVector{UInt8})
+    length(payload) >= PARAM_PAGE_HEADER_LEN ||
+        throw(ProtocolError("parameter page header truncated"))
+    io = IOBuffer(payload)
+    start = _read_le(io, UInt16)
+    next_index = _read_le(io, UInt16)
+    next_index >= start || throw(ProtocolError("parameter page index range is reversed"))
+    return (; start, next_index, definitions = decode_params(read(io)))
 end
 
 function _nul_string(payload::AbstractVector{UInt8}, offset::Int)

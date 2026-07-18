@@ -84,7 +84,7 @@ class Device:
             if len(status_payload) != struct.calcsize("<BHBfI"):
                 raise ProtocolError("invalid Status payload length")
             _, n_params, n_sources, _, _ = struct.unpack("<BHBfI", status_payload)
-            self._discover()
+            self._discover(n_params)
             if (len(self.params), len(self.sources)) != (n_params, n_sources):
                 raise ProtocolError("discovery table lengths do not match Status")
         except BaseException:
@@ -133,8 +133,29 @@ class Device:
 
     # -- discovery ---------------------------------------------------------
 
-    def _discover(self) -> None:
-        definitions = protocol.decode_params(self._request(MsgType.GET_PARAMS))
+    def _discover(self, n_params: int) -> None:
+        definitions = []
+        start = 0
+        while start < n_params:
+            payload = protocol.encode_param_page_request(start)
+            returned_start, next_index, page = protocol.decode_param_page(
+                self._request(MsgType.GET_PARAMS, payload)
+            )
+            if returned_start != start:
+                raise ProtocolError(
+                    f"parameter page starts at {returned_start}, expected {start}"
+                )
+            if next_index > n_params:
+                raise ProtocolError("parameter page exceeds Status parameter count")
+            if next_index == start:
+                raise ProtocolError("parameter page did not advance")
+            if len(page) != next_index - start:
+                raise ProtocolError("parameter page definition count does not match its indices")
+            definitions.extend(page)
+            start = next_index
+        names = [definition[0] for definition in definitions]
+        if len(set(names)) != len(names):
+            raise ProtocolError("parameter discovery contains duplicate names")
         self.params = [Parameter(i, *definition) for i, definition in enumerate(definitions)]
         self._by_name = {p.name: p for p in self.params}
         definitions = protocol.decode_sources(self._request(MsgType.GET_SOURCES))

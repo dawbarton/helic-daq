@@ -24,15 +24,17 @@ class TestFrame(unittest.TestCase):
 
     def test_known_answer_discovery_requests(self):
         self.assertEqual(
-            protocol.encode_frame(MsgType.GET_PARAMS, 1),
-            bytes.fromhex("48 4C 01 01 00 00 44 C5"),
+            protocol.encode_frame(
+                MsgType.GET_PARAMS, 1, protocol.encode_param_page_request(0)
+            ),
+            bytes.fromhex("48 4C 01 01 02 00 00 00 89 0C"),
         )
         self.assertEqual(
             protocol.encode_frame(MsgType.GET_SOURCES, 1),
             bytes.fromhex("48 4C 02 01 00 00 98 5E"),
         )
 
-    def test_known_answer_v2_frames(self):
+    def test_known_answer_v3_frames(self):
         block = protocol.encode_set_block(12, 0x01020304, b"\xaa\xbb")
         self.assertEqual(
             protocol.encode_frame(MsgType.SET_BLOCK, 2, block),
@@ -43,11 +45,11 @@ class TestFrame(unittest.TestCase):
             protocol.encode_frame(MsgType.COMMIT, 3, commit),
             bytes.fromhex("48 4C 06 03 06 00 0C 00 04 03 02 01 08 D1"),
         )
-        status = bytes.fromhex("02 11 00 0D 00 00 FA 45 10 A4 00 00")
+        status = bytes.fromhex("03 11 00 0D 00 00 FA 45 10 A4 00 00")
         self.assertEqual(
             protocol.encode_frame(MsgType.STATUS, 1, status),
             bytes.fromhex(
-                "48 4C 0A 01 0C 00 02 11 00 0D 00 00 FA 45 10 A4 00 00 03 09"
+                "48 4C 0A 01 0C 00 03 11 00 0D 00 00 FA 45 10 A4 00 00 76 0A"
             ),
         )
 
@@ -79,6 +81,8 @@ class TestPayload(unittest.TestCase):
     def test_known_answer_discovery_entries(self):
         params = protocol.decode_params(b"freq\0f\x01\x00\x01")
         self.assertEqual(params, [("freq", "f", 1, True)])
+        page = b"\x07\x00\x08\x00freq\0f\x01\x00\x01"
+        self.assertEqual(protocol.decode_param_page(page), (7, 8, params))
         sources = protocol.decode_sources(b"adc0\0V\0laser\0mm\0")
         self.assertEqual(sources, [("adc0", "V"), ("laser", "mm")])
 
@@ -97,19 +101,23 @@ class TestPayload(unittest.TestCase):
             protocol.decode_params(b"freq\0f")
         with self.assertRaises(ProtocolError):
             protocol.decode_sources(b"adc0\0V")
+        with self.assertRaises(ProtocolError):
+            protocol.decode_param_page(b"\x00\x00\x00")
+        with self.assertRaises(ProtocolError):
+            protocol.decode_param_page(b"\x02\x00\x01\x00")
 
 
 class TestBeacon(unittest.TestCase):
     def test_known_request_and_response_round_trip(self):
         self.assertEqual(protocol.BEACON_REQUEST, bytes.fromhex("48 4c 01"))
         beacon = protocol.BeaconResponse(
-            2, 2350, bytes.fromhex("02 48 4c 00 00 01"), "cbc-rig", "helic-daq sim"
+            3, 2350, bytes.fromhex("02 48 4c 00 00 01"), "cbc-rig", "helic-daq sim"
         )
         encoded = protocol.encode_beacon_response(beacon)
         self.assertEqual(
             encoded,
             bytes.fromhex(
-                "48 4c 02 02 2e 09 02 48 4c 00 00 01 "
+                "48 4c 02 03 2e 09 02 48 4c 00 00 01 "
                 "63 62 63 2d 72 69 67 00 00 00 00 00 00 00 00 00 "
                 "68 65 6c 69 63 2d 64 61 71 20 73 69 6d 00 00 00"
             ),

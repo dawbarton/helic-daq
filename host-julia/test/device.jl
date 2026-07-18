@@ -28,6 +28,22 @@ function mock_discovery_payload(parameters)
     return take!(io)
 end
 
+function mock_parameter_page(parameters, start)
+    io = IOBuffer()
+    P._write_le(io, UInt16(start))
+    P._write_le(io, UInt16(start))
+    next_index = Int(start)
+    while next_index < length(parameters)
+        definition = mock_discovery_payload(@view parameters[(next_index + 1):(next_index + 1)])
+        position(io) + length(definition) <= P.MAX_PAYLOAD || break
+        write(io, definition)
+        next_index += 1
+    end
+    bytes = take!(io)
+    bytes[3:4] = reinterpret(UInt8, [htol(UInt16(next_index))])
+    return bytes
+end
+
 function mock_sources_payload(sources)
     io = IOBuffer()
     for source in sources
@@ -96,6 +112,18 @@ function start_mock_device()
         (name = "table_phase", type_code = 'f', count = 1, writable = true, value = Float32(0)),
         (name = "table_trigger", type_code = 'I', count = 1, writable = true, value = UInt32(0)),
     ]
+    append!(
+        parameters,
+        [
+            (
+                    name = "paged_extra_$(lpad(index, 3, '0'))",
+                    type_code = 'f',
+                    count = 1,
+                    writable = true,
+                    value = Float32(index),
+                ) for index in 0:49
+        ],
+    )
     sources = [(name = "adc0", unit = "V"), (name = "out", unit = "V")]
     values = [mock_raw(p.type_code, p.count, p.value) for p in parameters]
     staged = copy(values[5])
@@ -121,7 +149,9 @@ function start_mock_device()
                     if request.message_type == UInt8(P.STATUS)
                         payload = mock_status_payload(length(parameters), length(sources))
                     elseif request.message_type == UInt8(P.GET_PARAMS)
-                        payload = mock_discovery_payload(parameters)
+                        length(request.payload) == 2 || error("bad GetParams request length")
+                        start = Int(P._read_le(IOBuffer(request.payload), UInt16))
+                        payload = mock_parameter_page(parameters, start)
                     elseif request.message_type == UInt8(P.GET_SOURCES)
                         payload = mock_sources_payload(sources)
                     elseif request.message_type == UInt8(P.GET_PAR)
@@ -185,18 +215,22 @@ end
     mock = start_mock_device()
     device = Device("127.0.0.1"; port = mock.port)
     try
-        @test length(device.parameters) == 13
+        @test length(device.parameters) == 63
         @test parameter(device, :freq).index == 2
         @test device["firmware"] == "helic-daq test"
         @test status(device) == (
-            protocol_version = UInt8(2),
-            n_params = 13,
+            protocol_version = P.VERSION,
+            n_params = 63,
             n_sources = 2,
             sample_rate = Float32(1000),
             uptime = 42.0,
         )
         device[:freq] = 12.5f0
         @test device[:freq] == 12.5f0
+        @test parameter(device, :paged_extra_049).index == 62
+        @test device[:paged_extra_049] == 49.0f0
+        device[:paged_extra_049] = 12.5f0
+        @test device[:paged_extra_049] == 12.5f0
         values = getparams(device, (:firmware, :freq))
         @test values.firmware == "helic-daq test"
         @test values.freq == 12.5f0

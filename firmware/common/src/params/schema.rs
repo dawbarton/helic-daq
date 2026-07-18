@@ -42,8 +42,7 @@ pub const BASE_PARAMS: &[ParamDef] = &[
     // otherwise `arm` writes are inert and `safety` reads 0. `safety` is a
     // bitfield (see IDX_SAFETY) so the whole gate state is one pollable word;
     // the exact clamp/quiet tick counts stay in the RT atomics and the status
-    // log. Kept to two entries because the base registry is near its
-    // single-frame discovery budget.
+    // log. Kept to two entries to preserve a small, uniform interface.
     ParamDef::writable("arm", ParamType::U32, 1),
     ParamDef::read_only("safety", ParamType::U32, 1),
 ];
@@ -71,25 +70,9 @@ pub(super) const IDX_COMMAND_BACKLOG_MAX: usize = 29;
 pub(super) const IDX_ARM: usize = 30;
 pub(super) const IDX_SAFETY: usize = 31;
 
-pub(super) const MAX_CTRL_PARAMS: usize = 8;
-// Reserve reclaimed from 8 to make single-frame discovery room for the two
-// safety base params; no experiment declares more than two rig params, so six
-// remains ample headroom.
-pub(super) const MAX_RIG_PARAMS: usize = 6;
-pub(super) const MAX_EXTRA_PARAMS: usize = 8;
-pub(super) const DISCOVERY_HEADROOM: usize = helic_proto::MAX_PAYLOAD * 3 / 4;
-
-const fn encoded_defs_len(defs: &[ParamDef]) -> usize {
-    let mut total = 0;
-    let mut i = 0;
-    while i < defs.len() {
-        total += defs[i].name.len() + 5;
-        i += 1;
-    }
-    total
-}
-
-const MAX_REGISTRY_ENCODED_LEN: usize = encoded_defs_len(BASE_PARAMS)
-    + MAX_EXTRA_PARAMS * (helic_proto::payload::MAX_PARAM_NAME_LEN + 5)
-    + (MAX_RIG_PARAMS + MAX_CTRL_PARAMS) * (helic_proto::payload::MAX_NAME_LEN + 5);
-const _: () = assert!(MAX_REGISTRY_ENCODED_LEN <= helic_proto::MAX_PAYLOAD);
+pub(super) const MAX_CTRL_PARAMS: usize = 16;
+pub(super) const MAX_RIG_PARAMS: usize = 16;
+pub(super) const MAX_EXTRA_PARAMS: usize = 16;
+const MAX_PARAM_COUNT: usize =
+    BASE_PARAMS.len() + MAX_EXTRA_PARAMS + MAX_RIG_PARAMS + MAX_CTRL_PARAMS;
+const _: () = assert!(MAX_PARAM_COUNT <= u16::MAX as usize);

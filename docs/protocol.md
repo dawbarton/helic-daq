@@ -1,4 +1,4 @@
-# HELIC-DAQ wire protocol v2
+# HELIC-DAQ wire protocol v3
 
 Authoritative specification. `helic-proto` implements the Rust codec used by
 the firmware; `host-python/helic_daq/protocol.py`,
@@ -37,7 +37,7 @@ no final XOR. A response has the request type, or type 255 with payload
 
 | type | name | request payload | response payload |
 |---|---|---|---|
-| 1 | GetParams | empty | repeated `name NUL, type u8, count u16, writable u8` |
+| 1 | GetParams | `start u16` | `start u16, next u16`, then repeated definitions |
 | 2 | GetSources | empty | repeated `name NUL, unit NUL` |
 | 3 | GetPar | repeated `index u16` | raw values concatenated in request order |
 | 4 | SetPar | `index u16, raw value` | empty |
@@ -72,14 +72,23 @@ Error codes are: 1 bad frame, 2 unknown type, 3 bad index, 4 bad length,
 
 ### Parameter discovery
 
-GetParams returns each complete definition in registry order, so names and
-metadata cannot become misaligned. Hosts must discover by name and must not
-cache indices across connections. Parameter names are ASCII and at most
-23 bytes. Source names are ASCII and at most 15 bytes; source units are ASCII
-and at most 7 bytes. Firmware reserves 25% of the control payload as discovery
-headroom.
+Hosts read `n_params` from `Status`, then request `GetParams` starting at index
+zero. Each response echoes the requested `start`, supplies the exclusive
+`next` index and appends the complete definitions in `[start,next)`. The host
+continues from `next` until it equals `n_params`. Firmware fills each page with
+as many complete definitions as fit; a definition is never split across
+pages. When `start < n_params`, `next` is strictly greater than `start`.
+`start == n_params` is a valid empty terminal page, while a larger start is a
+bad index. Any request not exactly two bytes long is a bad length.
 
-The v2 base registry is:
+Hosts must verify the echoed start, forward progress, the definition count
+against `next - start`, and the final count against `Status`. Definitions stay
+in registry order, so names and metadata cannot become misaligned. Hosts must
+discover by name and must not cache indices across connections. Parameter
+names are ASCII and at most 23 bytes. Source names are ASCII and at most
+15 bytes; source units are ASCII and at most 7 bytes.
+
+The v3 base registry is:
 
 | name | type | access | meaning |
 |---|---|---|---|
@@ -208,8 +217,8 @@ the defmt boot banner retains the full `helic-daq <version> <git describe>`.
 
 - `crc16("123456789") = 0x29B1`, `crc16("") = 0xFFFF`,
   `crc16([00]) = 0xE1F0`.
-- GetParams request, sequence 1:
-  `48 4C 01 01 00 00 44 C5`.
+- GetParams request for start index zero, sequence 1:
+  `48 4C 01 01 02 00 00 00 89 0C`.
 - GetSources request, sequence 1:
   `48 4C 02 01 00 00 98 5E`.
 - A GetParams entry for writable scalar f32 `freq`:
@@ -220,10 +229,10 @@ the defmt boot banner retains the full `helic-daq <version> <git describe>`.
   `48 4C 05 02 08 00 0C 00 04 03 02 01 AA BB 39 A7`.
 - Commit request, sequence 3, index 12, length `0x01020304`:
   `48 4C 06 03 06 00 0C 00 04 03 02 01 08 D1`.
-- Status response, sequence 1, version 2, 17 params, 13 sources, 8000 Hz,
+- Status response, sequence 1, version 3, 17 params, 13 sources, 8000 Hz,
   uptime 42000 ms:
-  `48 4C 0A 01 0C 00 02 11 00 0D 00 00 FA 45 10 A4 00 00 03 09`.
+  `48 4C 0A 01 0C 00 03 11 00 0D 00 00 FA 45 10 A4 00 00 76 0A`.
 - Beacon request: `48 4C 01`.
-- Beacon response for protocol 2, port 2350, MAC `02:48:4c:00:00:01`,
+- Beacon response for protocol 3, port 2350, MAC `02:48:4c:00:00:01`,
   experiment `cbc-rig`, firmware `helic-daq sim`:
-  `48 4C 02 02 2E 09 02 48 4C 00 00 01 63 62 63 2D 72 69 67 00 00 00 00 00 00 00 00 00 68 65 6C 69 63 2D 64 61 71 20 73 69 6D 00 00 00`.
+  `48 4C 02 03 2E 09 02 48 4C 00 00 01 63 62 63 2D 72 69 67 00 00 00 00 00 00 00 00 00 68 65 6C 69 63 2D 64 61 71 20 73 69 6D 00 00 00`.

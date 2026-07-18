@@ -155,7 +155,7 @@ For MATLAB, add the package directory to the path:
 addpath("host-matlab")
 ```
 
-To exercise the host tools without hardware, start the protocol-v2 simulator
+To exercise the host tools without hardware, start the protocol-v3 simulator
 in one terminal and connect to it from another:
 
 ```sh

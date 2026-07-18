@@ -1,4 +1,4 @@
-% In-memory protocol-v2 transport used by MATLAB device integration tests.
+% In-memory protocol-v3 transport used by MATLAB device integration tests.
 classdef FakeTransport < handle
     properties (Dependent)
         NumBytesAvailable
@@ -32,6 +32,14 @@ classdef FakeTransport < handle
             indices = uint16((0:numel(names) - 1).');
             obj.Definitions = table(indices, names, typeCodes, counts, writable, ...
                 'VariableNames', {'Index', 'Name', 'TypeCode', 'Count', 'Writable'});
+            extraNames = "paged_extra_" + compose("%03d", (0:49).');
+            extraCount = numel(extraNames);
+            extraDefinitions = table( ...
+                uint16((height(obj.Definitions):height(obj.Definitions) + extraCount - 1).'), ...
+                extraNames, repmat("f", extraCount, 1), ...
+                uint16(ones(extraCount, 1)), true(extraCount, 1), ...
+                'VariableNames', {'Index', 'Name', 'TypeCode', 'Count', 'Writable'});
+            obj.Definitions = [obj.Definitions; extraDefinitions];
             initial = {
                 "helic-daq test";
                 single(1000);
@@ -47,6 +55,7 @@ classdef FakeTransport < handle
                 single(0);
                 uint32(0)
                 };
+            initial = [initial; num2cell(single((0:49).'))];
             obj.Values = cell(height(obj.Definitions), 1);
             for row = 1:height(obj.Definitions)
                 obj.Values{row} = helicdaq.Protocol.packParameter( ...
@@ -70,7 +79,7 @@ classdef FakeTransport < handle
                 case helicdaq.Protocol.STATUS
                     payload = obj.statusPayload();
                 case helicdaq.Protocol.GET_PARAMS
-                    payload = obj.parameterPayload();
+                    payload = obj.parameterPayload(request.Payload);
                 case helicdaq.Protocol.GET_SOURCES
                     payload = obj.sourcePayload();
                 case helicdaq.Protocol.GET_PAR
@@ -127,14 +136,30 @@ classdef FakeTransport < handle
                 helicdaq.Protocol.packLE(uint32(42000), 'uint32')];
         end
 
-        function payload = parameterPayload(obj)
-            payload = uint8([]);
-            for row = 1:height(obj.Definitions)
-                payload = [payload, uint8(char(obj.Definitions.Name(row))), uint8(0), ...
+        function payload = parameterPayload(obj, request)
+            if numel(request) ~= 2
+                error('FakeTransport:BadLength', ...
+                    'GetParams request must contain one uint16 index.');
+            end
+            [startIndex, ~] = helicdaq.Protocol.unpackLE(request, 'uint16', 1, 1);
+            if startIndex > height(obj.Definitions)
+                error('FakeTransport:BadIndex', 'GetParams start is out of range.');
+            end
+            nextIndex = startIndex;
+            payload = [helicdaq.Protocol.packLE(startIndex, 'uint16'), ...
+                helicdaq.Protocol.packLE(nextIndex, 'uint16')];
+            for row = double(startIndex) + 1:height(obj.Definitions)
+                definition = [uint8(char(obj.Definitions.Name(row))), uint8(0), ...
                     uint8(char(obj.Definitions.TypeCode(row))), ...
                     helicdaq.Protocol.packLE(obj.Definitions.Count(row), 'uint16'), ...
-                    uint8(obj.Definitions.Writable(row))]; %#ok<AGROW>
+                    uint8(obj.Definitions.Writable(row))];
+                if numel(payload) + numel(definition) > helicdaq.Protocol.MAX_PAYLOAD
+                    break
+                end
+                payload = [payload, definition]; %#ok<AGROW>
+                nextIndex = nextIndex + uint16(1);
             end
+            payload(3:4) = helicdaq.Protocol.packLE(nextIndex, 'uint16');
         end
 
         function payload = sourcePayload(obj)

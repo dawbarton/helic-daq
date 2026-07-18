@@ -6,18 +6,22 @@ classdef TestDevice < matlab.unittest.TestCase
             device = helicdaq.Device("test", 'Transport', transport);
             cleanup = onCleanup(@() delete(device));
 
-            testCase.verifyEqual(height(device.Parameters), 13);
+            testCase.verifyEqual(height(device.Parameters), 63);
             testCase.verifyEqual(device.parameter('freq').Index, uint16(2));
             testCase.verifyEqual(device.getParameter('firmware'), "helic-daq test");
             information = device.status();
-            testCase.verifyEqual(information.ProtocolVersion, uint8(2));
-            testCase.verifyEqual(information.ParameterCount, 13);
+            testCase.verifyEqual(information.ProtocolVersion, helicdaq.Protocol.VERSION);
+            testCase.verifyEqual(information.ParameterCount, 63);
             testCase.verifyEqual(information.SourceCount, 2);
             testCase.verifyEqual(information.SampleRate, single(1000));
             testCase.verifyEqual(information.Uptime, seconds(42));
 
             device.setParameter('freq', 12.5);
             testCase.verifyEqual(device.getParameter('freq'), single(12.5));
+            testCase.verifyEqual(device.parameter('paged_extra_049').Index, uint16(62));
+            testCase.verifyEqual(device.getParameter('paged_extra_049'), single(49));
+            device.setParameter('paged_extra_049', 12.5);
+            testCase.verifyEqual(device.getParameter('paged_extra_049'), single(12.5));
             values = device.getParameters(["firmware", "freq"]);
             testCase.verifyEqual(values.Value{1}, "helic-daq test");
             testCase.verifyEqual(values.Value{2}, single(12.5));

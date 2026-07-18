@@ -7,7 +7,8 @@ const P = HelicDAQ.Protocol
     @test P.crc16(UInt8[]) == 0xffff
     @test P.crc16(UInt8[0]) == 0xe1f0
 
-    @test P.encode_frame(P.GET_PARAMS, 1) == hex2bytes("484c0101000044c5")
+    @test P.encode_frame(P.GET_PARAMS, 1, P.encode_param_page_request(0)) ==
+        hex2bytes("484c010102000000890c")
     @test P.encode_frame(P.GET_SOURCES, 1) == hex2bytes("484c02010000985e")
     block = P.encode_set_block(12, 0x01020304, UInt8[0xaa, 0xbb])
     @test P.encode_frame(P.SET_BLOCK, 2, block) ==
@@ -26,6 +27,10 @@ const P = HelicDAQ.Protocol
 
     params = P.decode_params(UInt8[codeunits("freq"); 0; UInt8('f'); 1; 0; 1])
     @test params == [(name = "freq", type_code = 'f', count = UInt16(1), writable = true)]
+    page = P.decode_param_page(UInt8[7; 0; 8; 0; codeunits("freq"); 0; UInt8('f'); 1; 0; 1])
+    @test page == (start = UInt16(7), next_index = UInt16(8), definitions = params)
+    @test_throws P.ProtocolError P.decode_param_page(UInt8[0, 0, 0])
+    @test_throws P.ProtocolError P.decode_param_page(UInt8[2, 0, 1, 0])
     sources = P.decode_sources(UInt8[codeunits("adc0"); 0; codeunits("V"); 0])
     @test sources == [(name = "adc0", unit = "V")]
     @test_throws P.ProtocolError P.decode_sources(UInt8[codeunits("adc0"); 0; UInt8('V')])
@@ -46,7 +51,7 @@ const P = HelicDAQ.Protocol
     @test HelicDAQ._unpack_value(text, HelicDAQ._pack_value(text, "cbc")) == "cbc"
 
     beacon = P.BeaconResponse(
-        0x02,
+        P.VERSION,
         0x092e,
         (0x02, 0x48, 0x4c, 0x00, 0x00, 0x01),
         "cbc-rig",
@@ -54,7 +59,7 @@ const P = HelicDAQ.Protocol
     )
     encoded_beacon = P.encode_beacon_response(beacon)
     @test encoded_beacon == hex2bytes(
-        "484c02022e0902484c0000016362632d726967000000000000000000" *
+        "484c02032e0902484c0000016362632d726967000000000000000000" *
             "68656c69632d6461712073696d000000",
     )
     decoded_beacon = P.decode_beacon_response(encoded_beacon)

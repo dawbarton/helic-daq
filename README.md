@@ -18,7 +18,7 @@ interface discovers their parameters and stream sources.
   interfaces.
 - [Developer guide](docs/developer_guide.md): architecture, design principles,
   extension points and testing.
-- [Wire protocol](docs/protocol.md): authoritative protocol v2 specification.
+- [Wire protocol](docs/protocol.md): authoritative protocol v3 specification.
 - [Periodic signal generator](docs/periodic_signal_generator.md): numerical
   design and error bounds.
 - [Hardware status](notes.md): verified paths, outstanding checks and bring-up

@@ -1,6 +1,6 @@
 # HELIC-DAQ for MATLAB
 
-MATLAB interface to HELIC-DAQ protocol v2. It discovers parameter and source
+MATLAB interface to HELIC-DAQ protocol v3. It discovers parameter and source
 registries on every connection, supports atomic waveform-table upload, and
 returns finite captures as native MATLAB tables. UDP discovery and streaming
 require Instrument Control Toolbox for `udpport`.

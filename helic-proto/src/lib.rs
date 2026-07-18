@@ -23,7 +23,7 @@ pub use stream::StreamHeader;
 pub const MAGIC: u16 = 0x4C48;
 
 /// Protocol version, bumped on any incompatible wire change.
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 
 /// TCP port for parameter get/set and commands.
 pub const CONTROL_PORT: u16 = 2350;

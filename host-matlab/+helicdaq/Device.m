@@ -1,6 +1,6 @@
 % TCP control connection and high-level host operations for HELIC-DAQ.
 classdef Device < handle
-    %DEVICE Discover and control one HELIC-DAQ protocol-v2 device.
+    %DEVICE Discover and control one HELIC-DAQ protocol-v3 device.
 
     properties (SetAccess = private)
         Host
@@ -46,7 +46,7 @@ classdef Device < handle
                         'Protocol version mismatch: device %d, host %d.', ...
                         initialStatus.ProtocolVersion, helicdaq.Protocol.VERSION);
                 end
-                obj.discover();
+                obj.discover(initialStatus.ParameterCount);
                 if height(obj.Parameters) ~= initialStatus.ParameterCount || ...
                         height(obj.Sources) ~= initialStatus.SourceCount
                     error('helicdaq:ProtocolError', ...
@@ -364,9 +364,38 @@ classdef Device < handle
     end
 
     methods (Access = private)
-        function discover(obj)
-            parameters = helicdaq.Protocol.decodeParams( ...
-                obj.request(helicdaq.Protocol.GET_PARAMS, uint8([])));
+        function discover(obj, parameterCount)
+            parameters = helicdaq.Protocol.decodeParams(uint8([]));
+            startIndex = uint16(0);
+            while startIndex < parameterCount
+                request = helicdaq.Protocol.encodeParamPageRequest(startIndex);
+                [returnedStart, nextIndex, page] = ...
+                    helicdaq.Protocol.decodeParamPage( ...
+                    obj.request(helicdaq.Protocol.GET_PARAMS, request));
+                if returnedStart ~= startIndex
+                    error('helicdaq:ProtocolError', ...
+                        'Parameter page starts at %d, expected %d.', ...
+                        returnedStart, startIndex);
+                end
+                if nextIndex > parameterCount
+                    error('helicdaq:ProtocolError', ...
+                        'Parameter page exceeds Status parameter count.');
+                end
+                if nextIndex == startIndex
+                    error('helicdaq:ProtocolError', ...
+                        'Parameter page did not advance.');
+                end
+                if height(page) ~= double(nextIndex - startIndex)
+                    error('helicdaq:ProtocolError', ...
+                        'Parameter page definition count does not match its indices.');
+                end
+                parameters = [parameters; page]; %#ok<AGROW>
+                startIndex = nextIndex;
+            end
+            if numel(unique(parameters.Name)) ~= height(parameters)
+                error('helicdaq:ProtocolError', ...
+                    'Parameter discovery contains duplicate names.');
+            end
             sizes = zeros(height(parameters), 1);
             for row = 1:height(parameters)
                 sizes(row) = helicdaq.Protocol.parameterSize( ...

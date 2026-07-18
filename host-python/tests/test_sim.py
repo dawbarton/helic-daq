@@ -172,7 +172,10 @@ class TestSimulator(unittest.TestCase):
             )
             response, _ = client.recvfrom(64)
         magic, kind, version, port = struct.unpack_from("<HBBH", response)
-        self.assertEqual((magic, kind, version, port), (protocol.MAGIC, 2, 2, self.sim.port))
+        self.assertEqual(
+            (magic, kind, version, port),
+            (protocol.MAGIC, 2, protocol.VERSION, self.sim.port),
+        )
         self.assertEqual(response[12:28].rstrip(b"\0"), b"cbc-rig")
 
     def test_find_devices_and_cli(self):

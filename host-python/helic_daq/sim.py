@@ -1,4 +1,4 @@
-"""Protocol-v2 HELIC-DAQ simulator with synthetic UDP streaming."""
+"""Protocol-v3 HELIC-DAQ simulator with synthetic UDP streaming."""
 
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def default_sources() -> list[tuple[str, str]]:
 
 
 class Simulator:
-    """A localhost-compatible v2 device used by tests and host development."""
+    """A localhost-compatible v3 device used by tests and host development."""
 
     def __init__(
         self,
@@ -109,8 +109,9 @@ class Simulator:
         noise: float = 0.001,
         version: int = protocol.VERSION,
         beacon_port: int | None = None,
+        params: list[SimParam] | None = None,
     ):
-        self.params = default_params(sample_rate)
+        self.params = list(params) if params is not None else default_params(sample_rate)
         self.sources = default_sources()
         self.version = version
         self.noise = noise
@@ -241,13 +242,28 @@ class Simulator:
                 uptime_ms,
             )
         if msg_type == MsgType.GET_PARAMS:
-            response = b"".join(
-                param.name.encode()
-                + b"\0"
-                + struct.pack("<cHB", param.type_code.encode(), param.count, param.writable)
-                for param in self.params
-            )
-            return msg_type, response
+            if len(payload) != 2:
+                return self._error(4, msg_type)
+            (start,) = struct.unpack("<H", payload)
+            if start > len(self.params):
+                return self._error(3, msg_type)
+            response = bytearray(struct.pack("<HH", start, start))
+            next_index = start
+            while next_index < len(self.params):
+                param = self.params[next_index]
+                definition = (
+                    param.name.encode()
+                    + b"\0"
+                    + struct.pack("<cHB", param.type_code.encode(), param.count, param.writable)
+                )
+                if len(response) + len(definition) > protocol.MAX_PAYLOAD:
+                    break
+                response.extend(definition)
+                next_index += 1
+            if next_index == start and start < len(self.params):
+                return self._error(4, msg_type)
+            struct.pack_into("<H", response, 2, next_index)
+            return msg_type, bytes(response)
         if msg_type == MsgType.GET_SOURCES:
             return msg_type, b"".join(
                 name.encode() + b"\0" + unit.encode() + b"\0"

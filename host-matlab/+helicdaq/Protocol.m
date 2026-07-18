@@ -1,16 +1,17 @@
-% Wire-level codecs for HELIC-DAQ protocol v2.
+% Wire-level codecs for HELIC-DAQ protocol v3.
 classdef Protocol
     %PROTOCOL Constants and stateless binary codecs for HELIC-DAQ.
 
     properties (Constant)
         MAGIC = uint16(hex2dec('4C48'))
-        VERSION = uint8(2)
+        VERSION = uint8(3)
         CONTROL_PORT = 2350
         STREAM_PORT = 2351
         DISCOVERY_PORT = 2352
         HEADER_LENGTH = 6
         TRAILER_LENGTH = 2
         MAX_PAYLOAD = 1024
+        PARAM_PAGE_HEADER_LENGTH = 4
         STREAM_HEADER_LENGTH = 20
         ERROR_BUSY = uint8(7)
 
@@ -99,8 +100,37 @@ classdef Protocol
                 'Payload', payload);
         end
 
+        function payload = encodeParamPageRequest(startIndex)
+            %ENCODEPARAMPAGEREQUEST Encode the first requested registry index.
+            validateattributes(startIndex, {'numeric'}, ...
+                {'scalar', 'integer', 'nonnegative', '<=', 65535});
+            payload = helicdaq.Protocol.packLE(uint16(startIndex), 'uint16');
+        end
+
+        function [startIndex, nextIndex, definitions] = decodeParamPage(payload)
+            %DECODEPARAMPAGE Decode one paged GetParams response.
+            payload = reshape(uint8(payload), 1, []);
+            if numel(payload) < helicdaq.Protocol.PARAM_PAGE_HEADER_LENGTH
+                error('helicdaq:ProtocolError', ...
+                    'Parameter page header is truncated.');
+            end
+            [startIndex, offset] = helicdaq.Protocol.unpackLE( ...
+                payload, 'uint16', 1, 1);
+            [nextIndex, offset] = helicdaq.Protocol.unpackLE( ...
+                payload, 'uint16', 1, offset);
+            if nextIndex < startIndex
+                error('helicdaq:ProtocolError', ...
+                    'Parameter page index range is reversed.');
+            end
+            definitions = helicdaq.Protocol.decodeParams(payload(offset:end));
+            if ~isempty(definitions)
+                definitions.Index = startIndex + ...
+                    uint16((0:height(definitions) - 1).');
+            end
+        end
+
         function definitions = decodeParams(payload)
-            %DECODEPARAMS Decode a GetParams response into a table.
+            %DECODEPARAMS Decode contiguous parameter definitions into a table.
             payload = reshape(uint8(payload), 1, []);
             names = strings(0, 1);
             typeCodes = strings(0, 1);
@@ -129,7 +159,11 @@ classdef Protocol
                 writable(end + 1, 1) = logical(writableByte); %#ok<AGROW>
                 offset = offset + 4;
             end
-            indices = uint16((0:numel(names) - 1).');
+            if isempty(names)
+                indices = uint16(zeros(0, 1));
+            else
+                indices = uint16((0:numel(names) - 1).');
+            end
             definitions = table(indices, names, typeCodes, counts, writable, ...
                 'VariableNames', {'Index', 'Name', 'TypeCode', 'Count', 'Writable'});
         end

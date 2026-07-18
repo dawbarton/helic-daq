@@ -45,7 +45,7 @@ sources, a 256-record SPSC queue, 16 Fourier harmonics and two 4096-sample
 waveform buffers. The command queue holds 32 entries, but the loop applies at
 most two per tick so a control burst cannot consume an unbounded fraction of
 the 125 µs period. Changing any capacity or per-tick budget requires rechecking
-SRAM, discovery payload, UDP throughput and worst-case tick time.
+SRAM, discovery pagination, UDP throughput and worst-case tick time.
 
 ### Design lineage
 
@@ -372,16 +372,18 @@ Three transport-independent server tasks:
 
 ### The parameter registry (`params.rs`)
 
-rtc-style discoverable registry: the host reads names/types/sizes at
-connect and uses indices thereafter, so **adding a parameter is a firmware-
-only change**. `helic_fw_common::params::ParamStore` serves reads from RT-loop
-atomics or from the shadow copies of writable values, and turns writes into
-`RtCommand`s.
+rtc-style discoverable registry: the host reads names/types/sizes in bounded
+pages at connect and uses indices thereafter, so **adding a parameter is a
+firmware-only change**. `helic_fw_common::params::ParamStore` serves reads from
+RT-loop atomics or from the shadow copies of writable values, and turns writes
+into `RtCommand`s. Pagination keeps the complete registry independent of the
+1 KiB control-frame limit; each definition still fits wholly within one page.
 
-The fixed schema and capacity assertions live in `params/schema.rs`; mutable
-shadow state and command translation remain in `params.rs`. To add a platform
-parameter, use the typed read-only/writable constructors in `BASE_PARAMS`, add
-its index constant, and handle it in `get` (and `set` if writable). Experiment
+The fixed schema and parameter-count assertions live in `params/schema.rs`;
+mutable shadow state and command translation remain in `params.rs`. To add a
+platform parameter, use the typed read-only/writable constructors in
+`BASE_PARAMS`, add its index constant, and handle it in `get` (and `set` if
+writable). Experiment
 telemetry uses `ExtraParam::f32`/`u32`, which always describes a read-only scalar
 whose definition matches its atomic storage. Controller parameters need no
 registry work at all; see below.

@@ -252,7 +252,10 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
     }
 
     fn validate_registry(&self) {
-        let mut encoded_len = 0;
+        assert!(
+            self.count() <= u16::MAX as usize,
+            "parameter registry exceeds the protocol index range"
+        );
         for i in 0..self.count() {
             let def = self.def(i).unwrap();
             let max_name_len =
@@ -265,7 +268,6 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 def.name.len() <= max_name_len && def.name.is_ascii(),
                 "parameter name is non-ASCII or exceeds its category limit"
             );
-            encoded_len += def.name.len() + 5;
             for j in 0..i {
                 assert_ne!(
                     def.name,
@@ -274,10 +276,6 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 );
             }
         }
-        assert!(
-            encoded_len <= DISCOVERY_HEADROOM,
-            "parameter registry exceeds its discovery headroom"
-        );
     }
 
     /// Definition of parameter `index` (base or controller).
