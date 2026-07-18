@@ -21,10 +21,18 @@ exposed on other interfaces. Use `--control-port`, `--stream-port`, and
 `--discovery-port` to avoid local conflicts. The corresponding
 `--mcu-*-port` options select non-standard upstream ports.
 
-`--history 10s` sets the shared in-memory history window. Durations accept
+`--history 10s` sets the shared in-memory history target. Durations accept
 `ms`, `s`, `m`, or `h`. `--segment-size 1GiB` sets the soft file-rollover
 threshold and accepts bytes or `KiB`/`MiB`/`GiB` (decimal units are also
-accepted). The output directory is created at start-up.
+accepted). History evicts whole packets, so retention can differ from the
+duration target by one packet; BrokerInfo reports the precise available record
+count. The output directory is created at start-up.
+
+The loopback discovery beacon keeps the MCU experiment identity and advertises
+the broker firmware identity and downstream control port. It uses the MCU MAC
+when upstream discovery succeeds and a locally administered fallback identity
+otherwise. The broker does not answer discovery or retain client connections
+until its upstream connection is ready.
 
 ## Shared stream behaviour
 
@@ -50,10 +58,12 @@ accepted). The output directory is created at start-up.
   two clients from interleaving one staged table transaction. No client is
   otherwise privileged.
 
-Loss of the MCU connection closes all client connections and the active file,
-then starts reconnection attempts. Clients reconnect and rediscover state in
-the normal way. A storage failure is fatal, because continuing without the
-promised recording would be misleading.
+Loss of the MCU connection closes all client connections, clears the shared
+configuration and history, closes an active file as an incomplete session,
+then starts reconnection attempts. Clients reconnect, rediscover state, and
+configure a new stream in the normal way. A storage failure is fatal, because
+continuing without the promised recording would be misleading. `Ctrl-C`
+requests a graceful stream stop, recording finalisation, and disarm.
 
 ## Host APIs
 
@@ -67,12 +77,12 @@ from helic_daq import Device, StreamReceiver
 
 monitor = Device("127.0.0.1")
 monitor.stream_setup(["adc0", "out"], count=0)
-monitor_rx = StreamReceiver()
+monitor_rx = StreamReceiver(port=0)
 monitor_rx.prime(monitor.host)
 monitor.stream_start(monitor_rx.port)  # ordinary live monitor
 
 snapshot = Device("127.0.0.1")
-data = snapshot.capture_recent(seconds=1.0)
+data = snapshot.capture_recent(seconds=1.0, port=0)
 # snapshot remains attached and quiet
 ```
 
@@ -83,12 +93,12 @@ using HelicDAQ
 
 monitor = Device("127.0.0.1")
 configure_stream!(monitor, [:adc0, :out]; count = 0)
-monitor_rx = StreamReceiver()
+monitor_rx = StreamReceiver(port = 0)
 prime!(monitor_rx, monitor.host)
 start_stream!(monitor, monitor_rx.port)
 
 snapshot = Device("127.0.0.1")
-data = capture_recent(snapshot; seconds = 1)
+data = capture_recent(snapshot; seconds = 1, port = 0)
 ```
 
 MATLAB:
@@ -96,12 +106,12 @@ MATLAB:
 ```matlab
 monitor = helicdaq.Device("127.0.0.1");
 monitor.configureStream(["adc0", "out"], 'Count', 0);
-monitorRx = helicdaq.StreamReceiver();
+monitorRx = helicdaq.StreamReceiver('Port', 0);
 monitorRx.prime(monitor.Host, helicdaq.Protocol.STREAM_PORT);
 monitor.startStream(monitorRx.Port);
 
 snapshot = helicdaq.Device("127.0.0.1");
-data = snapshot.captureRecent('Seconds', 1);
+data = snapshot.captureRecent('Seconds', 1, 'Port', 0);
 ```
 
 Use `broker_info()` (Python), `broker_info` (Julia), or `brokerInfo` (MATLAB)
@@ -136,6 +146,11 @@ decimation, configured count, and start time. The datasets are:
 | `/close_reason` | u8 scalar | enumerated close reason |
 | `/clean_close` | u8 scalar | 1 after finalisation |
 | `/session_complete` | u8 scalar | 1 on the final clean session segment |
+
+`close_reason` values are 1 segment limit, 2 explicit `StreamStop`, 3 finite
+count complete, 4 upstream loss, and 6 broker shutdown. Value 5 is reserved
+for storage failure; a writer failure normally leaves the `.partial` file
+unfinalised instead.
 
 The output is standard HDF5 and is readable with Python `h5py`, Julia
 `HDF5.jl`, and MATLAB `h5read`/`h5info`. `.partial` files left by process or

@@ -15,8 +15,11 @@ All multi-byte fields are little-endian.
 
 ## Control channel (TCP :2350)
 
-One client is served at a time. The host sends one frame and receives exactly
-one response. Closing the connection stops any active stream.
+The direct MCU endpoint serves one client at a time. The host sends one frame
+and receives exactly one response. Closing that direct connection stops any
+active stream. The optional broker retains this request/response framing but
+accepts multiple downstream clients and has the shared-state rules described
+below.
 
 ### Frame layout
 
@@ -283,6 +286,10 @@ the defmt boot banner retains the full `helic-daq <version> <git describe>`.
 - Status response, sequence 1, version 3, 17 params, 13 sources, 8000 Hz,
   uptime 42000 ms:
   `48 4C 0A 01 0C 00 03 11 00 0D 00 00 FA 45 10 A4 00 00 76 0A`.
+- BrokerInfo payload, extension version 1, state `0x1F`, capabilities
+  `0x000F`, 10 s capacity, 42 available records, decimation 4, continuous
+  count, two clients, and sources 0, 8, and 12:
+  `01 1F 0F 00 10 27 00 00 2A 00 00 00 04 00 00 00 00 00 02 00 03 00 08 0C`.
 - Beacon request: `48 4C 01`.
 - Beacon response for protocol 3, port 2350, MAC `02:48:4c:00:00:01`,
   experiment `cbc-rig`, firmware `helic-daq sim`:

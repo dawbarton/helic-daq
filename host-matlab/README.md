@@ -57,3 +57,18 @@ matlab -batch "cd('host-matlab'); runTests()"
 
 The suite uses deterministic in-memory transports for protocol behaviour and
 also runs native UDP loopback tests when Instrument Control Toolbox is present.
+
+After another client has started a stream, the optional local broker adds
+`brokerInfo`, `startStreamQuiet`,
+`setStreamQuiet`, and `captureRecent`. Give concurrent receivers ephemeral UDP
+ports:
+
+```matlab
+device = helicdaq.Device("127.0.0.1");
+cleanup = onCleanup(@() delete(device));
+recent = device.captureRecent('Seconds', 1, 'Port', 0);
+```
+
+See the [broker guide](../docs/broker.md) for shared start/stop semantics and
+the HDF5 layout. Direct firmware reports these extension calls as unknown
+messages.

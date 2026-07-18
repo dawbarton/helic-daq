@@ -35,3 +35,19 @@ helic-daq --host 127.0.0.1 capture --sources adc0,out --samples 1000
 See the repository [user guide](../docs/user_guide.md) for installation,
 discovery, capture and waveform details, and the [wire protocol](../docs/protocol.md)
 for the authoritative binary formats.
+
+After another client has started a stream through the optional local broker,
+`broker_info`,
+`stream_start_quiet`, `stream_set_quiet`, and `capture_recent` expose shared
+stream state and per-client quietness. Use `port=0` for concurrent receivers:
+
+```python
+from helic_daq import Device
+
+with Device("127.0.0.1") as dev:
+    recent = dev.capture_recent(seconds=1.0, port=0)
+```
+
+See the [broker guide](../docs/broker.md) for starting the daemon, global
+start/stop semantics, and the HDF5 layout. These extension calls return the
+normal unknown-message error on a direct firmware connection.

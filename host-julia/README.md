@@ -63,3 +63,19 @@ with:
 ```sh
 julia --project=host-julia -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 ```
+
+After another client has started a stream, the optional local broker adds
+`broker_info`, `start_stream_quiet!`,
+`set_stream_quiet!`, and `capture_recent`. Use an ephemeral UDP port for
+concurrent clients:
+
+```julia
+using HelicDAQ
+
+open(Device, "127.0.0.1") do device
+    recent = capture_recent(device; seconds = 1, port = 0)
+end
+```
+
+See the [broker guide](../docs/broker.md) for its shared stream rules and HDF5
+layout. Direct firmware reports these extension calls as unknown messages.

@@ -67,7 +67,7 @@ layout checker, the regression-tool profiles, the user/developer guides and
   latch. Do not replace either with software timing or an interrupt future.
 - Keep `helic_fw_common::time_watchdog` bound to `TIMER0_IRQ_1` and started
   on core 0 in every experiment that uses embassy-time. The embassy-rp time
-  driver can lose its alarm (`docs/embassy_time_alarm_loss.md`); without the
+  driver can lose its alarm (`docs/overrun_handoff.md`); without the
   watchdog every core-0 timer can freeze until unrelated network traffic
   arrives.
 - Core 0 and core 1 communicate only through fixed-capacity SPSC queues and

@@ -92,6 +92,48 @@ the host** (`cargo test` at the root plus the language-specific suites in
 The firmware crates are deliberately thin: pin wiring, task plumbing and
 glue.
 
+## Host broker architecture
+
+The optional broker is entirely host-side and does not alter firmware timing,
+the MCU protocol implementation, or the real-time regression boundary:
+
+```text
+Python / Julia / MATLAB clients (loopback TCP + per-client UDP)
+                         │
+                  helic-broker/server
+                    │      │       │
+         shared stream   history   bounded storage queue
+             state         │              │
+                    one upstream      blocking HDF5 worker
+                    TCP + UDP              │
+                         │          timestamped segments
+                        MCU
+```
+
+`server.rs` owns the single serialised upstream control channel, downstream
+listeners, connection epochs, global stream state, and per-client endpoint and
+quiet flags. `history.rs` validates stream datagrams and retains a bounded
+packet deque; replay may trim only the oldest returned packet so it still
+uses the normal stream format. `storage.rs` moves HDF5 calls off the async
+runtime through a bounded queue. Queue exhaustion or a writer failure is
+fatal rather than allowing an unrecorded stream to continue silently.
+`config.rs` parses upstream and loopback service ports and validates
+duration/size options and the output directory. Broker extension codecs remain
+in the shared `no_std` `helic-proto::broker` module; the firmware deliberately
+does not recognise their message types.
+
+Stream configuration, start, stop, history, and recording are global. UDP
+attachment and quietness are per client. Stream operations are serialised to
+prevent two clients racing an upstream start or stop. A five-second temporary
+owner prevents different clients from interleaving `SetBlock` and `Commit`,
+without giving any connection general priority. Losing the MCU clears global
+configuration, closes all downstream connections through a generation change,
+finalises an active recording as incomplete, and reconnects. Losing the final
+downstream client does not stop recording, but does issue `arm = 0` when the
+parameter exists.
+
+## Firmware networking foundations
+
 `common::net` owns transport-independent static/DHCP configuration and stack
 resources. `common::net::wiznet` owns W5500/W6100 reset, SPI and runner tasks.
 The `net-wiznet-w5500` and `net-wiznet-w6100` features select the concrete chip
@@ -228,8 +270,8 @@ stopped re-arming the shared queue 8000×/s, which had been masking it.
 heartbeat that re-pends `TIMER0_IRQ_0`, so the driver re-checks its queue
 and any lost alarm is recovered within 50 ms. Experiments bind
 `TimeWatchdogHandler` to `TIMER0_IRQ_1` and call `time_watchdog::start()`
-on core 0. A copy-paste-ready upstream report of the underlying bug lives
-in [embassy_time_alarm_loss.md](embassy_time_alarm_loss.md).
+on core 0. The hardware evidence and upstream-report summary are retained in
+[the overrun handoff](overrun_handoff.md#second-failure-found-lost-embassy-time-alarms).
 
 ### RT regression checklist
 
@@ -548,7 +590,7 @@ Experiment inputs are declared by `Rig::INPUTS`; write their values in the
 same order from `Rig::measure`. Controller-internal signals are declared by
 `Controller::TELEMETRY` and filled by `telemetry`. The common loop appends
 `target`, `forcing`, `table`, `out` and the wrapping `cmd_epoch`, so neither
-rigs nor controllers manage numeric slots. Protocol-v2 source discovery
+rigs nor controllers manage numeric slots. Protocol-v3 source discovery
 exposes this assembled table to the host at every connection.
 
 ## Hardware bring-up notes
@@ -573,6 +615,7 @@ Reference points when re-checking on a new assembly or scope:
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+cargo build --release -p helic-broker
 cd firmware
 cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings
@@ -590,6 +633,12 @@ crates, the firmware cross-build, and the Python, Julia, and MATLAB suites
 (MATLAB via `matlab-actions/setup-matlab`). The Rust, Python, Julia,
 and MATLAB protocol implementations share known-answer vectors from
 [protocol.md](protocol.md), so codec drift fails every implementation's tests.
+The root Rust suite also runs a real loopback broker test with a protocol peer
+and two TCP/UDP clients, covering discovery, shared start/stop, quiet replay,
+live forwarding, HDF5 output, and final-client disarm. HDF5 unit tests force a
+segment rollover and reopen the result with an independent reader. These host
+checks do not replace hardware tests when a later change touches firmware or
+the real-time/network path.
 
 Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses probe-rs
 (`--chip RP235x`) and streams defmt logs over RTT; `DEFMT_LOG` is set in

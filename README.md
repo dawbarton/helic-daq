@@ -12,6 +12,10 @@ at run time, and stream discovered signals over Ethernet or Wi-Fi. The
 controller, rig and network transport are selected at compile time; the host
 interface discovers their parameters and stream sources.
 
+An optional Rust broker can hold the MCU connection for long-running
+monitoring, share one stream among local clients, retain recent history, and
+record segmented HDF5 files without changing the firmware.
+
 ## Documentation
 
 - [User guide](docs/user_guide.md): experiments, flashing, networking and host
@@ -19,6 +23,8 @@ interface discovers their parameters and stream sources.
 - [Developer guide](docs/developer_guide.md): architecture, design principles,
   extension points and testing.
 - [Wire protocol](docs/protocol.md): authoritative protocol v3 specification.
+- [Shared broker](docs/broker.md): multi-client stream semantics, recording,
+  host APIs, and recovery behaviour.
 - [Periodic signal generator](docs/periodic_signal_generator.md): numerical
   design and error bounds.
 - [Hardware status](notes.md): verified paths, outstanding checks and bring-up
@@ -47,6 +53,7 @@ See [notes.md](notes.md) for the precise hardware-verification boundary.
 | `helic-core/` | Hardware-independent DSP, controllers and generators; `no_std`, host-tested |
 | `helic-drivers/` | Portable peripheral drivers over `embedded-hal` traits; host-tested |
 | `helic-proto/` | Protocol framing, payloads and stream codec shared with firmware |
+| `helic-broker/` | Loopback-only shared stream broker and HDF5 recorder |
 | `firmware/common/` | Experiment-independent RP2350 firmware support |
 | `firmware/experiments/` | One binary, pin map and compile-time configuration per experiment |
 | `host-python/` | Python package `helic_daq`, simulator and `helic-daq` CLI |
@@ -57,6 +64,7 @@ See [notes.md](notes.md) for the precise hardware-verification boundary.
 
 ```sh
 cargo test
+cargo build --release -p helic-broker
 cd firmware && cargo build --release --workspace
 cd ../host-python && PYTHONPATH=.:tests python3 -m unittest discover -s tests
 cd ../host-julia && julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'

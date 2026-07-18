@@ -191,6 +191,27 @@ The control, stream, and discovery listeners bind only to `127.0.0.1`. See
 [`broker.md`](broker.md) for shared-state semantics, host examples, file
 layout, recovery behaviour, and the test matrix.
 
+Use an ephemeral UDP port (`port=0`) for each concurrent client so local
+receivers cannot collide. For example, after a monitoring client has started
+a continuous stream, another Python client can retrieve the preceding second
+without interrupting it:
+
+```python
+from helic_daq import Device
+
+snapshot = Device("127.0.0.1")
+print(snapshot.broker_info())
+data = snapshot.capture_recent(seconds=1.0, port=0)
+# This connection remains attached and quiet; the global stream keeps running.
+```
+
+The ordinary `capture` helper configures and later stops a stream, so it is
+intended for direct-MCU use or for deliberately owning the broker's global
+capture. Use `capture_recent` (Python and Julia) or `captureRecent` (MATLAB)
+when sampling an already-running broker stream. Quiet-start and
+quietness-change methods are also available for clients that keep their own
+`StreamReceiver` open.
+
 ## Using it
 
 Command line (`--host <ip>` or `export HELIC_DAQ_HOST=<ip>` if not the
@@ -422,10 +443,13 @@ output safety gate. Two parameters expose and control it:
 
 - `arm` (writable): write `1` to arm the output, `0` to disarm. The output is
   **disarmed after every flash/reset** and is disarmed automatically when the
-  control connection drops, so driving the actuator needs a persistent host
-  session that arms once and holds the connection. The one-shot CLI rejects
-  non-zero `arm` writes because it cannot keep the connection alive. Reading
-  `arm` returns the armed bit.
+  MCU control connection drops. A direct connection therefore needs a
+  persistent host session that arms once and holds the connection. With the
+  broker, its upstream connection remains open across individual client
+  departures, but the broker explicitly disarms when its final downstream
+  client disconnects. The one-shot CLI rejects non-zero `arm` writes because
+  it cannot keep a direct connection alive. Reading `arm` returns the armed
+  bit.
 - `safety` (read-only): a bitfield — bit0 armed, bit1 latched trip, bit2 clamped
   since last `diag_reset`, bit3 quieted since last `diag_reset`. A latched trip
   (the gate detected a fault such as an out-of-range or stalled sensor) holds the
