@@ -295,6 +295,34 @@ approximately 130–144 KB flash and 130 KB RAM for wired experiments.
 124 KB RAM. These fit the 2 MB flash and 520 KB SRAM design envelope, but do
 not establish timing, wired throughput or RF performance.
 
+## Output safety gate (2026-07-18)
+
+Added a generic per-tick output safety stage in `firmware/common`, opt-in via a
+new `Rig::SAFETY_GATED` const (default false; `whirl-rig`/`pico2w-rig` compile it
+out and are behaviourally unchanged). `rt_loop::safety_gate` runs after the
+controller/forcing/table sum and before `actuate`: it latches a fault trip from
+the rig's `output_fault`, holds `safe_output` while disarmed or tripped, and
+otherwise passes the command through the rig's `clamp_output`. Streamed `out` is
+now the applied (post-gate) value.
+
+Host interface (no wire change): writable `arm` base param applied directly on
+core 0 (like `diag_reset`; arms + clears a stale trip, or disarms), and a
+read-only `safety` bitfield (armed/tripped/clamped/quieted). `SAFETY_ARMED`
+starts 0 (disarmed after flash); TCP control disconnect disarms (comms-loss
+quieting). Arm policy is a plain flag with no lease/heartbeat (operator present
+with emergency power-off). `MAX_RIG_PARAMS` trimmed 8→6 to keep the base
+registry within the single-frame discovery budget (it was at 1023/1024 bytes; no
+experiment declares >2 rig params). Pure, host-tested helpers
+(`clamp_channel_command`, `StaleCounter`) added to `helic-core::safety`.
+
+`cbc-rig` is the first gated experiment: clamp to a 0.096–4.0 V DAC-output window
+(≈ ±1.952 V differential), quiet on the laser leaving a 10–40 mm window or its
+frame counter stalling, `safe_output = 0`. Flashed as commit `c8c3abe`; on-rig
+checks with exciter+laser off confirmed disarmed-after-flash, blind-laser trip +
+quiet (`safety = 0b1010`), arm/disarm, disconnect-disarm, and `loop_time`
+unchanged at 33–34 µs (gate adds no measurable tick cost). The amplitude clamp
+path is unit-tested but not yet exercised live (needs a powered, in-range laser).
+
 ## Next hardware session
 
 Prioritise tests that move a complete path from software-only to physical

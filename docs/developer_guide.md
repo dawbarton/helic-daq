@@ -404,7 +404,12 @@ closest. An experiment crate has a deliberately predictable anatomy:
 4. In `rig.rs`, assemble core-1 parts and implement `Rig`. `INPUTS` and
    `measure` must use the same order; choose a `TickSource`, implement `actuate`, and expose
    rig controls through `param_names`, `param_defaults`, `normalise_param`
-   and `set_param`.
+   and `set_param`. A rig that drives a hazardous actuator sets
+   `const SAFETY_GATED = true` and implements `clamp_output` (hard amplitude
+   limit), `safe_output` (zero-drive value) and `output_fault` (latching fault
+   condition); the shared gate then enforces the clamp, the `arm` flag and the
+   trip every tick (see "Output safety gate" below). The default is ungated, so
+   an experiment that omits these is behaviourally unchanged.
 5. In `telemetry.rs`, declare atomic-backed `ExtraParam`s for read-only sensor
    and diagnostic values. Scalar atomics are latest-value views, not coherent
    substitutes for stream records.
@@ -415,10 +420,26 @@ closest. An experiment crate has a deliberately predictable anatomy:
 
 Controller telemetry is appended after rig inputs, and the common loop then
 appends `target`, `forcing`, `table`, `out` and `cmd_epoch`; no experiment
-assigns those indices. Fourier and table parameters also arrive automatically
-through the common registry. Logic must remain in a host-testable crate: an
-experiment that grows algorithms rather than pin glue is the signal to move
-code out.
+assigns those indices. The streamed `out` is the **applied** command — for a
+safety-gated rig this is after the clamp/quiet stage, not the raw sum. Fourier
+and table parameters also arrive automatically through the common registry, as
+do the `arm` (writable) and `safety` (read-only bitfield) safety params. Logic
+must remain in a host-testable crate: an experiment that grows algorithms rather
+than pin glue is the signal to move code out.
+
+#### Output safety gate
+
+`rt_loop::safety_gate` runs on core 1 after the controller/forcing/table sum and
+before `actuate`, but only for a rig with `SAFETY_GATED = true` (otherwise it is
+compiled out and the summed command is applied verbatim). It latches
+`SAFETY_TRIPPED` when `output_fault` fires; holds the actuator at `safe_output`
+while disarmed or tripped; and otherwise passes the command through
+`clamp_output`. `SAFETY_ARMED` starts 0 (disarmed after flash); the host writes
+the `arm` param to arm (clearing a stale trip) or disarm, and a dropped TCP
+control connection disarms (comms-loss quieting). Clamp/quiet tick counts are in
+the RT atomics and the status log; the `safety` param packs armed/tripped/
+clamped/quieted into one word. The pure, host-tested pieces (the channel-window
+clamp and the stale-counter guard) live in `helic-core::safety`.
 
 Verify with the root host tests, a release build and clippy of the complete
 firmware workspace, and all host-language suites. Then flash the single new

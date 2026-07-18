@@ -381,11 +381,32 @@ budgets.
   a sensor that was already streaming; it is separate from steady-state loss.
 
 Writing non-zero to `diag_reset` clears the laser fault counters together with
-the timing/event diagnostics. It does not reset `laser_frames_received`, so
-take before/after snapshots when checking the received frame rate.
+the timing/event diagnostics (including the safety clamp/quiet tick counts). It
+does not reset `laser_frames_received`, so take before/after snapshots when
+checking the received frame rate.
 
 If something looks wrong, the same numbers appear once a second in the
-debug-probe log, along with connection events.
+debug-probe log, along with connection events (and, for a safety-gated
+experiment, the armed/tripped/clamp/quiet fields).
+
+### Output safety (gated experiments)
+
+Experiments that drive a hazardous actuator (e.g. `cbc-rig`) enable a firmware
+output safety gate. Two parameters expose and control it:
+
+- `arm` (writable): write `1` to arm the output, `0` to disarm. The output is
+  **disarmed after every flash/reset** and is disarmed automatically when the
+  control connection drops, so driving the actuator needs a persistent host
+  session that arms once and holds the connection — a one-shot CLI `set arm 1`
+  disarms again as soon as it disconnects. Reading `arm` returns the armed bit.
+- `safety` (read-only): a bitfield — bit0 armed, bit1 latched trip, bit2 clamped
+  since last `diag_reset`, bit3 quieted since last `diag_reset`. A latched trip
+  (the gate detected a fault such as an out-of-range or stalled sensor) holds the
+  actuator quiet until the host re-arms with the fault condition cleared.
+
+The exact per-experiment limits (amplitude window, fault conditions) live in the
+experiment's `config.rs`; the streamed `out` source is the applied value after
+the gate.
 
 **If `capture` times out with no data** while `status`/`get`/`set` work, check
 whether a host firewall is blocking inbound UDP on the stream port. The host

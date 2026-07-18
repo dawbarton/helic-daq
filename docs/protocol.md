@@ -113,13 +113,18 @@ The v2 base registry is:
 | t_rest_max | I | ro | maximum remaining tick body time, µs |
 | diag_reset | I | rw | write non-zero to reset timing diagnostics and event counters |
 | cmd_backlog_max | I | ro | maximum queued host commands observed at a tick boundary |
+| arm | I | rw | output safety arm: write 1 to arm (clears a stale trip), 0 to disarm |
+| safety | I | ro | safety-gate bitfield: bit0 armed, bit1 latched trip, bit2 clamped, bit3 quieted |
 
 `wake_phase_*` read 4294967295/0 until the rig reports a sample-clock
 phase. `diag_reset` clears the `*_max`/`*_min` diagnostics along with
 `loop_time_max`, `clock_jitter`, `overruns`, `tick_timeouts`,
-`records_dropped`, `cmd_backlog_max`, and experiment event counters such as
-the laser error diagnostics; total counters such as `ticks` and
-`laser_frames_received` keep running.
+`records_dropped`, `cmd_backlog_max`, the safety clamp/quiet tick counts, and
+experiment event counters such as the laser error diagnostics; total counters
+such as `ticks` and `laser_frames_received` keep running. `arm`/`safety` act
+only on an experiment whose rig opts into the safety gate (`cbc-rig`);
+elsewhere `arm` is inert and `safety` reads 0. The output is disarmed after
+every reset and on control-connection loss.
 
 Experiment read-only values, rig parameters and controller parameters follow
 the base registry. For `cbc-rig`, these include `laser`,
