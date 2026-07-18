@@ -1,6 +1,6 @@
 # Hardware verification status
 
-Last updated 2026-07-16. Read this before a hardware session and update the
+Last updated 2026-07-18. Read this before a hardware session and update the
 verification boundary, failures and fitted-hardware assumptions afterwards.
 
 ## Verified on hardware
@@ -294,6 +294,41 @@ approximately 130–144 KB flash and 130 KB RAM for wired experiments.
 `fw-pico2w-rig`, including CYW43439 blobs, used approximately 404 KB flash and
 124 KB RAM. These fit the 2 MB flash and 520 KB SRAM design envelope, but do
 not establish timing, wired throughput or RF performance.
+
+## Protocol v3 paged parameter discovery (2026-07-18)
+
+Protocol v3 replaced the single-frame `GetParams` registry with indexed pages
+that echo their inclusive start and exclusive next indices. The control-frame
+payload remains bounded at 1024 bytes, while experiment, rig and controller
+parameter capacities are now 16 each. Rust, Python and Julia tests force
+registries beyond one page and verify global indices plus a read/write on the
+second page. MATLAB received the equivalent codec, fake transport and tests,
+but no MATLAB executable was available in this environment to run them.
+
+The complete release workspace and both W6100 variants built, clippy passed,
+and the real-time layout checker passed all three production ELFs. CBC W5500
+hardware was tested first from the uncommitted pagination worktree reported as
+firmware `0.1.0 62914d2`: an 8000-record all-14-source capture and a 60000-record
+`adc0,out` capture were contiguous with zero UDP loss, device drops, overruns,
+tick timeouts or clock jitter. Loop maximum was 35 µs and wake phase stayed
+exactly 36 µs. After more than five minutes disconnected, the same image
+reconnected at 369.2 s uptime with 2953498 ticks and zero record drops,
+overruns, timeouts or jitter. Direct requests verified page `0..41`, page
+`40..41` containing only `rig_out_channel`, the empty terminal page `41..41`,
+`BadIndex` for start 42 and `BadLength` for an empty request.
+
+The committed image `0.1.0 800e741` was then rebuilt and flashed. Its first
+post-flash run reproduced the outstanding 1 µs `clock_jitter` observation
+during TCP polling and capture, so that run correctly failed acceptance even
+though its 8000 all-source records were contiguous and loss-free. After a
+target reset and fresh diagnostic baseline, the repeat all-source run passed
+with zero jitter, overruns, timeouts, record drops, packet loss and index gaps;
+loop maximum was 35 µs and wake phase was 36/36 µs. A subsequent 60000-record
+`adc0,out` run also passed every acceptance check at 8000.1 ticks/s with the
+same 35 µs loop maximum and fixed wake phase. The final flashed image reported
+`0.1.0 800e741`; non-zero page `40..41` and terminal page `41..41` were
+rechecked on that exact build. Outputs were kept quiet throughout. The laser
+was not connected and its retry task reported no sensor reply.
 
 ## Output safety gate (2026-07-18)
 
