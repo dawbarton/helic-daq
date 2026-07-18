@@ -70,6 +70,57 @@ an active stream returns busy, preventing a packet-layout change mid-stream.
 Error codes are: 1 bad frame, 2 unknown type, 3 bad index, 4 bad length,
 5 read-only, 6 bad value and 7 busy.
 
+### Broker extension
+
+`helic-broker` presents the same protocol-v3 control and stream services on
+the loopback interface and forwards the message types above to one MCU. It
+accepts multiple TCP clients. Stream configuration and running state are
+global: any client can configure, start, attach to, or stop the stream. Each
+client's UDP endpoint and quiet flag are connection-local. `StreamStart` on an
+active stream attaches that client without restarting the MCU stream.
+
+The broker consumes these additional request types instead of forwarding
+them:
+
+| type | name | request payload | response payload |
+|---|---|---|---|
+| 128 | BrokerInfo | empty | broker information below |
+| 129 | QuietStreamStart | client UDP `port u16` | empty |
+| 130 | GetRecent | `records u32` | echoed `records u32`, followed by UDP replay |
+| 131 | SetClientQuiet | `quiet u8` (0 or 1) | empty |
+
+`QuietStreamStart` has the same global start/attach behaviour as
+`StreamStart`, but sets the requesting client quiet. `SetClientQuiet` changes
+only the requesting client. A quiet client receives no live datagrams.
+`GetRecent` is valid only for an attached, quiet client and sends exactly the
+requested number of records, using the active stream's ordinary packet
+format. The client remains quiet. History is shared, may predate the client's
+connection, and is discarded when the stream stops or completes.
+
+BrokerInfo extension version 1 is:
+
+| offset | size | field |
+|---|---|---|
+| 0 | 1 | extension version = 1 |
+| 1 | 1 | state flags |
+| 2 | 2 | capability flags |
+| 4 | 4 | configured history capacity, ms |
+| 8 | 4 | currently available history records |
+| 12 | 2 | active/configured decimation (1 if unconfigured) |
+| 14 | 4 | active/configured count |
+| 18 | 2 | connected TCP clients |
+| 20 | 1 | selected source count `n` |
+| 21 | n | selected source ids |
+
+State bits are: bit 0 upstream connected, bit 1 configured, bit 2 running,
+bit 3 this client attached, bit 4 this client quiet, and bit 5 a staged table
+transaction is owned. Capability bits 0–3 respectively advertise quiet
+start, recent replay, quietness changes, and shared configuration.
+
+Broker-only error codes are: 8 client not attached, 9 client not quiet,
+10 no active stream, and 11 insufficient history. A direct MCU does not
+implement types 128–131 and returns the ordinary unknown-type error.
+
 ### Parameter discovery
 
 Hosts read `n_params` from `Status`, then request `GetParams` starting at index
@@ -191,7 +242,7 @@ that will be supplied in StreamStart.
 | offset | size | field |
 |---|---|---|
 | 0 | 2 | magic = `0x4C48` |
-| 2 | 1 | version = 2 |
+| 2 | 1 | version = 3 |
 | 3 | 1 | values per record |
 | 4 | 4 | packet sequence number |
 | 8 | 4 | first sample index |

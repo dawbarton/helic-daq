@@ -77,6 +77,7 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | `helic-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
+| `helic-broker/` | Loopback multi-client broker, recent history and HDF5 recording | host |
 | `firmware/common/` | Experiment-independent firmware support | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |

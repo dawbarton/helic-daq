@@ -8,6 +8,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod beacon;
+pub mod broker;
 pub mod crc;
 pub mod frame;
 pub mod payload;
