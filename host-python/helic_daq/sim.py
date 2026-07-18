@@ -73,6 +73,8 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("t_rest_max", "I", 1, False, 0),
         SimParam("diag_reset", "I", 1, True, 0),
         SimParam("cmd_backlog_max", "I", 1, False, 0),
+        SimParam("arm", "I", 1, True, 0),
+        SimParam("safety", "I", 1, False, 0),
         SimParam("laser", "f", 1, False, 25.0),
         SimParam("laser_frames_received", "I", 1, False, 0),
         SimParam("laser_uart_errors", "I", 1, False, 0),
@@ -194,6 +196,8 @@ class Simulator:
             with self._lock:
                 self.stream_target = None
                 self._stream_generation += 1
+                self._by_name["arm"].value = 0
+                self._by_name["safety"].value &= ~1
 
     def _serve_connection(self, connection: socket.socket, peer: str) -> None:
         buf = b""
@@ -297,7 +301,7 @@ class Simulator:
                 value < 0.0 or value >= 4.0 or not value.is_integer()
             ):
                 return self._error(6, msg_type)
-            queues_command = param.name != "diag_reset" and not (
+            queues_command = param.name not in ("diag_reset", "arm") and not (
                 param.name in ("ctrl_reset", "table_trigger") and value == 0
             )
             with self._lock:
@@ -322,7 +326,13 @@ class Simulator:
                         "laser_sync_errors",
                     ):
                         self._by_name[name].value = 0
+                    self._by_name["safety"].value &= 0b0011
                     param.value = 0
+                if param.name == "arm":
+                    param.value = int(value != 0)
+                    self._by_name["safety"].value = (
+                        self._by_name["safety"].value & ~1
+                    ) | param.value
                 if param.name == "table_trigger" and value:
                     self._table_trigger_time = (
                         self._by_name["ticks"].value / self._by_name["sample_freq"].value

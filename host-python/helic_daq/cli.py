@@ -11,7 +11,7 @@ import os
 import sys
 
 from . import protocol
-from .device import Device, DeviceError
+from .device import Device, DeviceError, Parameter
 from .discovery import find_devices
 
 
@@ -44,15 +44,49 @@ def cmd_get(args) -> None:
             print(f"{name} = {dev.get(name)}")
 
 
-def _parse_values(text: str):
-    parts = [float(v) for v in text.replace(",", " ").split()]
-    return parts[0] if len(parts) == 1 else parts
+def _parse_values(text: str, parameter: Parameter):
+    if parameter.type_code == "c":
+        return text
+
+    tokens = text.replace(",", " ").split()
+    if len(tokens) != parameter.count:
+        raise DeviceError(
+            f"parameter {parameter.name!r} expects {parameter.count} value(s), "
+            f"got {len(tokens)}"
+        )
+
+    if parameter.type_code == "f":
+        converter = float
+        kind = "floating-point"
+    else:
+        converter = int
+        kind = "integer"
+    try:
+        values = [converter(token) for token in tokens]
+    except ValueError as error:
+        raise DeviceError(
+            f"invalid {kind} value for parameter {parameter.name!r}: {error}"
+        ) from None
+    return values[0] if parameter.count == 1 else values
 
 
 def cmd_set(args) -> None:
     with _connect(args) as dev:
-        dev.set(args.name, _parse_values(args.value))
+        parameter = dev.param(args.name)
+        value = _parse_values(args.value, parameter)
+        if parameter.name == "arm" and value != 0:
+            raise DeviceError(
+                "the one-shot CLI cannot keep the output armed; use "
+                "Device.set('arm', 1) in a persistent Python session"
+            )
+        dev.set(parameter.index, value)
         print(f"{args.name} = {dev.get(args.name)}")
+
+
+def cmd_diag_reset(args) -> None:
+    with _connect(args) as dev:
+        dev.set("diag_reset", 1)
+    print("diagnostics reset")
 
 
 def cmd_status(args) -> None:
@@ -183,6 +217,10 @@ def main(argv=None) -> int:
     p.add_argument("name")
     p.add_argument("value", help='value, or comma/space-separated list for arrays')
     p.set_defaults(fn=cmd_set)
+
+    sub.add_parser("diag-reset", help="reset timing and event diagnostics").set_defaults(
+        fn=cmd_diag_reset
+    )
 
     sub.add_parser("status", help="device status").set_defaults(fn=cmd_status)
     p = sub.add_parser("find", help="discover HELIC-DAQ devices")

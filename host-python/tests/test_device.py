@@ -20,6 +20,8 @@ class TestDevice(unittest.TestCase):
         names = [p.name for p in self.dev.params]
         self.assertEqual(names[:4], ["firmware", "experiment", "sample_freq", "ticks"])
         self.assertIn("table", names)
+        self.assertIn("arm", names)
+        self.assertIn("safety", names)
         self.assertIn("rig_laser_range", names)
         self.assertIn("laser_frames_received", names)
         coeffs = self.dev.param("forcing_coeffs")
@@ -69,6 +71,12 @@ class TestDevice(unittest.TestCase):
     def test_read_only_rejected_locally(self):
         with self.assertRaises(DeviceError):
             self.dev.set("ticks", 0)
+
+    def test_invalid_value_type_is_reported_as_device_error(self):
+        with self.assertRaisesRegex(DeviceError, "invalid value.*diag_reset"):
+            self.dev.set("diag_reset", 1.0)
+        with self.assertRaisesRegex(DeviceError, "invalid value.*diag_reset"):
+            self.dev.set("diag_reset", -1)
 
     def test_wrong_array_length_rejected(self):
         with self.assertRaises(DeviceError):

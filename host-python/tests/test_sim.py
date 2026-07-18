@@ -10,11 +10,35 @@ from pathlib import Path
 
 import numpy as np
 
-from helic_daq import Device, protocol
+from helic_daq import Device, DeviceError, protocol
 from helic_daq import cli
+from helic_daq.device import Parameter
 from helic_daq.discovery import find_devices
 from helic_daq.protocol import MsgType
 from helic_daq.sim import COMMAND_EPOCH_MASK, Simulator
+
+
+class TestCliValueParsing(unittest.TestCase):
+    def test_parser_uses_discovered_wire_type(self):
+        for type_code in "BbHhIi":
+            parameter = Parameter(0, "integer", type_code, 1, True)
+            self.assertEqual(cli._parse_values("1", parameter), 1)
+        parameter = Parameter(0, "signed", "i", 1, True)
+        self.assertEqual(cli._parse_values("-1", parameter), -1)
+        parameter = Parameter(0, "float", "f", 1, True)
+        self.assertEqual(cli._parse_values("1", parameter), 1.0)
+        parameter = Parameter(0, "string", "c", 16, True)
+        self.assertEqual(cli._parse_values("hello world", parameter), "hello world")
+
+    def test_parser_handles_arrays_and_reports_bad_input(self):
+        parameter = Parameter(0, "values", "f", 3, True)
+        self.assertEqual(cli._parse_values("1, 2 3", parameter), [1.0, 2.0, 3.0])
+        with self.assertRaisesRegex(DeviceError, "expects 3 value"):
+            cli._parse_values("1,2", parameter)
+
+        parameter = Parameter(0, "mode", "I", 1, True)
+        with self.assertRaisesRegex(DeviceError, "invalid integer value"):
+            cli._parse_values("1.5", parameter)
 
 
 class TestSimulator(unittest.TestCase):
@@ -100,7 +124,7 @@ class TestSimulator(unittest.TestCase):
     def test_timing_diagnostics_match_firmware_registry(self):
         names = [param.name for param in self.dev.params]
         self.assertEqual(
-            names[23:30],
+            names[23:32],
             [
                 "wake_phase_min",
                 "wake_phase_max",
@@ -109,6 +133,8 @@ class TestSimulator(unittest.TestCase):
                 "t_rest_max",
                 "diag_reset",
                 "cmd_backlog_max",
+                "arm",
+                "safety",
             ],
         )
         self.sim._by_name["loop_time_max"].value = 42
@@ -124,6 +150,18 @@ class TestSimulator(unittest.TestCase):
             ),
             [0, 0, 0, 123],
         )
+
+    def test_arm_is_direct_and_disconnect_disarms(self):
+        initial_epoch = self.sim._cmd_epoch
+        self.dev.set("arm", 1)
+        self.assertEqual(self.dev.get("arm"), 1)
+        self.assertEqual(self.dev.get("safety") & 1, 1)
+        self.assertEqual(self.sim._cmd_epoch, initial_epoch)
+
+        self.dev.close()
+        self.dev = Device("127.0.0.1", self.sim.port)
+        self.assertEqual(self.dev.get("arm"), 0)
+        self.assertEqual(self.dev.get("safety") & 1, 0)
 
     def test_beacon_response(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
@@ -200,6 +238,101 @@ class TestSimulator(unittest.TestCase):
         self.assertIn("table", shown)
         self.assertIn("<block parameter>", shown)
         self.assertIn("rig_out_channel", shown)
+
+    def test_cli_set_uses_discovered_integer_and_float_types(self):
+        self.dev.close()
+        for name, value in (("table_mode", "2"), ("freq", "17.5")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = cli.main(
+                    [
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        str(self.sim.port),
+                        "set",
+                        name,
+                        value,
+                    ]
+                )
+            self.assertEqual(result, 0)
+        self.dev = Device("127.0.0.1", self.sim.port)
+        self.assertEqual(self.dev.get("table_mode"), 2)
+        self.assertEqual(self.dev.get("freq"), 17.5)
+
+    def test_cli_bad_integer_is_a_concise_error(self):
+        self.dev.close()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result = cli.main(
+                [
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.sim.port),
+                    "set",
+                    "table_mode",
+                    "1.5",
+                ]
+            )
+        self.dev = Device("127.0.0.1", self.sim.port)
+        self.assertEqual(result, 1)
+        self.assertIn("invalid integer value", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_cli_diag_reset_command(self):
+        self.sim._by_name["loop_time_max"].value = 42
+        self.dev.close()
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = cli.main(
+                [
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.sim.port),
+                    "set",
+                    "diag_reset",
+                    "1",
+                ]
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(self.sim._by_name["loop_time_max"].value, 0)
+
+        self.sim._by_name["loop_time_max"].value = 42
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = cli.main(
+                [
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.sim.port),
+                    "diag-reset",
+                ]
+            )
+        self.dev = Device("127.0.0.1", self.sim.port)
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue().strip(), "diagnostics reset")
+        self.assertEqual(self.dev.get("loop_time_max"), 0)
+
+    def test_cli_refuses_one_shot_arm(self):
+        self.dev.close()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result = cli.main(
+                [
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.sim.port),
+                    "set",
+                    "arm",
+                    "1",
+                ]
+            )
+        self.dev = Device("127.0.0.1", self.sim.port)
+        self.assertEqual(result, 1)
+        self.assertIn("persistent Python session", stderr.getvalue())
+        self.assertEqual(self.dev.get("arm"), 0)
 
     def test_cli_upload(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -274,12 +274,18 @@ class Device:
         if p.type_code == "c":
             raw = str(value).encode()
             return raw[: p.count].ljust(p.count, b"\0")
-        if p.count == 1:
-            return struct.pack(f"<{p.type_code}", value)
-        values = list(value)
-        if len(values) != p.count:
-            raise DeviceError(f"{p.name!r} expects {p.count} values, got {len(values)}")
-        return struct.pack(f"<{p.count}{p.type_code}", *values)
+        try:
+            if p.count == 1:
+                return struct.pack(f"<{p.type_code}", value)
+            values = list(value)
+            if len(values) != p.count:
+                raise DeviceError(f"{p.name!r} expects {p.count} values, got {len(values)}")
+            return struct.pack(f"<{p.count}{p.type_code}", *values)
+        except (OverflowError, struct.error, TypeError) as error:
+            type_name = p.type_code if p.count == 1 else f"{p.type_code}x{p.count}"
+            raise DeviceError(
+                f"invalid value for parameter {p.name!r} ({type_name}): {error}"
+            ) from None
 
     # -- status and streaming ----------------------------------------------
 

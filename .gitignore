@@ -3,5 +3,6 @@ target/
 __pycache__/
 *.egg-info/
 .venv/
+uv.lock
 /host-julia/Manifest.toml
 .claude/

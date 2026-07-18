@@ -178,6 +178,7 @@ helic-daq sine 10 1.0                # output a 10 Hz, 1 V sine (smoke test)
 helic-daq get laser loop_time_max
 helic-daq set freq 17.5
 helic-daq set ctrl_kp 0.8            # PID gain (when the PID build is flashed)
+helic-daq diag-reset                 # clear timing and event diagnostics
 helic-daq sources
 helic-daq capture --sources adc0,out --seconds 2 -o capture.npz
 helic-daq capture --sources adc0,target,out --seconds 1 --plot
@@ -380,10 +381,10 @@ budgets.
   consecutive distance frames. This may be non-zero when firmware attaches to
   a sensor that was already streaming; it is separate from steady-state loss.
 
-Writing non-zero to `diag_reset` clears the laser fault counters together with
-the timing/event diagnostics (including the safety clamp/quiet tick counts). It
-does not reset `laser_frames_received`, so take before/after snapshots when
-checking the received frame rate.
+`helic-daq diag-reset` (equivalent to `helic-daq set diag_reset 1`) clears the
+laser fault counters together with the timing/event diagnostics, including the
+safety clamp/quiet tick counts. It does not reset `laser_frames_received`, so
+take before/after snapshots when checking the received frame rate.
 
 If something looks wrong, the same numbers appear once a second in the
 debug-probe log, along with connection events (and, for a safety-gated
@@ -397,8 +398,9 @@ output safety gate. Two parameters expose and control it:
 - `arm` (writable): write `1` to arm the output, `0` to disarm. The output is
   **disarmed after every flash/reset** and is disarmed automatically when the
   control connection drops, so driving the actuator needs a persistent host
-  session that arms once and holds the connection — a one-shot CLI `set arm 1`
-  disarms again as soon as it disconnects. Reading `arm` returns the armed bit.
+  session that arms once and holds the connection. The one-shot CLI rejects
+  non-zero `arm` writes because it cannot keep the connection alive. Reading
+  `arm` returns the armed bit.
 - `safety` (read-only): a bitfield — bit0 armed, bit1 latched trip, bit2 clamped
   since last `diag_reset`, bit3 quieted since last `diag_reset`. A latched trip
   (the gate detected a fault such as an out-of-range or stalled sensor) holds the
@@ -407,6 +409,14 @@ output safety gate. Two parameters expose and control it:
 The exact per-experiment limits (amplitude window, fault conditions) live in the
 experiment's `config.rs`; the streamed `out` source is the applied value after
 the gate.
+
+Arm from the same Python session that performs the experiment:
+
+```python
+with Device("192.168.1.235") as dev:
+    dev.set("arm", 1)
+    # Configure and run the experiment while this connection remains open.
+```
 
 **If `capture` times out with no data** while `status`/`get`/`set` work, check
 whether a host firewall is blocking inbound UDP on the stream port. The host
