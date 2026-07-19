@@ -1,6 +1,6 @@
 //! Async loopback servers and the single shared upstream MCU session.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -279,15 +279,17 @@ impl App {
     }
 
     async fn force_upstream_disconnect(&self, reason: &str) {
-        let generation = self
-            .upstream
+        if let Some(generation) = self.current_generation().await {
+            self.mark_upstream_failed(generation, reason).await;
+        }
+    }
+
+    async fn current_generation(&self) -> Option<u64> {
+        self.upstream
             .lock()
             .await
             .as_ref()
-            .map(|upstream| upstream.generation);
-        if let Some(generation) = generation {
-            self.mark_upstream_failed(generation, reason).await;
-        }
+            .map(|upstream| upstream.generation)
     }
 
     async fn current_udp(&self) -> Option<(Arc<UdpSocket>, Ipv4Addr, u64)> {
@@ -399,8 +401,33 @@ impl App {
         }
     }
 
+    /// Undo the shared-state effects of a stream start that did not reach a
+    /// running MCU stream. Safe to call after `mark_upstream_failed` has
+    /// already cleaned up: the state reset is idempotent and the recording is
+    /// only closed when it was still open here.
+    async fn rollback_failed_start(&self) {
+        let was_running = {
+            let mut state = self.state.lock().await;
+            let was_running = state.running;
+            state.running = false;
+            state.received_records = 0;
+            state.history.clear();
+            state.detach_all();
+            was_running
+        };
+        if was_running {
+            let _ = self.stop_recording(CloseReason::StartRejected).await;
+        }
+    }
+
     async fn process_packet(&self, wire: Arc<[u8]>) -> Result<()> {
-        let packet = Packet::decode(wire, utc_now_ns())?;
+        let packet = match Packet::decode(wire, utc_now_ns()) {
+            Ok(packet) => packet,
+            Err(error) => {
+                tracing::warn!(%error, "dropped malformed upstream datagram");
+                return Ok(());
+            }
+        };
         let (targets, complete) = {
             let mut state = self.state.lock().await;
             let Some(configuration) = state.configuration.clone() else {
@@ -412,7 +439,14 @@ impl App {
             if packet.header.n_sources as usize != configuration.sources.len()
                 || packet.header.decimation != configuration.decimation
             {
-                bail!("MCU stream layout changed inside a shared session");
+                // The upstream UDP socket outlives individual stream sessions,
+                // so a late packet from a previous configuration can arrive
+                // here; it must not reach clients or recording.
+                tracing::warn!(
+                    sequence = packet.header.seq,
+                    "dropped stream packet that does not match the shared session layout"
+                );
+                return Ok(());
             }
             self.record_packet(packet.clone())?;
             state.history.push(packet.clone());
@@ -729,6 +763,9 @@ async fn discover_parameters(
             let name = std::str::from_utf8(&response.payload[offset..end])?.to_string();
             let type_code = response.payload[end + 1];
             let count = u16::from_le_bytes([response.payload[end + 2], response.payload[end + 3]]);
+            if response.payload[end + 4] > 1 {
+                bail!("invalid parameter writable flag");
+            }
             let definition = ParameterDefinition {
                 index,
                 name,
@@ -746,6 +783,13 @@ async fn discover_parameters(
             bail!("GetParams definition count does not match page range");
         }
         start = next;
+    }
+    let mut seen = HashSet::with_capacity(result.len());
+    if result
+        .iter()
+        .any(|definition| !seen.insert(definition.name.as_str()))
+    {
+        bail!("parameter discovery contains duplicate names");
     }
     Ok(result)
 }
@@ -912,7 +956,14 @@ async fn discovery_server(app: Arc<App>, socket: Arc<UdpSocket>) {
             control_port: app.config.control_port,
             mac: metadata.mac,
             experiment: fixed_identity(&metadata.experiment),
-            firmware: fixed_identity(concat!("helic-broker ", env!("CARGO_PKG_VERSION"))),
+            // The beacon identity field is 16 bytes; major.minor fits where
+            // the full patch version would be silently truncated.
+            firmware: fixed_identity(concat!(
+                "helic-broker ",
+                env!("CARGO_PKG_VERSION_MAJOR"),
+                ".",
+                env!("CARGO_PKG_VERSION_MINOR")
+            )),
         };
         let mut encoded = [0; RESPONSE_LEN];
         response.encode(&mut encoded);
@@ -1013,8 +1064,14 @@ async fn stream_setup(app: &App, payload: &[u8]) -> Result<Handled> {
             ));
         }
     };
+    let generation = app.current_generation().await;
     let response = app.request(MsgType::StreamSetup as u8, payload).await?;
-    if response.message_type == MsgType::StreamSetup as u8 {
+    // Skip the write-back if the upstream connection changed underneath the
+    // request: a concurrent failure has already cleared the configuration and
+    // the reconnected MCU no longer holds this setup.
+    if response.message_type == MsgType::StreamSetup as u8
+        && app.current_generation().await == generation
+    {
         app.state.lock().await.configuration = Some(configuration);
     }
     Ok(Handled::response(response))
@@ -1041,16 +1098,17 @@ async fn start_client(
     }
     let target = SocketAddr::new(peer.ip(), port);
     let _operation = app.stream_operations.lock().await;
-    let running = app.state.lock().await.running;
-    if running {
+    {
         let mut state = app.state.lock().await;
-        let client = state
-            .clients
-            .get_mut(&client_id)
-            .context("client state disappeared")?;
-        client.endpoint = Some(target);
-        client.quiet = quiet;
-        return Ok(Handled::empty(request_type));
+        if state.running {
+            let client = state
+                .clients
+                .get_mut(&client_id)
+                .context("client state disappeared")?;
+            client.endpoint = Some(target);
+            client.quiet = quiet;
+            return Ok(Handled::empty(request_type));
+        }
     }
 
     let Some(configuration) = app.state.lock().await.configuration.clone() else {
@@ -1100,20 +1158,24 @@ async fn start_client(
         client.endpoint = Some(target);
         client.quiet = quiet;
     }
-    let (udp, peer_ip, _) = app.current_udp().await.context("MCU is not connected")?;
-    udp.send_to(PRIMER, (peer_ip, app.config.mcu_stream_port))
-        .await?;
-    let upstream_port = udp.local_addr()?.port();
-    let response = app
-        .request(MsgType::StreamStart as u8, &upstream_port.to_le_bytes())
-        .await?;
+    let started = async {
+        let (udp, peer_ip, _) = app.current_udp().await.context("MCU is not connected")?;
+        udp.send_to(PRIMER, (peer_ip, app.config.mcu_stream_port))
+            .await?;
+        let upstream_port = udp.local_addr()?.port();
+        app.request(MsgType::StreamStart as u8, &upstream_port.to_le_bytes())
+            .await
+    }
+    .await;
+    let response = match started {
+        Ok(response) => response,
+        Err(error) => {
+            app.rollback_failed_start().await;
+            return Err(error);
+        }
+    };
     if response.message_type != MsgType::StreamStart as u8 {
-        let mut state = app.state.lock().await;
-        state.running = false;
-        state.history.clear();
-        state.detach_all();
-        drop(state);
-        let _ = app.stop_recording(CloseReason::UpstreamLost).await;
+        app.rollback_failed_start().await;
         return Ok(Handled {
             response_type: response.message_type,
             payload: response.payload,

@@ -2,8 +2,8 @@
 
 `helic-broker` is the optional long-running host service for HELIC-DAQ. It
 connects to one MCU, exposes the same control/discovery/stream interfaces on
-loopback to multiple local clients, and records every active stream to HDF5.
-It requires no firmware changes.
+loopback to multiple local clients, and optionally records every active
+stream to HDF5. It requires no firmware changes.
 
 ## Quick start
 

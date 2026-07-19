@@ -75,7 +75,9 @@ configuration and history, closes an active file as an incomplete session,
 then starts reconnection attempts. Clients reconnect, rediscover state, and
 configure a new stream in the normal way. When storage is enabled, a writer
 failure is fatal because continuing without the promised recording would be
-misleading. `Ctrl-C` requests a graceful stream stop, optional recording
+misleading. Malformed upstream datagrams, and late packets whose layout
+belongs to a previous stream configuration, are logged and dropped rather than
+treated as fatal. `Ctrl-C` requests a graceful stream stop, optional recording
 finalisation, and disarm.
 
 ## Host APIs
@@ -162,9 +164,10 @@ decimation, configured count, and start time. The datasets are:
 | `/session_complete` | u8 scalar | 1 on the final clean session segment |
 
 `close_reason` values are 1 segment limit, 2 explicit `StreamStop`, 3 finite
-count complete, 4 upstream loss, and 6 broker shutdown. Value 5 is reserved
-for storage failure; a writer failure normally leaves the `.partial` file
-unfinalised instead.
+count complete, 4 upstream loss, 6 broker shutdown, and 7 a stream start that
+the MCU rejected or that failed locally before the MCU was started. Value 5 is
+reserved for storage failure; a writer failure normally leaves the `.partial`
+file unfinalised instead.
 
 The output is standard HDF5 and is readable with Python `h5py`, Julia
 `HDF5.jl`, and MATLAB `h5read`/`h5info`. `.partial` files left by process or

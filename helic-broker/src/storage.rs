@@ -42,8 +42,11 @@ pub enum CloseReason {
     StreamStop = 2,
     CountComplete = 3,
     UpstreamLost = 4,
+    /// Reserved for readers: a writer failure leaves the `.partial` file
+    /// unfinalised instead of writing this value.
     StorageError = 5,
     BrokerShutdown = 6,
+    StartRejected = 7,
 }
 
 impl CloseReason {
