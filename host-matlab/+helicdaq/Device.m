@@ -315,16 +315,6 @@ classdef Device < handle
                 error('helicdaq:CaptureLength', ...
                     'Specify exactly one of Samples or Seconds.');
             end
-            information = obj.brokerInfo();
-            if isempty(options.Samples)
-                currentStatus = obj.status();
-                nRecords = max(1, floor(options.Seconds * ...
-                    double(currentStatus.SampleRate) / double(information.Decimation)));
-            else
-                nRecords = options.Samples;
-            end
-            validateattributes(nRecords, {'numeric'}, ...
-                {'scalar', 'integer', 'positive', '<=', double(intmax('uint32'))});
             if isempty(options.Receiver)
                 receiver = helicdaq.StreamReceiver('Timeout', options.Timeout, ...
                     'Port', options.Port);
@@ -336,6 +326,19 @@ classdef Device < handle
                 receiver.prime(obj.Host, helicdaq.Protocol.STREAM_PORT);
             end
             obj.startStreamQuiet(receiver.Port);
+            % Snapshot the shared configuration only after attaching: a stream
+            % restart before then could mislabel the replay, whereas once
+            % attached a restart detaches this client and GetRecent fails.
+            information = obj.brokerInfo();
+            if isempty(options.Samples)
+                currentStatus = obj.status();
+                nRecords = max(1, floor(options.Seconds * ...
+                    double(currentStatus.SampleRate) / double(information.Decimation)));
+            else
+                nRecords = options.Samples;
+            end
+            validateattributes(nRecords, {'numeric'}, ...
+                {'scalar', 'integer', 'positive', '<=', double(intmax('uint32'))});
             request = helicdaq.Protocol.packLE(uint32(nRecords), 'uint32');
             response = obj.request(helicdaq.Protocol.GET_RECENT, request);
             if ~isequal(response, request)

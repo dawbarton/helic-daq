@@ -430,19 +430,22 @@ class Device:
         """
         if (samples is None) == (seconds is None):
             raise ValueError("specify exactly one of samples / seconds")
-        information = self.broker_info()
-        if samples is None:
-            if seconds <= 0:
-                raise ValueError("seconds must be positive")
-            samples = max(
-                1,
-                int(seconds * self.status()["sample_rate"] / information["decimation"]),
-            )
-        if not 1 <= samples <= 0xFFFFFFFF:
-            raise ValueError("samples must fit a positive uint32")
+        if seconds is not None and seconds <= 0:
+            raise ValueError("seconds must be positive")
         with StreamReceiver(port=port) as rx:
             rx.prime(self.host)
             self.stream_start_quiet(rx.port)
+            # Snapshot the shared configuration only after attaching: a stream
+            # restart before then could mislabel the replay, whereas once
+            # attached a restart detaches this client and GetRecent fails.
+            information = self.broker_info()
+            if samples is None:
+                samples = max(
+                    1,
+                    int(seconds * self.status()["sample_rate"] / information["decimation"]),
+                )
+            if not 1 <= samples <= 0xFFFFFFFF:
+                raise ValueError("samples must fit a positive uint32")
             response = self._request(MsgType.GET_RECENT, struct.pack("<I", samples))
             if response != struct.pack("<I", samples):
                 raise ProtocolError("broker recent-capture response is inconsistent")

@@ -450,20 +450,25 @@ function capture_recent(
     )
     isnothing(samples) == isnothing(seconds) &&
         throw(ArgumentError("specify exactly one of samples or seconds"))
-    information = broker_info(device)
-    if isnothing(samples)
+    if !isnothing(seconds)
         seconds > 0 || throw(ArgumentError("seconds must be positive"))
-        samples = max(
-            1,
-            floor(Int, seconds * status(device).sample_rate / information.decimation),
-        )
     end
-    1 <= samples <= typemax(UInt32) ||
-        throw(ArgumentError("samples must fit a positive UInt32"))
     receiver = StreamReceiver(; port, timeout)
     try
         prime!(receiver, device.host)
         start_stream_quiet!(device, receiver.port)
+        # Snapshot the shared configuration only after attaching: a stream
+        # restart before then could mislabel the replay, whereas once attached
+        # a restart detaches this client and GetRecent fails.
+        information = broker_info(device)
+        if isnothing(samples)
+            samples = max(
+                1,
+                floor(Int, seconds * status(device).sample_rate / information.decimation),
+            )
+        end
+        1 <= samples <= typemax(UInt32) ||
+            throw(ArgumentError("samples must fit a positive UInt32"))
         payload = IOBuffer()
         Protocol._write_le(payload, UInt32(samples))
         request = take!(payload)
