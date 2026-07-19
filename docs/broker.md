@@ -10,10 +10,21 @@ not required.
 Build and run from the repository root:
 
 ```sh
+# Broker only: no files or output directory are created.
+cargo run --release -p helic-broker -- \
+  --mcu-host 192.168.1.235
+
+# Enable HDF5 recording explicitly.
 cargo run --release -p helic-broker -- \
   --mcu-host 192.168.1.235 \
   --output-dir /data/helic
 ```
+
+The process prints `Captures are not being saved.` to standard output when
+`--output-dir` is absent, or `Captures are being saved to <directory>.` when it
+is present. Without an output directory, no storage worker, directory, partial
+file, or completed file is created. All control, streaming, quietness, history,
+and recent-replay behaviour remains active.
 
 The downstream control, stream, and discovery services bind to
 `127.0.0.1:2350`, `127.0.0.1:2351`, and `127.0.0.1:2352`. They are never
@@ -26,7 +37,7 @@ exposed on other interfaces. Use `--control-port`, `--stream-port`, and
 threshold and accepts bytes or `KiB`/`MiB`/`GiB` (decimal units are also
 accepted). History evicts whole packets, so retention can differ from the
 duration target by one packet; BrokerInfo reports the precise available record
-count. The output directory is created at start-up.
+count. A specified output directory is created at start-up.
 
 The loopback discovery beacon keeps the MCU experiment identity and advertises
 the broker firmware identity and downstream control port. It uses the MCU MAC
@@ -38,22 +49,23 @@ until its upstream connection is ready.
 
 - `StreamSetup` sets one global source list, decimation, and count. It returns
   busy while the global stream is active.
-- The first `StreamStart` starts the MCU and recording session. A later
-  `StreamStart` only attaches that client to the existing stream.
+- The first `StreamStart` starts the MCU and, when enabled, its recording
+  session. A later `StreamStart` only attaches that client to the existing
+  stream.
 - Any client can issue `StreamStop`; this stops the global stream, closes its
-  recording, clears history, and detaches every client.
+  recording when enabled, clears history, and detaches every client.
 - Every client has its own UDP endpoint and quiet flag. Quiet clients are
-  still attached, but receive no live packets. Attachment and quietness never
-  affect recording.
+  still attached, but receive no live packets. When recording is enabled,
+  attachment and quietness never affect it.
 - A quiet client can request an exact number of recent records. The history
   is global and may contain data from before that client connected. A request
   larger than the retained history returns an error rather than partial data.
 - A finite non-zero stream count has its firmware meaning: the stream and
-  recording complete after that many decimated records. Count zero is
-  continuous.
-- If all clients disconnect, the stream and recording continue, but the
-  broker writes `arm = 0` when that parameter exists. A new client may attach
-  later.
+  any enabled recording complete after that many decimated records. Count zero
+  is continuous.
+- If all clients disconnect, the stream continues, as does optional
+  recording, but the broker writes `arm = 0` when that parameter exists. A new
+  client may attach later.
 - `SetBlock`/`Commit` ownership is temporary and connection-local, preventing
   two clients from interleaving one staged table transaction. No client is
   otherwise privileged.
@@ -61,9 +73,10 @@ until its upstream connection is ready.
 Loss of the MCU connection closes all client connections, clears the shared
 configuration and history, closes an active file as an incomplete session,
 then starts reconnection attempts. Clients reconnect, rediscover state, and
-configure a new stream in the normal way. A storage failure is fatal, because
-continuing without the promised recording would be misleading. `Ctrl-C`
-requests a graceful stream stop, recording finalisation, and disarm.
+configure a new stream in the normal way. When storage is enabled, a writer
+failure is fatal because continuing without the promised recording would be
+misleading. `Ctrl-C` requests a graceful stream stop, optional recording
+finalisation, and disarm.
 
 ## Host APIs
 
@@ -120,11 +133,12 @@ count, and the calling client's attachment and quiet flags.
 
 ## HDF5 recording layout
 
-One global stream start creates one session. Filenames contain the UTC start
-timestamp, experiment name, and four-digit segment number. An open segment has
-the suffix `.h5.partial`; a cleanly closed segment is renamed to `.h5`.
-Size is checked at the one-second flush boundary, so a segment can exceed the
-configured soft threshold by approximately one second of data.
+This section applies only when `--output-dir` is supplied. One global stream
+start creates one session. Filenames contain the UTC start timestamp,
+experiment name, and four-digit segment number. An open segment has the suffix
+`.h5.partial`; a cleanly closed segment is renamed to `.h5`. Size is checked at
+the one-second flush boundary, so a segment can exceed the configured soft
+threshold by approximately one second of data.
 
 Root attributes describe the format, session UUID, segment index, cumulative
 session record offset, experiment and firmware identities, sample rate,
@@ -167,7 +181,8 @@ The implementation is checked at four levels:
    force a size rollover to verify linked segment metadata.
 3. A loopback system test uses a protocol peer and two real TCP/UDP clients to
    verify ordinary forwarding, quiet attachment, exact replay, quietness
-   changes, global stop, disarm-on-final-disconnect, and recorded data.
+   changes, global stop, disarm-on-final-disconnect, recorded data when enabled,
+   and an empty output directory when disabled.
 4. The existing Rust, Python, Julia, and MATLAB suites guard direct-MCU
    behaviour and cross-language codec conventions. No firmware or hardware
    regression run is required because the firmware and real-time path are

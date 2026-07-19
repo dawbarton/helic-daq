@@ -77,7 +77,7 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | `helic-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
-| `helic-broker/` | Loopback multi-client broker, recent history and HDF5 recording | host |
+| `helic-broker/` | Loopback multi-client broker, recent history and optional HDF5 recording | host |
 | `firmware/common/` | Experiment-independent firmware support | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |
@@ -102,7 +102,7 @@ Python / Julia / MATLAB clients (loopback TCP + per-client UDP)
                          │
                   helic-broker/server
                     │      │       │
-         shared stream   history   bounded storage queue
+         shared stream   history   optional bounded storage queue
              state         │              │
                     one upstream      blocking HDF5 worker
                     TCP + UDP              │
@@ -115,22 +115,24 @@ listeners, connection epochs, global stream state, and per-client endpoint and
 quiet flags. `history.rs` validates stream datagrams and retains a bounded
 packet deque; replay may trim only the oldest returned packet so it still
 uses the normal stream format. `storage.rs` moves HDF5 calls off the async
-runtime through a bounded queue. Queue exhaustion or a writer failure is
-fatal rather than allowing an unrecorded stream to continue silently.
-`config.rs` parses upstream and loopback service ports and validates
-duration/size options and the output directory. Broker extension codecs remain
-in the shared `no_std` `helic-proto::broker` module; the firmware deliberately
-does not recognise their message types.
+runtime through a bounded queue. It is not constructed when `--output-dir` is
+absent, so the no-recording mode performs no filesystem writes. When enabled,
+queue exhaustion or a writer failure is fatal rather than allowing an
+unrecorded stream to continue silently.
+`config.rs` parses upstream and loopback service ports, validates duration and
+size options, and creates the output directory when one is configured. Broker
+extension codecs remain in the shared `no_std` `helic-proto::broker` module;
+the firmware deliberately does not recognise their message types.
 
-Stream configuration, start, stop, history, and recording are global. UDP
-attachment and quietness are per client. Stream operations are serialised to
-prevent two clients racing an upstream start or stop. A five-second temporary
-owner prevents different clients from interleaving `SetBlock` and `Commit`,
-without giving any connection general priority. Losing the MCU clears global
-configuration, closes all downstream connections through a generation change,
-finalises an active recording as incomplete, and reconnects. Losing the final
-downstream client does not stop recording, but does issue `arm = 0` when the
-parameter exists.
+Stream configuration, start, stop, and history are global, as is recording when
+enabled. UDP attachment and quietness are per client. Stream operations are
+serialised to prevent two clients racing an upstream start or stop. A
+five-second temporary owner prevents different clients from interleaving
+`SetBlock` and `Commit`, without giving any connection general priority. Losing
+the MCU clears global configuration, closes all downstream connections through
+a generation change, finalises an active recording as incomplete, and
+reconnects. Losing the final downstream client does not stop the stream or an
+enabled recording, but does issue `arm = 0` when the parameter exists.
 
 ## Firmware networking foundations
 
@@ -635,10 +637,10 @@ and MATLAB protocol implementations share known-answer vectors from
 [protocol.md](protocol.md), so codec drift fails every implementation's tests.
 The root Rust suite also runs a real loopback broker test with a protocol peer
 and two TCP/UDP clients, covering discovery, shared start/stop, quiet replay,
-live forwarding, HDF5 output, and final-client disarm. HDF5 unit tests force a
-segment rollover and reopen the result with an independent reader. These host
-checks do not replace hardware tests when a later change touches firmware or
-the real-time/network path.
+live forwarding, optional and enabled recording modes, HDF5 output, and
+final-client disarm. HDF5 unit tests force a segment rollover and reopen the
+result with an independent reader. These host checks do not replace hardware
+tests when a later change touches firmware or the real-time/network path.
 
 Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses probe-rs
 (`--chip RP235x`) and streams defmt logs over RTT; `DEFMT_LOG` is set in

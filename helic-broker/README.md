@@ -11,10 +11,19 @@ From the repository root:
 
 ```sh
 cargo build --release -p helic-broker
+# Broker only: captures are not written to disk.
+target/release/helic-broker --mcu-host 192.168.1.235
+
+# Enable HDF5 recording explicitly.
 target/release/helic-broker \
   --mcu-host 192.168.1.235 \
   --output-dir captures
 ```
+
+At start-up the process prints either `Captures are not being saved.` or
+`Captures are being saved to <directory>.` to standard output. Omitting
+`--output-dir` creates no storage worker, directory, or capture file; history,
+recent replay, discovery, and multi-client streaming remain available.
 
 The downstream services listen only on `127.0.0.1`, using the ordinary
 control, stream, and discovery ports 2350–2352. Point Python, Julia, MATLAB,
@@ -24,9 +33,10 @@ soft segment-size limit.
 
 The first `StreamStart` starts the globally configured MCU stream. Further
 starts attach clients without restarting it, and any client can stop it.
-Recording and recent history are global; UDP endpoints and quietness are per
-client. The broker continues streaming and recording with no clients, but
-disarms the MCU when the final client disconnects.
+Recent history is global; UDP endpoints and quietness are per client. When
+recording is enabled, it is global too. The broker continues streaming with no
+clients (and recording, if enabled), but disarms the MCU when the final client
+disconnects.
 
 Typical recent capture from a second Python process:
 
@@ -44,7 +54,8 @@ client is connected directly to firmware.
 
 ## Recording and failures
 
-Each global stream creates a timestamped HDF5 session in `--output-dir`.
+When `--output-dir` is supplied, each global stream creates a timestamped HDF5
+session there.
 Files expose source names and units, record values and sample indices, packet
 loss metadata, timestamps, session/segment identifiers, and close status.
 Open files end in `.h5.partial`; finalised segments are renamed `.h5`.
@@ -66,7 +77,7 @@ cargo test -p helic-broker
 
 The tests cover bounded exact-record history, HDF5 read-back and segmentation,
 and a two-client TCP/UDP system flow with discovery, quiet replay, live
-forwarding, global stop, recording, and final-client disarm.
+forwarding, global stop, final-client disarm, and both recording modes.
 
 The complete operational semantics, host-language examples, extension wire
 format, and HDF5 schema are in the [broker guide](../docs/broker.md). The

@@ -180,7 +180,7 @@ struct App {
     state: Mutex<SharedState>,
     stream_operations: Mutex<()>,
     downstream_udp: Arc<UdpSocket>,
-    storage: StorageHandle,
+    storage: Option<StorageHandle>,
     epoch: watch::Sender<u64>,
     next_generation: AtomicU64,
     next_client: AtomicU64,
@@ -189,6 +189,33 @@ struct App {
 }
 
 impl App {
+    async fn start_recording(&self, metadata: SessionMetadata) -> Result<()> {
+        if let Some(storage) = &self.storage {
+            storage.start(metadata).await?;
+        }
+        Ok(())
+    }
+
+    fn record_packet(&self, packet: Packet) -> Result<()> {
+        if let Some(storage) = &self.storage {
+            storage.packet(packet)?;
+        }
+        Ok(())
+    }
+
+    async fn stop_recording(&self, reason: CloseReason) -> Result<()> {
+        if let Some(storage) = &self.storage {
+            storage.stop(reason).await?;
+        }
+        Ok(())
+    }
+
+    async fn shutdown_recording(&self) {
+        if let Some(storage) = &self.storage {
+            storage.shutdown().await;
+        }
+    }
+
     async fn upstream_ready(&self) -> bool {
         self.upstream.lock().await.is_some()
     }
@@ -243,7 +270,7 @@ impl App {
             was_running
         };
         if was_running {
-            let _ = self.storage.stop(CloseReason::UpstreamLost).await;
+            let _ = self.stop_recording(CloseReason::UpstreamLost).await;
         }
         *self.metadata.write().await = None;
         let next = self.epoch.borrow().wrapping_add(1);
@@ -387,7 +414,7 @@ impl App {
             {
                 bail!("MCU stream layout changed inside a shared session");
             }
-            self.storage.packet(packet.clone())?;
+            self.record_packet(packet.clone())?;
             state.history.push(packet.clone());
             state.received_records += packet.header.n_records as u64;
             let targets = state
@@ -420,7 +447,7 @@ impl App {
                 }
             };
             if was_running {
-                self.storage.stop(CloseReason::CountComplete).await?;
+                self.stop_recording(CloseReason::CountComplete).await?;
             }
         }
         Ok(())
@@ -430,10 +457,10 @@ impl App {
         let running = self.state.lock().await.running;
         if running {
             let _ = self.request(MsgType::StreamStop as u8, &[]).await;
-            let _ = self.storage.stop(CloseReason::BrokerShutdown).await;
+            let _ = self.stop_recording(CloseReason::BrokerShutdown).await;
         }
         self.disarm().await;
-        self.storage.shutdown().await;
+        self.shutdown_recording().await;
         self.upstream.lock().await.take();
     }
 }
@@ -485,8 +512,11 @@ pub async fn run(config: Config) -> Result<()> {
             .await
             .context("could not bind loopback discovery port")?,
     );
-    let storage = StorageHandle::spawn(config.output_dir.clone(), config.segment_size);
-    let storage_errors = storage.subscribe_errors();
+    let storage = config
+        .output_dir
+        .as_ref()
+        .map(|output_dir| StorageHandle::spawn(output_dir.clone(), config.segment_size));
+    let storage_errors = storage.as_ref().map(StorageHandle::subscribe_errors);
     let (epoch, _) = watch::channel(0u64);
     let (fatal, fatal_rx) = watch::channel(None);
     let app = Arc::new(App {
@@ -508,7 +538,9 @@ pub async fn run(config: Config) -> Result<()> {
     tokio::spawn(discovery_server(app.clone(), discovery));
     tokio::spawn(reconnect_loop(app.clone()));
     tokio::spawn(heartbeat_loop(app.clone()));
-    tokio::spawn(storage_failure_monitor(app.clone(), storage_errors));
+    if let Some(storage_errors) = storage_errors {
+        tokio::spawn(storage_failure_monitor(app.clone(), storage_errors));
+    }
 
     tracing::info!(
         address = %SocketAddrV4::new(Config::LOOPBACK, app.config.control_port),
@@ -1042,17 +1074,16 @@ async fn start_client(
         .iter()
         .map(|source| metadata.sources[*source as usize].clone())
         .collect();
-    app.storage
-        .start(SessionMetadata {
-            experiment: metadata.experiment,
-            firmware: metadata.firmware,
-            sample_rate_hz: metadata.sample_rate_hz,
-            decimation: configuration.decimation,
-            configured_count: configuration.count,
-            sources: selected_sources,
-            started_utc_ns: utc_now_ns(),
-        })
-        .await?;
+    app.start_recording(SessionMetadata {
+        experiment: metadata.experiment,
+        firmware: metadata.firmware,
+        sample_rate_hz: metadata.sample_rate_hz,
+        decimation: configuration.decimation,
+        configured_count: configuration.count,
+        sources: selected_sources,
+        started_utc_ns: utc_now_ns(),
+    })
+    .await?;
     {
         let capacity = ((metadata.sample_rate_hz as f64 * app.config.history.as_secs_f64()
             / configuration.decimation as f64)
@@ -1082,7 +1113,7 @@ async fn start_client(
         state.history.clear();
         state.detach_all();
         drop(state);
-        let _ = app.storage.stop(CloseReason::UpstreamLost).await;
+        let _ = app.stop_recording(CloseReason::UpstreamLost).await;
         return Ok(Handled {
             response_type: response.message_type,
             payload: response.payload,
@@ -1112,7 +1143,7 @@ async fn stream_stop(app: &App, payload: &[u8]) -> Result<Handled> {
             was_running
         };
         if was_running {
-            app.storage.stop(CloseReason::StreamStop).await?;
+            app.stop_recording(CloseReason::StreamStop).await?;
         }
     }
     Ok(Handled::response(response))

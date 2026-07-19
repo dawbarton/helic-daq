@@ -23,8 +23,8 @@ record segmented HDF5 files without changing the firmware.
 - [Developer guide](docs/developer_guide.md): architecture, design principles,
   extension points and testing.
 - [Wire protocol](docs/protocol.md): authoritative protocol v3 specification.
-- [Shared broker](docs/broker.md): multi-client stream semantics, recording,
-  host APIs, and recovery behaviour.
+- [Shared broker](docs/broker.md): multi-client stream semantics, optional
+  recording, host APIs, and recovery behaviour.
 - [Periodic signal generator](docs/periodic_signal_generator.md): numerical
   design and error bounds.
 - [Hardware status](notes.md): verified paths, outstanding checks and bring-up
@@ -53,7 +53,7 @@ See [notes.md](notes.md) for the precise hardware-verification boundary.
 | `helic-core/` | Hardware-independent DSP, controllers and generators; `no_std`, host-tested |
 | `helic-drivers/` | Portable peripheral drivers over `embedded-hal` traits; host-tested |
 | `helic-proto/` | Protocol framing, payloads and stream codec shared with firmware |
-| `helic-broker/` | Loopback-only shared stream broker and HDF5 recorder |
+| `helic-broker/` | Loopback-only shared stream broker with optional HDF5 recording |
 | `firmware/common/` | Experiment-independent RP2350 firmware support |
 | `firmware/experiments/` | One binary, pin map and compile-time configuration per experiment |
 | `host-python/` | Python package `helic_daq`, simulator and `helic-daq` CLI |

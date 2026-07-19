@@ -1,6 +1,6 @@
 [package]
 name = "helic-broker"
-description = "Loopback-only multi-client broker and data recorder for HELIC-DAQ"
+description = "Loopback-only multi-client broker with optional recording for HELIC-DAQ"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

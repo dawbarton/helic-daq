@@ -9,6 +9,7 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> Result<()> {
     let config = Config::parse();
     config.validate()?;
+    println!("{}", config.recording_notice());
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::new(&config.log_level))
         .init();

@@ -166,20 +166,31 @@ helic-daq --host 127.0.0.1 capture --sources adc0,out --samples 1000
 The simulator exposes the same discoverable parameter/source tables, supports
 staged waveform uploads, and generates synthetic TCP-controlled UDP streams.
 
-### Shared broker and recorder
+### Shared broker and optional recorder
 
-For long-running monitoring and recording, run the loopback-only Rust broker
-between the host libraries and the MCU:
+For long-running monitoring, stream sharing, and optional recording, run the
+loopback-only Rust broker between the host libraries and the MCU:
 
 ```sh
+# Monitoring, sharing, and recent history without disk recording:
+cargo run --release -p helic-broker -- \
+  --mcu-host 192.168.1.235
+
+# Add HDF5 recording:
 cargo run --release -p helic-broker -- \
   --mcu-host 192.168.1.235 --output-dir captures
 ```
 
+The broker prints `Captures are not being saved.` in the first mode and
+`Captures are being saved to captures.` in the second. Omitting
+`--output-dir` creates no capture directory or files and does not disable
+stream sharing, quiet clients, history, or recent replay.
+
 Clients then connect to `127.0.0.1`. The first client configures and starts a
-stream; later clients attach to that same stream. Any client may stop it.
-Streaming is recorded regardless of attachment or per-client quietness. The
-default recent-history window is 10 seconds and files roll at a soft 1 GiB:
+stream; later clients attach to that same stream. Any client may stop it. When
+recording is enabled, it is independent of attachment and per-client
+quietness. The default recent-history window is 10 seconds and recorded files
+roll at a soft 1 GiB:
 
 ```sh
 cargo run --release -p helic-broker -- \

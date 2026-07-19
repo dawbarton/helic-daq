@@ -29,6 +29,15 @@ struct FakeState {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_clients_share_stream_replay_and_recording() -> Result<()> {
+    run_two_client_flow(true).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_clients_work_without_recording() -> Result<()> {
+    run_two_client_flow(false).await
+}
+
+async fn run_two_client_flow(recording_enabled: bool) -> Result<()> {
     let mcu_control = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let mcu_control_port = mcu_control.local_addr()?.port();
     let mcu_stream = Arc::new(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?);
@@ -43,7 +52,7 @@ async fn two_clients_share_stream_replay_and_recording() -> Result<()> {
     let discovery_port = free_udp_port()?;
     let broker = tokio::spawn(helic_broker::server::run(Config {
         mcu_host: Ipv4Addr::LOCALHOST.to_string(),
-        output_dir: output.path().to_path_buf(),
+        output_dir: recording_enabled.then(|| output.path().to_path_buf()),
         mcu_control_port,
         mcu_stream_port,
         mcu_discovery_port: free_udp_port()?,
@@ -129,14 +138,18 @@ async fn two_clients_share_stream_replay_and_recording() -> Result<()> {
     let files = std::fs::read_dir(output.path())?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()?;
-    assert_eq!(files.len(), 1);
-    assert_eq!(
-        files[0].extension().and_then(|value| value.to_str()),
-        Some("h5")
-    );
-    let mut recording = SwmrFileReader::open(&files[0])?;
-    assert_eq!(recording.dataset_shape("records/values")?[1], 2);
-    assert!(!recording.read_dataset::<f32>("records/values")?.is_empty());
+    if recording_enabled {
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].extension().and_then(|value| value.to_str()),
+            Some("h5")
+        );
+        let mut recording = SwmrFileReader::open(&files[0])?;
+        assert_eq!(recording.dataset_shape("records/values")?[1], 2);
+        assert!(!recording.read_dataset::<f32>("records/values")?.is_empty());
+    } else {
+        assert!(files.is_empty());
+    }
 
     drop(first);
     drop(second);
