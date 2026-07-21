@@ -67,6 +67,8 @@ This retains the repository rule that reusable logic is host-testable in
 8. Allow future physical SISO and MISO experiments to require changes only in
    their experiment crate when they use `StandardProgram` and an existing
    controller.
+9. Remove the unused `PeriodicGenerator`/`GenSample` API so there is one clear
+   ownership model for periodic Fourier generation.
 
 ## Non-goals
 
@@ -235,13 +237,17 @@ semantics, and there is not yet a second reference-source implementation that
 justifies a common trait. A later `ControlledAxis<C, R>` can generalise the
 reference type without changing the role of `FourierSignal`.
 
-The existing `PeriodicGenerator` combines its own phase accumulator and
-coefficient bank and remains useful when a signal needs an independent clock.
-Retain its public API. It may be reimplemented from `HarmonicGenerator` and
-`FourierSignal` if that is behaviourally exact, but `StandardProgram` must use
-the split types so its reference and forcing share one calculated basis. Do
-not keep a second live coefficient copy in `PeriodicGenerator` for either
-standard-programme signal.
+Remove the existing `PeriodicGenerator` and its `GenSample` return type. They
+are not used by production firmware; their only repository consumers are unit
+tests and Fourier-estimator test-signal generation. Keeping a second type that
+combines a private phase and coefficient bank would leave two competing
+ownership models and make it unclear whether programme signals share a basis.
+
+Migrate those tests to an explicitly paired `HarmonicGenerator` and
+`FourierSignal`. A future independently clocked signal can own that same pair;
+it does not require another combined public abstraction. Remove the
+`PeriodicGenerator` and `GenSample` re-exports from `helic-core::lib` rather
+than retaining aliases or compatibility wrappers.
 
 ### Controlled axis
 
@@ -640,8 +646,8 @@ Suggested locations:
 
 - `helic-core/src/generator.rs` or a new `harmonics.rs`: `HarmonicFrame` and
   `HarmonicGenerator`;
-- `helic-core/src/generator.rs`: `FourierSignal`, beside `FourierCoeffs` and
-  the existing periodic-generator types;
+- `helic-core/src/generator.rs`: `FourierSignal`, beside `FourierCoeffs`, and
+  removal of `PeriodicGenerator` and `GenSample`;
 - `helic-core/src/controller.rs` or a new `controlled_axis.rs`:
   `ControlledAxis`;
 - `helic-core/src/program.rs`: `RtProgram`, `StandardProgram` and portable
@@ -684,7 +690,9 @@ firmware annotation where appropriate.
 Implement in small, buildable stages:
 
 1. Add `HarmonicFrame`/`HarmonicGenerator`, `FourierSignal` and projection
-   tests in `helic-core`. Do not integrate firmware yet.
+   tests in `helic-core`. Migrate generator and Fourier-estimator tests, then
+   remove `PeriodicGenerator`, `GenSample` and their crate-root re-exports. Do
+   not integrate firmware yet.
 2. Add `ControlledAxis` and tests proving that reference sampling and
    controller calculation match the current path.
 3. Add `RtProgram` and `StandardProgram` with host tests for the complete
@@ -722,6 +730,8 @@ Add tests for:
   coherent while owning independent coefficient banks;
 - complete `FourierSignal` coefficient replacement taking effect without
   retaining values from the previous bank;
+- migrated Fourier-estimator tests generating their known inputs from an
+  explicitly paired `HarmonicGenerator` and `FourierSignal`;
 - exact `u32` wrapping multiplication for every harmonic;
 - one and only one master phase advancement per programme tick;
 - phase-continuous master frequency changes;
@@ -806,6 +816,8 @@ The initial implementation is complete only when:
 - target and forcing share one master harmonic frame advanced once per tick;
 - the reference and forcing coefficient banks are each owned by a
   `FourierSignal`, with no duplicate live coefficient owner;
+- `PeriodicGenerator` and `GenSample` have been removed rather than retained
+  as overlapping wrappers;
 - free table modes remain independent and locked table modes retain exact
   master-phase semantics;
 - the common loop no longer owns target/forcing coefficients, controller or
