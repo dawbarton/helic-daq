@@ -119,8 +119,8 @@ core 1: RtLoopState<R, T, P>
 |   +-- master harmonic generator
 |   +-- ControlledAxis<C>
 |   |   +-- controller C
-|   |   +-- reference Fourier coefficients
-|   +-- forcing Fourier coefficients
+|   |   +-- reference FourierSignal<H>
+|   +-- forcing FourierSignal<H>
 |   +-- TablePlayer
 |   +-- active WaveTable reference
 |   +-- logical output calculation and programme telemetry
@@ -197,6 +197,52 @@ choice must be based on release ELF inspection and timing, not source-level
 aesthetics. Any emitted ARM EABI copy/clear helper must resolve to `rt_mem` in
 SRAM.
 
+### Fourier signal
+
+Separate ownership of one Fourier coefficient bank from ownership of the
+master phase and harmonic basis. `HarmonicGenerator` produces the shared
+phase-coherent basis; `FourierSignal` owns coefficients and projects that
+basis into one scalar:
+
+```rust
+pub struct FourierSignal<const H: usize> {
+    coefficients: FourierCoeffs<H>,
+}
+
+impl<const H: usize> FourierSignal<H> {
+    pub const fn zero() -> Self;
+    pub const fn new(coefficients: FourierCoeffs<H>) -> Self;
+
+    pub fn coefficients(&self) -> &FourierCoeffs<H>;
+    pub fn set_coefficients(&mut self, coefficients: FourierCoeffs<H>);
+
+    pub fn sample(&self, harmonics: &HarmonicFrame<H>) -> f32 {
+        harmonics.project(&self.coefficients)
+    }
+}
+```
+
+`FourierSignal` is the common abstraction for both the controller reference
+and direct Fourier forcing. It may also be reused later for another logical
+actuator, an injected perturbation or another phase-locked scalar consumer.
+It does not own or advance phase: every signal sampled from one
+`HarmonicFrame` is exactly phase coherent. Replacing its complete coefficient
+value at a sample boundary retains the current atomic update semantics.
+
+Do not introduce a general `SignalSource` trait in the initial change.
+`FourierSignal` and `TablePlayer` have materially different state and phase
+semantics, and there is not yet a second reference-source implementation that
+justifies a common trait. A later `ControlledAxis<C, R>` can generalise the
+reference type without changing the role of `FourierSignal`.
+
+The existing `PeriodicGenerator` combines its own phase accumulator and
+coefficient bank and remains useful when a signal needs an independent clock.
+Retain its public API. It may be reimplemented from `HarmonicGenerator` and
+`FourierSignal` if that is behaviourally exact, but `StandardProgram` must use
+the split types so its reference and forcing share one calculated basis. Do
+not keep a second live coefficient copy in `PeriodicGenerator` for either
+standard-programme signal.
+
 ### Controlled axis
 
 A generic controller algorithm should not itself be coupled to Fourier
@@ -205,13 +251,13 @@ references. Compose the algorithm with its reference instead:
 ```rust
 pub struct ControlledAxis<C, const H: usize> {
     controller: C,
-    reference: FourierCoeffs<H>,
+    reference: FourierSignal<H>,
 }
 
 impl<C: Controller, const H: usize> ControlledAxis<C, H> {
     pub fn new(controller: C) -> Self;
-    pub fn set_reference(&mut self, coeffs: FourierCoeffs<H>);
-    pub fn reference(&self) -> &FourierCoeffs<H>;
+    pub fn reference(&self) -> &FourierSignal<H>;
+    pub fn set_reference_coefficients(&mut self, coeffs: FourierCoeffs<H>);
 
     pub fn step(
         &mut self,
@@ -229,10 +275,10 @@ pub struct AxisSample {
 }
 ```
 
-`step` projects the owned reference coefficients against the shared frame and
-passes the resulting scalar to `Controller::tick`. Controller parameter and
-telemetry methods continue to belong to `Controller`; `ControlledAxis` and
-`StandardProgram` delegate to them.
+`step` samples the owned reference `FourierSignal` against the shared frame
+and passes the resulting scalar to `Controller::tick`. Controller parameter
+and telemetry methods continue to belong to `Controller`; `ControlledAxis`
+and `StandardProgram` delegate to them.
 
 This composition permits a future axis to use another reference source
 without putting phase and coefficient state inside `PidController` or another
@@ -246,7 +292,7 @@ reusable control algorithm.
 pub struct StandardProgram<C, const H: usize> {
     harmonics: HarmonicGenerator<H>,
     axis: ControlledAxis<C, H>,
-    forcing: FourierCoeffs<H>,
+    forcing: FourierSignal<H>,
     table_player: TablePlayer,
     active_table: &'static WaveTable,
     last_target: f32,
@@ -259,7 +305,8 @@ Its per-tick calculation is, in this exact order:
 
 1. advance `harmonics` once, producing `(master_phase, period_start)` and the
    shared harmonic basis;
-2. project `axis.reference` and `forcing` against that basis;
+2. sample the axis reference and forcing `FourierSignal` values against that
+   basis;
 3. run the controller with the current input slice, reference and `dt`;
 4. call `TablePlayer::step(active_table, master_phase, period_start)`;
 5. calculate logical output zero as `control + forcing + table`;
@@ -367,6 +414,10 @@ types in `helic-core`:
 - replace the active immutable table reference;
 - reset the controller/programme; and
 - set a scalar programme parameter.
+
+For `StandardProgram`, the two coefficient setters delegate to
+`FourierSignal::set_coefficients` on the controlled reference and forcing
+signal respectively.
 
 `RtCommand` remains the cross-core envelope. Common firmware applies at most
 two commands per tick and changes the existing match arms to invoke the
@@ -477,8 +528,10 @@ controller, preserving the registry.
 The base platform parameters remain unchanged:
 
 - `freq` controls the programme's master harmonic increment;
-- `target_coeffs` atomically replaces `ControlledAxis::reference`;
-- `forcing_coeffs` atomically replaces `StandardProgram::forcing`;
+- `target_coeffs` atomically replaces the coefficients owned by
+  `ControlledAxis::reference`;
+- `forcing_coeffs` atomically replaces the coefficients owned by
+  `StandardProgram::forcing`;
 - `ctrl_reset` calls `P::reset`;
 - all table parameters configure the programme-owned `TablePlayer`; and
 - table upload still uses the common double buffer and boundary activation.
@@ -587,6 +640,8 @@ Suggested locations:
 
 - `helic-core/src/generator.rs` or a new `harmonics.rs`: `HarmonicFrame` and
   `HarmonicGenerator`;
+- `helic-core/src/generator.rs`: `FourierSignal`, beside `FourierCoeffs` and
+  the existing periodic-generator types;
 - `helic-core/src/controller.rs` or a new `controlled_axis.rs`:
   `ControlledAxis`;
 - `helic-core/src/program.rs`: `RtProgram`, `StandardProgram` and portable
@@ -628,9 +683,9 @@ firmware annotation where appropriate.
 
 Implement in small, buildable stages:
 
-1. Add `HarmonicFrame`/`HarmonicGenerator` and projection tests in
-   `helic-core`. Do not integrate firmware yet.
-2. Add `ControlledAxis` and tests proving that reference projection and
+1. Add `HarmonicFrame`/`HarmonicGenerator`, `FourierSignal` and projection
+   tests in `helic-core`. Do not integrate firmware yet.
+2. Add `ControlledAxis` and tests proving that reference sampling and
    controller calculation match the current path.
 3. Add `RtProgram` and `StandardProgram` with host tests for the complete
    scalar calculation and every table mode.
@@ -662,6 +717,11 @@ Add tests for:
 
 - every harmonic-frame projection matching `FourierCoeffs::evaluate` over
   representative phases, coefficients and all 16 harmonics;
+- `FourierSignal::sample` matching direct harmonic-frame projection;
+- two `FourierSignal` values sampled from one frame remaining exactly phase
+  coherent while owning independent coefficient banks;
+- complete `FourierSignal` coefficient replacement taking effect without
+  retaining values from the previous bank;
 - exact `u32` wrapping multiplication for every harmonic;
 - one and only one master phase advancement per programme tick;
 - phase-continuous master frequency changes;
@@ -744,6 +804,8 @@ The initial implementation is complete only when:
 - the current base parameter registry is unchanged;
 - current production source names and order are unchanged;
 - target and forcing share one master harmonic frame advanced once per tick;
+- the reference and forcing coefficient banks are each owned by a
+  `FourierSignal`, with no duplicate live coefficient owner;
 - free table modes remain independent and locked table modes retain exact
   master-phase semantics;
 - the common loop no longer owns target/forcing coefficients, controller or
@@ -767,9 +829,9 @@ It does not change the common scheduler.
 A future MIMO experiment supplies another statically selected `RtProgram`
 which fills more than one logical output. It may own several
 `ControlledAxis` values, a portable matrix controller or experiment-specific
-coefficient routing. The common loop, safety stage, source assembly and rig
-actuation boundary should already accept it. Reusable MIMO algorithms still
-belong in `helic-core`, not in `rig.rs`.
+`FourierSignal` banks and coefficient routing. The common loop, safety stage,
+source assembly and rig actuation boundary should already accept it. Reusable
+MIMO algorithms still belong in `helic-core`, not in `rig.rs`.
 
 Independent per-actuator reference, forcing or table banks require a separate
 proposal. In particular, atomic multi-axis coefficient replacement should use
