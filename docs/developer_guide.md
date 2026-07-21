@@ -159,6 +159,12 @@ wrapper. Keep this pattern when sharing a task across experiments.
 The CBC acquisition path is shown; ADC-free rigs replace CONVST/BUSY with a
 PWM-wrap tick and omit the ADC read.
 
+The current loop owns the standard target/forcing/controller/table graph
+directly. A proposed ownership refactor, not yet implemented, is specified in
+[rt_program_proposal.md](rt_program_proposal.md). It introduces a portable
+`StandardProgram` while preserving the existing host interface and exact
+free-running/locked waveform-table phase semantics.
+
 ```
 core 1 (real-time)                       core 0 (everything else)
 ┌─────────────────────────────┐          ┌───────────────────────────────┐
