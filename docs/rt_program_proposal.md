@@ -69,6 +69,11 @@ This retains the repository rule that reusable logic is host-testable in
    controller.
 9. Remove the unused `PeriodicGenerator`/`GenSample` API so there is one clear
    ownership model for periodic Fourier generation.
+10. Where several programme-owned instances share one operation shape (a
+    phase-accumulator increment, a Fourier coefficient bank), expose one
+    slot-indexed command and setter rather than one dedicated command and
+    setter per instance, so adding an instance later does not require a new
+    `RtCommand` variant or dispatch arm.
 
 ## Non-goals
 
@@ -159,11 +164,12 @@ pub struct HarmonicFrame<const H: usize> {
 
 pub struct HarmonicGenerator<const H: usize> {
     phase: PhaseAccumulator,
+    frame: HarmonicFrame<H>,
 }
 
 impl<const H: usize> HarmonicGenerator<H> {
     pub fn set_increment(&mut self, increment: u32);
-    pub fn step(&mut self, lut: &SinLut) -> HarmonicFrame<H>;
+    pub fn step(&mut self, lut: &SinLut) -> &HarmonicFrame<H>;
 }
 ```
 
@@ -192,12 +198,17 @@ forcing and future controlled axes share a phase. Keep
 `FourierCoeffs::evaluate` as a public convenience and regression oracle; do
 not force unrelated users to construct a frame.
 
-The implementation must determine whether returning the fixed arrays by value
-introduces compiler-generated copies. It may instead retain a frame inside the
-generator and return a borrow if that produces a clearer SRAM call graph. The
+Start with `HarmonicGenerator` retaining the frame internally and `step`
+returning a borrow, as sketched above. That is the conservative default:
+`HarmonicFrame<H>` holds two `[f32; H]` arrays (up to 128 bytes at the maximum
+16 harmonics), and depending on the compiler to elide that copy on every tick
+is exactly the kind of assumption that is cheap to get wrong against a 125 µs
+budget. Only return the frame by value instead if release ELF inspection
+shows the borrow forces an unwanted lifetime restriction, an extra copy
+elsewhere, or a less clear SRAM call graph than the value form. Either way the
 choice must be based on release ELF inspection and timing, not source-level
-aesthetics. Any emitted ARM EABI copy/clear helper must resolve to `rt_mem` in
-SRAM.
+aesthetics, and any emitted ARM EABI copy/clear helper must resolve to
+`rt_mem` in SRAM.
 
 ### Fourier signal
 
@@ -389,15 +400,21 @@ then writes `last_target`, `last_forcing` and `last_table`. Keeping this call
 after `Rig::actuate` avoids moving telemetry calculation onto the
 measurement-to-output latency path.
 
+`RtProgram::normalise_param` takes both `input_count` and `output_count`,
+while `Controller::normalise_param` (unchanged) takes only `input_count`.
+`StandardProgram::normalise_param` delegates to the controller and ignores
+`output_count`; a controller that needs to validate against output count is a
+future concern this change does not need to solve.
+
 Prefer explicit programme setters so the existing non-generic `RtCommand` and
-static queue storage remain unchanged. For `RtProgram<const H: usize>`, the
-required command-facing methods are:
+static queue storage remain unchanged, but do not give every instance its own
+dedicated setter: where two or more programme-owned objects need the same
+operation, expose one slot-indexed setter instead. For `RtProgram<const H:
+usize>`, the required command-facing methods are:
 
 ```rust
-fn set_master_increment(&mut self, increment: u32);
-fn set_target_coeffs(&mut self, coeffs: FourierCoeffs<H>);
-fn set_forcing_coeffs(&mut self, coeffs: FourierCoeffs<H>);
-fn set_table_increment(&mut self, increment: u32);
+fn set_increment(&mut self, slot: u16, increment: u32);
+fn set_coeffs(&mut self, slot: u16, coeffs: FourierCoeffs<H>);
 fn set_table_gain(&mut self, gain: f32);
 fn set_table_interpolation(&mut self, value: TableInterpolation);
 fn set_table_mode(&mut self, value: TableMode);
@@ -409,29 +426,70 @@ fn reset(&mut self);
 fn set_param(&mut self, id: u16, value: f32);
 ```
 
+`set_increment` and `set_coeffs` are slot-indexed because the underlying
+operation (`PhaseAccumulator::set_increment`, `FourierSignal::set_coefficients`)
+is identical regardless of which owner it targets, and there are already two
+instances of each today (master/table increment, target/forcing coefficients).
+`StandardProgram` defines its own slot constants, for example:
+
+```rust
+const INCREMENT_MASTER: u16 = 0;
+const INCREMENT_TABLE: u16 = 1;
+const COEFFS_TARGET: u16 = 0;
+const COEFFS_FORCING: u16 = 1;
+```
+
+and dispatches on them; an unrecognised slot is ignored, exactly as an
+unrecognised `set_param` id is ignored today. A future MIMO programme with
+more controlled axes adds more coefficient and increment slots without a new
+`RtCommand` variant or a new match arm in `firmware/common/src/rt_loop.rs` —
+only `firmware/common/src/params/schema.rs` (new host parameter names) and the
+programme's own slot table grow.
+
+The remaining table setters (gain, interpolation, mode, multiplier, phase
+offset, trigger), `use_table` and `reset` stay one dedicated method each. They
+do not fit the slot scheme: their payload types differ (an `f32`, two
+distinct enums, two `u32`s and a unit signal), each addresses a field on the
+single `TablePlayer` the programme owns with no second instance in view
+(per-actuator table banks are explicitly deferred to a separate proposal), and
+the enum-valued ones are already validated into a concrete Rust type on core 0
+(`TableMode::from_u32`, `TableInterpolation::from_u32`) before being queued —
+collapsing them into a raw `(slot, u32)` command would move that validation
+onto the real-time core or require re-deriving it there, which is a
+regression, not a simplification. `reset` similarly stays a single
+whole-programme operation: whether a future MIMO programme should support
+resetting one axis independently of the whole programme is an undecided
+design question, not one to pre-empt with a slot scheme now.
+
 These methods support the existing operations without exposing firmware queue
 types in `helic-core`:
 
-- set master increment;
-- atomically replace target/reference coefficients;
-- atomically replace forcing coefficients;
-- set table increment, gain, interpolation, mode, multiplier and phase;
+- set the master or table phase-accumulator increment by slot;
+- atomically replace a coefficient bank (target/reference or forcing) by
+  slot;
+- set table gain, interpolation, mode, multiplier and phase;
 - trigger the table;
 - replace the active immutable table reference;
 - reset the controller/programme; and
 - set a scalar programme parameter.
 
-For `StandardProgram`, the two coefficient setters delegate to
-`FourierSignal::set_coefficients` on the controlled reference and forcing
-signal respectively.
+For `StandardProgram`, `set_coeffs` delegates to
+`ControlledAxis::set_reference_coefficients` (`COEFFS_TARGET`) or
+`FourierSignal::set_coefficients` on the forcing signal (`COEFFS_FORCING`);
+`set_increment` delegates to `HarmonicGenerator::set_increment`
+(`INCREMENT_MASTER`) or `TablePlayer::set_increment` (`INCREMENT_TABLE`).
 
 `RtCommand` remains the cross-core envelope. Common firmware applies at most
 two commands per tick and changes the existing match arms to invoke the
-corresponding programme setter. `SetRigParam` continues to target `Rig`.
-Rename `SetCtrlParam` to `SetProgramParam` as part of the `ParamStore`
-migration; it remains the same bounded `(u16, f32)` payload. For
-`UseTable(buffer)`, common firmware must call `table::activate(buffer)` before
-passing the resulting reference to `P::use_table`.
+corresponding programme setter. Its `SetTargetCoeffs`, `SetForcingCoeffs`,
+`SetIncrement` and `SetTableIncrement` variants collapse into
+`SetCoeffs(u16, FourierCoeffs<H>)` and `SetIncrement(u16, u32)`, each
+dispatched to `P::set_coeffs`/`P::set_increment` with the corresponding slot.
+`SetRigParam` continues to target `Rig`. Rename `SetCtrlParam` to
+`SetProgramParam` as part of the `ParamStore` migration; it remains the same
+bounded `(u16, f32)` payload. For `UseTable(buffer)`, common firmware must
+call `table::activate(buffer)` before passing the resulting reference to
+`P::use_table`.
 
 `StandardProgram::param_*` delegates to its axis controller so the existing
 `ctrl_*` names, validation, initial values and update behaviour do not change.
@@ -454,6 +512,14 @@ pub trait Rig {
     const INPUTS: &'static [(&'static str, &'static str)];
     const ACTUATORS: &'static [(&'static str, &'static str)];
 
+    /// Opt in to the shared per-tick safety gate (see "Safety for bounded
+    /// outputs"). Preserves the current per-rig default exactly: `false`
+    /// compiles the gate away entirely and every logical output is applied
+    /// verbatim regardless of `arm`/`safety` state. Only `cbc-rig` sets this
+    /// `true` today; `whirl-rig` and `pico2w-rig` keep the default and are
+    /// therefore unaffected by the introduction of an output vector.
+    const SAFETY_GATED: bool = false;
+
     fn measure(&mut self, values: &mut [f32]);
     fn actuate(&mut self, outputs: &[f32]);
 
@@ -463,6 +529,13 @@ pub trait Rig {
 
     fn safe_output(&self, _actuator: usize) -> f32 {
         0.0
+    }
+
+    /// Latching fault condition evaluated on this tick's measured inputs.
+    /// Only consulted when [`SAFETY_GATED`](Self::SAFETY_GATED) is set.
+    /// Default: never faults.
+    fn output_fault(&mut self, _inputs: &[f32]) -> bool {
+        false
     }
 }
 ```
@@ -488,7 +561,13 @@ strobe. Independent logical commands require a programme with
 
 ### Safety for bounded outputs
 
-Retain one conservative global arm/trip state initially:
+Retain one conservative global arm/trip state initially, and retain the
+existing per-rig opt-out exactly: this gate runs only for `R::SAFETY_GATED`
+rigs, compiles away entirely for the rest, and does not change which rigs are
+gated today. Migrating `cbc-rig`, `whirl-rig` and `pico2w-rig` to the bounded
+output slice must not newly require `whirl-rig` or `pico2w-rig` to be armed —
+neither is armed by any host today, and nothing in this refactor should make
+that a precondition for their output to be driven. For a gated rig:
 
 - call `output_fault(inputs)` once per tick;
 - any fault latches the global trip and quiets every actuator;
@@ -497,6 +576,9 @@ Retain one conservative global arm/trip state initially:
 - increment `SAFETY_QUIET_TICKS` once per quieted tick, not once per output;
 - increment `SAFETY_CLAMP_TICKS` once if any output was clamped that tick; and
 - stream every applied output after safety.
+
+For a non-gated rig, every logical output is applied verbatim, exactly as the
+scalar path is applied verbatim today.
 
 Per-actuator arming or trip state is a separate future design. Do not infer it
 from the introduction of an output vector.
@@ -533,11 +615,12 @@ controller, preserving the registry.
 
 The base platform parameters remain unchanged:
 
-- `freq` controls the programme's master harmonic increment;
-- `target_coeffs` atomically replaces the coefficients owned by
-  `ControlledAxis::reference`;
-- `forcing_coeffs` atomically replaces the coefficients owned by
-  `StandardProgram::forcing`;
+- `freq` sends `SetIncrement(INCREMENT_MASTER, _)`, which controls the
+  programme's master harmonic increment;
+- `target_coeffs` sends `SetCoeffs(COEFFS_TARGET, _)`, which atomically
+  replaces the coefficients owned by `ControlledAxis::reference`;
+- `forcing_coeffs` sends `SetCoeffs(COEFFS_FORCING, _)`, which atomically
+  replaces the coefficients owned by `StandardProgram::forcing`;
 - `ctrl_reset` calls `P::reset`;
 - all table parameters configure the programme-owned `TablePlayer`; and
 - table upload still uses the common double buffer and boundary activation.
@@ -749,8 +832,13 @@ Add tests for:
 - mode, multiplier, phase-offset and interpolation changes preserving current
   reset/non-reset semantics;
 - programme parameter delegation and normalisation;
-- global safety quieting all outputs and clamping each indexed output;
+- global safety quieting all outputs and clamping each indexed output when
+  `SAFETY_GATED` is set;
+- a non-gated rig applying every logical output verbatim regardless of `arm`
+  and `output_fault`, with the gate compiled away;
 - safety event counters incrementing per tick rather than per actuator;
+- `set_coeffs`/`set_increment` routing each defined slot to the correct
+  owner and ignoring an undefined slot without panicking;
 - current production source names and ordering; and
 - source/output capacity validation failures.
 
@@ -801,7 +889,10 @@ At minimum:
    capturing `cmd_epoch`, and prove boundary-coherent records.
 6. Recommit tables and prove the activated table changes at the command epoch
    without a torn record.
-7. Record exact firmware identity and results in `notes.md`.
+7. On `whirl-rig` and `pico2w-rig`, without ever writing `arm`, confirm output
+   is driven exactly as before the refactor; confirm `cbc-rig` still requires
+   `arm = 1` and still quiets and clamps as before.
+8. Record exact firmware identity and results in `notes.md`.
 
 Do not relax an acceptance limit to accommodate the abstraction.
 
@@ -824,8 +915,14 @@ The initial implementation is complete only when:
   table-player state separately;
 - the programme owns one immutable active table reference while common table
   storage retains safe double-buffer ownership;
-- all applied logical outputs pass through common safety before one rig
-  actuation call;
+- for a `SAFETY_GATED` rig, all applied logical outputs pass through common
+  safety before one rig actuation call; for a non-gated rig, every logical
+  output is applied verbatim, exactly as today;
+- `whirl-rig` and `pico2w-rig` remain non-gated and unarmed, with unchanged
+  actuated output, after migrating to the bounded output slice;
+- adding a coefficient bank or phase-accumulator instance to a future
+  programme requires no new `RtCommand` variant and no new match arm in
+  `rt_loop.rs`;
 - there is no allocation, dynamic dispatch, blocking lock, `f64`, Embassy,
   logging or critical section on the tick path;
 - all software checks and the SRAM layout check pass; and
@@ -842,8 +939,17 @@ A future MIMO experiment supplies another statically selected `RtProgram`
 which fills more than one logical output. It may own several
 `ControlledAxis` values, a portable matrix controller or experiment-specific
 `FourierSignal` banks and coefficient routing. The common loop, safety stage,
-source assembly and rig actuation boundary should already accept it. Reusable
-MIMO algorithms still belong in `helic-core`, not in `rig.rs`.
+source assembly and rig actuation boundary should already accept it without
+change. The command path is only partly free: adding more `FourierSignal` or
+phase-accumulator instances costs a new host parameter name in
+`params/schema.rs` and a new slot in the programme's own table, but no new
+`RtCommand` variant and no new match arm in `rt_loop.rs`, because
+`set_coeffs`/`set_increment` are already slot-indexed (see "Programme
+interface"). A genuinely new kind of routing — a portable matrix controller
+that is not expressible as several independent `ControlledAxis` values, or
+independent per-actuator table banks — is not free and is explicitly out of
+scope here. Reusable MIMO algorithms still belong in `helic-core`, not in
+`rig.rs`.
 
 Independent per-actuator reference, forcing or table banks require a separate
 proposal. In particular, atomic multi-axis coefficient replacement should use
@@ -851,3 +957,45 @@ a complete copied bank or a double-buffered bank swap; sequential per-channel
 commands can otherwise take effect on different sample boundaries. That later
 work must also budget command-queue SRAM, `MAX_SOURCES`, parameter payloads and
 per-tick Fourier evaluation cost.
+
+## Change log
+
+Revisions made after review, before any implementation:
+
+- **Safety-gate scope was ambiguous and risked a silent regression.** The
+  sketched `Rig` trait and "Safety for bounded outputs" no longer drop the
+  existing `SAFETY_GATED` opt-out. `whirl-rig` and `pico2w-rig` stay
+  non-gated and unarmed, exactly as today; only `cbc-rig` is gated. Added an
+  explicit hardware-regression step and host unit test for the non-gated
+  path, and an acceptance criterion stating it directly.
+- **Generalised the two coefficient commands.** `RtCommand::SetTargetCoeffs`
+  and `SetForcingCoeffs` collapse into one slot-indexed
+  `SetCoeffs(u16, FourierCoeffs<H>)`, dispatched through
+  `RtProgram::set_coeffs`. Adding a coefficient bank for a future MIMO axis no
+  longer needs a new `RtCommand` variant or match arm.
+- **Generalised the two increment commands.** `RtCommand::SetIncrement`
+  (master) and `SetTableIncrement` collapse into one slot-indexed
+  `SetIncrement(u16, u32)`, dispatched through `RtProgram::set_increment`, for
+  the same reason.
+- **Recorded why the remaining table commands stay special-cased**
+  (gain/interpolation/mode/multiplier/phase/trigger, `use_table`, `reset`):
+  differing payload types, no second `TablePlayer` instance in view, and
+  core-0 enum validation that a generic `(slot, u32)` command would either
+  lose or have to redo on the real-time core. Added goal 10 to state the
+  general principle (generalise same-shaped, multi-instance operations;
+  keep distinct what differs in type or has only one instance).
+- **Tightened the "Future extension boundary" claim.** It previously implied
+  the common loop was fully MIMO-ready; it now states precisely that
+  slot-indexed commands make adding more `FourierSignal`/phase-accumulator
+  instances free, while a genuinely different controller topology (a real
+  matrix controller, independent per-actuator table banks) is explicitly not
+  free and stays out of scope.
+- **Made the `HarmonicFrame` copy question have a default answer.**
+  `HarmonicGenerator::step` now returns `&HarmonicFrame<H>` (frame retained
+  inside the generator) as the starting point, rather than leaving
+  by-value-vs-borrow fully open; by-value is only adopted if ELF inspection
+  shows it is actually free.
+- **Noted the `normalise_param` signature mismatch.** Added a one-line note
+  that `StandardProgram::normalise_param` delegates to `Controller`'s
+  `input_count`-only signature and ignores `output_count`, so an implementer
+  does not have to guess how the two bridge.
