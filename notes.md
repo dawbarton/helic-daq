@@ -1,6 +1,6 @@
 # Hardware verification status
 
-Last updated 2026-07-18. Read this before a hardware session and update the
+Last updated 2026-07-22. Read this before a hardware session and update the
 verification boundary, failures and fitted-hardware assumptions afterwards.
 
 ## Verified on hardware
@@ -356,7 +356,37 @@ frame counter stalling, `safe_output = 0`. Flashed as commit `c8c3abe`; on-rig
 checks with exciter+laser off confirmed disarmed-after-flash, blind-laser trip +
 quiet (`safety = 0b1010`), arm/disarm, disconnect-disarm, and `loop_time`
 unchanged at 33–34 µs (gate adds no measurable tick cost). The amplitude clamp
-path is unit-tested but not yet exercised live (needs a powered, in-range laser).
+path was unit-tested at this boundary and was subsequently exercised live in
+the 2026-07-22 commissioning below.
+
+## CBC differential safety commissioning (2026-07-22)
+
+Clean protocol-v3 firmware `0.1.0 cd779ce` was rebuilt and flashed to the W5500
+CBC rig. DAC A was connected to ADC0 positive and DAC C to ADC0 negative with
+the exciter isolated; the laser was live at approximately 24.82 mm. A fresh
+diagnostic baseline had zero jitter, overruns, tick timeouts, command backlog,
+record drops, and laser fault counters; wake phase was fixed at 36 us and the
+loop maximum was 35 us.
+
+The differential loopback directly established non-inverting near-unity
+mapping: +/-50 mV constant captures fitted `adc0 = 1.000134 out - 0.269 mV`
+with 0.084 mV RMS residual, and a 7 Hz, 0.1 Vpp sine tracked correctly. With a
++50 mV forcing command retained, explicit `arm = 0` and TCP disconnect each
+forced streamed `out` to exactly zero and returned ADC0 to its approximately
+-0.23 mV baseline; re-arming restored the command.
+
+The amplitude-clamp path is now hardware-verified rather than unit-test-only.
+Retained +/-2.0 V requests produced symmetric applied-output means of
++/-1.9519998 V; ADC0 measured +1.952160 V and -1.952464 V, and safety bit 2 was
+set without a trip. Both 4000-record clamp captures had zero packet loss,
+device drops, timing faults, or laser faults and a 38 us maximum loop time.
+
+The final 8000-record quiet capture had `out == 0`, ADC0 mean -0.219 mV, arm 0,
+`safety = 0b1000`, zero output coefficients, table mode off, and clean
+diagnostics. The displacement/stale-laser trip was not deliberately re-induced
+in this session; the 2026-07-18 blind-laser test and unit tests remain the
+evidence for that path. ADC0 remains temporarily wired as the A-minus-C
+loopback and must be restored before use as the experiment signal.
 
 ## Next hardware session
 
