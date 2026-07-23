@@ -7,7 +7,8 @@
 //! time" in `docs/user_guide.md` and "Adding an experiment" in
 //! `docs/developer_guide.md`.
 
-use helic_core::controller::PassThrough;
+use helic_core::controller::PidController;
+use helic_core::pid::{Pid, PidConfig};
 use helic_fw_common::net::NetConfig;
 pub use helic_fw_common::SampleRate;
 
@@ -83,14 +84,38 @@ pub const MAC_ADDR: [u8; 6] = [0x02, 0x48, 0x4C, 0x00, 0x00, 0x01];
 ///     PidController::new(Pid::new(PidConfig { kp: 1.0, ..Default::default() }), 0)
 /// }
 /// ```
-pub type ActiveController = PassThrough;
+pub type ActiveController = PidController;
+
+/// Feedback input slot for closed-loop control: the laser tip displacement,
+/// which `rig.rs` publishes at `inputs[8]` (`LASER_INPUT`). CBC closes the loop
+/// on the measured displacement (`u = Kp(r - x) + Kd d/dt(r - x)`).
+pub const FEEDBACK_INPUT: usize = 8;
 
 /// Construct the one controller instance which is later moved to core 1.
 ///
-/// Keep constructor defaults consistent with the controller's `param_value`
-/// implementation so the host-visible parameter shadow starts correctly.
+/// The gains default to **zero**, so the flashed image drives exactly like the
+/// former `PassThrough` (controller output 0; `out = forcing + table`) until a
+/// host deliberately sets `ctrl_kp` / `ctrl_kd` over a live connection. This
+/// keeps closed-loop feedback off-by-default across every flash/reset, matching
+/// the arming discipline. `tau_d` gives the derivative a ~3 ms low-pass (the
+/// quantised laser is noisy); `out_min`/`out_max` cap the controller's own
+/// authority at +/-1 V, well inside the firmware safety gate's +/-1.952 V
+/// clamp. All of kp/ki/kd/tau_d/feedback remain host-tunable at runtime.
+///
+/// Defaults here must match `PidController::param_value` so the host parameter
+/// shadow starts correct; they do, because `param_value` reads these fields.
 pub fn make_controller() -> ActiveController {
-    PassThrough
+    PidController::new(
+        Pid::new(PidConfig {
+            kp: 0.0,
+            ki: 0.0,
+            kd: 0.0,
+            tau_d: 0.003,
+            out_min: -1.0,
+            out_max: 1.0,
+        }),
+        FEEDBACK_INPUT,
+    )
 }
 
 /// Selected sample-rate preset. The preset supplies exact PWM divider values;
