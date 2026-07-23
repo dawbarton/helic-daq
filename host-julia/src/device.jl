@@ -39,6 +39,7 @@ mutable struct Device
     port::UInt16
     timeout::Float64
     sequence::UInt8
+    request_lock::ReentrantLock
     parameters::Vector{Parameter}
     parameter_by_name::Dict{String, Parameter}
     sources::Vector{Source}
@@ -79,6 +80,7 @@ function Device(
         UInt16(port),
         Float64(timeout),
         UInt8(0),
+        ReentrantLock(),
         Parameter[],
         Dict{String, Parameter}(),
         Source[],
@@ -117,6 +119,12 @@ function Base.open(f::Function, ::Type{Device}, host::AbstractString; kwargs...)
 end
 
 function _request(device::Device, message_type, payload = UInt8[])
+    return lock(device.request_lock) do
+        _request_unlocked(device, message_type, payload)
+    end
+end
+
+function _request_unlocked(device::Device, message_type, payload)
     device.sequence += 0x01  # UInt8 arithmetic wraps 255 -> 0
     # Julia sockets have no native read timeout, so a Timer closes the socket
     # to interrupt a blocked read; a timed-out connection stays closed.
