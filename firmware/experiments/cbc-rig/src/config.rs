@@ -41,10 +41,17 @@ pub const DAC_OUT_CEILING_V: f32 = 4.0;
 pub const DAC_OUT_FLOOR_V: f32 = 0.096;
 
 /// Safe tip-displacement window (laser, mm). Outside this the gate latches a
-/// fault and holds the actuator quiet until the host re-arms. Conservative
-/// bounds about the ~25 mm resting point.
-pub const DISPLACEMENT_MIN_MM: f32 = 10.0;
-pub const DISPLACEMENT_MAX_MM: f32 = 40.0;
+/// fault and holds the actuator quiet until the host re-arms.
+///
+/// Sized from the **magnet-stator air gap**, not from the sensor range: the tip
+/// carries the magnets, so a tip excursion approaching the gap closes it and the
+/// magnets strike the stator. The gap is >= 10 mm as fitted (confirmed by David,
+/// 2026-08-03), and the resting point is ~24.8 mm, so this window allows about
+/// +/-7 mm of travel and keeps a >= 3 mm margin to contact. **Retighten this
+/// whenever the air gap is reduced** — the previous 10-40 mm window was +/-15 mm
+/// and would not have prevented contact at any realistic gap.
+pub const DISPLACEMENT_MIN_MM: f32 = 18.0;
+pub const DISPLACEMENT_MAX_MM: f32 = 32.0;
 
 /// Quiet the actuator if the laser has published no new frame for this long
 /// (blind-feedback guard). Converted to a tick count from the sample rate in
