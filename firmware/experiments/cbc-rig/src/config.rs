@@ -30,15 +30,22 @@ pub const LASER_RANGE_MM: f32 = 50.0;
 // reflash to change). See `docs/firmware-safety-stage-design.md`.
 
 /// Upper bound on the DAC output voltage driven to the exciter current
-/// controller (channel A). Set below the 4.096 V DAC rail. The gate clamps the
-/// logical differential command so that `MID_RAIL + out` never exceeds this.
-pub const DAC_OUT_CEILING_V: f32 = 4.0;
+/// controller (channel A). The gate clamps the logical differential command so
+/// that `MID_RAIL + out` never exceeds this.
+///
+/// Sized to make the project's **2 V peak-to-peak exciter limit a firmware
+/// constraint rather than host discipline**: `MID_RAIL + 1.05 V`, i.e. a
+/// logical `out` of +/-1.05 V. The 5% headroom lets a full 2 V pp drive be
+/// commanded without clipping while still bounding the exciter well below the
+/// former +/-1.952 V window, which allowed nearly 4 V pp. Raise deliberately
+/// (and update `AGENTS.md`) if a campaign ever needs more.
+pub const DAC_OUT_CEILING_V: f32 = 3.098;
 
-/// Lower bound on the same channel voltage. Chosen symmetric about `MID_RAIL`
-/// for the interim unipolar output stage, giving a symmetric differential
-/// drive window. A future bipolar output stage will re-home the common mode
-/// and turn these into independent ± limits.
-pub const DAC_OUT_FLOOR_V: f32 = 0.096;
+/// Lower bound on the same channel voltage. Symmetric about `MID_RAIL` for the
+/// interim unipolar output stage, giving a symmetric differential drive window.
+/// A future bipolar output stage will re-home the common mode and turn these
+/// into independent ± limits.
+pub const DAC_OUT_FLOOR_V: f32 = 0.998;
 
 /// Safe tip-displacement window (laser, mm). Outside this the gate latches a
 /// fault and holds the actuator quiet until the host re-arms.
