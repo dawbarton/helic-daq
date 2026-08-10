@@ -42,6 +42,8 @@ round trip and returns a named tuple. Source selection is by name or by a
 discovered `Source`, never by a cached registry index. For continuous streams,
 combine `configure_stream!`, `StreamReceiver`, `start_stream!`, `receive`, and
 `stop_stream!`.
+`reboot!(device)` safely schedules a normal MCU reboot and closes the invalid
+connection; reconnect with a new `Device` after the board reappears.
 
 Discover devices and upload an arbitrary waveform with:
 

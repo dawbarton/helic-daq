@@ -21,6 +21,10 @@ active stream. The optional broker retains this request/response framing but
 accepts multiple downstream clients and has the shared-state rules described
 below.
 
+The control channel has no authentication or encryption. It is intended for a
+trusted, isolated laboratory network. The reboot confirmation word below is an
+accident guard, not a security boundary.
+
 ### Frame layout
 
 | offset | size | field |
@@ -178,6 +182,7 @@ The v3 base registry is:
 | cmd_backlog_max | I | ro | maximum queued host commands observed at a tick boundary |
 | arm | I | rw | output safety arm: write 1 to arm (clears a stale trip), 0 to disarm |
 | safety | I | ro | safety-gate bitfield: bit0 armed, bit1 latched trip, bit2 clamped, bit3 quieted |
+| mcu_reboot | I | rw | write confirmation `0x52454254` to schedule a normal MCU reboot; reads return 0 |
 
 `wake_phase_*` read 4294967295/0 until the rig reports a sample-clock
 phase. `diag_reset` clears the `*_max`/`*_min` diagnostics along with
@@ -188,6 +193,24 @@ such as `ticks` and `laser_frames_received` keep running. `arm`/`safety` act
 only on an experiment whose rig opts into the safety gate (`cbc-rig`);
 elsewhere `arm` is inert and `safety` reads 0. The output is disarmed after
 every reset and on control-connection loss.
+
+`mcu_reboot` accepts exactly the u32 value `0x52454254`; every other value,
+including 0 and 1, returns bad value. A valid write disables streaming and
+disarms the safety gate. Core 1 then quiesces experiment outputs at sample
+boundaries: CBC restores both differential DAC inputs to their common-mode
+rest value and defines the unused channels, Pico 2W zeros all four DAC
+channels, and the actuator-free whirl rig completes immediately. Core 0 waits
+up to 20 ms for that handshake, then asks the RP2350 ROM for an asynchronous,
+normal-path reset after 250 ms. A quiescence timeout is logged but does not
+prevent reset, because resetting is the remaining recovery for a stuck core 1.
+The successful `SetPar` response means the ROM accepted the scheduled reset;
+the connection is invalid thereafter. This operation does not enter the RT
+command queue and does not advance `cmd_epoch`. It never requests BOOTSEL.
+
+When forwarded through `helic-broker`, the initiating client receives that
+success response before the broker retires the upstream generation. The broker
+then closes every downstream connection, clears stream state and history,
+finalises an active recording as an incomplete MCU-reboot close, and reconnects.
 
 Experiment read-only values, rig parameters and controller parameters follow
 the base registry. For `cbc-rig`, these include `laser`,

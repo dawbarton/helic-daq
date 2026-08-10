@@ -69,6 +69,9 @@ until its upstream connection is ready.
 - `SetBlock`/`Commit` ownership is temporary and connection-local, preventing
   two clients from interleaving one staged table transaction. No client is
   otherwise privileged.
+- A successful forwarded `mcu_reboot` is acknowledged to its initiating client
+  before the broker closes every downstream connection, clears stream state and
+  history, finalises any recording, and reconnects to the restarted MCU.
 
 Loss of the MCU connection closes all client connections, clears the shared
 configuration and history, closes an active file as an incomplete session,
@@ -165,9 +168,10 @@ decimation, configured count, and start time. The datasets are:
 
 `close_reason` values are 1 segment limit, 2 explicit `StreamStop`, 3 finite
 count complete, 4 upstream loss, 6 broker shutdown, and 7 a stream start that
-the MCU rejected or that failed locally before the MCU was started. Value 5 is
-reserved for storage failure; a writer failure normally leaves the `.partial`
-file unfinalised instead.
+the MCU rejected or that failed locally before the MCU was started. Value 8 is
+a requested MCU reboot; it is a clean file close with `session_complete = 0`.
+Value 5 is reserved for storage failure; a writer failure normally leaves the
+`.partial` file unfinalised instead.
 
 The output is standard HDF5 and is readable with Python `h5py`, Julia
 `HDF5.jl`, and MATLAB `h5read`/`h5info`. `.partial` files left by process or
@@ -182,11 +186,12 @@ The implementation is checked at four levels:
    parsing, bounded history, and exact packet trimming.
 2. Storage tests read completed files through an independent HDF5 reader and
    force a size rollover to verify linked segment metadata.
-3. A loopback system test uses a protocol peer and two real TCP/UDP clients to
+3. Loopback system tests use a protocol peer and real TCP/UDP clients to
    verify ordinary forwarding, quiet attachment, exact replay, quietness
    changes, global stop, disarm-on-final-disconnect, recorded data when enabled,
-   and an empty output directory when disabled.
-4. The existing Rust, Python, Julia, and MATLAB suites guard direct-MCU
-   behaviour and cross-language codec conventions. No firmware or hardware
-   regression run is required because the firmware and real-time path are
-   unchanged.
+   an empty output directory when disabled, and the full reboot/reconnect and
+   recording-finalisation lifecycle.
+4. The Rust, Python, Julia, and MATLAB suites guard direct-MCU behaviour and
+   cross-language confirmation constants. Firmware and hardware regression is
+   required when the reboot path changes because it crosses both cores and the
+   experiment output hardware.

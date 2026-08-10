@@ -133,6 +133,9 @@ the MCU clears global configuration, closes all downstream connections through
 a generation change, finalises an active recording as incomplete, and
 reconnects. Losing the final downstream client does not stop the stream or an
 enabled recording, but does issue `arm = 0` when the parameter exists.
+After forwarding a successful `mcu_reboot` response, the broker performs the
+same generation change deliberately, records close reason 8 rather than an
+upstream fault, and starts reconnecting without waiting for the heartbeat.
 
 ## Firmware networking foundations
 
@@ -253,6 +256,12 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   helpers. LLVM emits these calls for fixed-array initialisation and moves in
   otherwise SRAM-resident Rust; allowing the compiler-builtins versions in
   flash reintroduced 68–75 µs network-dependent maxima during this refactor.
+- Network reboot quiescence: core 0 publishes a release/acquire reboot request;
+  core 1 diverts at the next sample boundary into bounded `Rig::prepare_reboot`
+  steps, publishes completion, and spins in SRAM. CBC and Pico 2W issue one DAC
+  word per boundary to preserve device timing; whirl completes immediately.
+  `check_rt_layout.py` requires the shared completion symbol in SRAM and checks
+  any emitted experiment quiescence symbols there too.
 
 `RawPioInstance` derives PAC FIFO registers from the typed Embassy PIO owner.
 The BUSY latch similarly derives its GPIO number before erasing the typed pin.
@@ -427,8 +436,11 @@ rtc-style discoverable registry: the host reads names/types/sizes in bounded
 pages at connect and uses indices thereafter, so **adding a parameter is a
 firmware-only change**. `helic_fw_common::params::ParamStore` serves reads from
 RT-loop atomics or from the shadow copies of writable values, and turns writes
-into `RtCommand`s. Pagination keeps the complete registry independent of the
-1 KiB control-frame limit; each definition still fits wholly within one page.
+into `RtCommand`s. Direct core-0 actions return a `ParamAction`; the TCP server
+uses the reboot action to wait briefly for core-1 quiescence and invoke the
+RP2350 ROM only after the parameter value has been fully validated. Pagination
+keeps the complete registry independent of the 1 KiB control-frame limit; each
+definition still fits wholly within one page.
 
 The fixed schema and parameter-count assertions live in `params/schema.rs`;
 mutable shadow state and command translation remain in `params.rs`. To add a
@@ -644,7 +656,9 @@ and MATLAB protocol implementations share known-answer vectors from
 The root Rust suite also runs a real loopback broker test with a protocol peer
 and two TCP/UDP clients, covering discovery, shared start/stop, quiet replay,
 live forwarding, optional and enabled recording modes, HDF5 output, and
-final-client disarm. HDF5 unit tests force a segment rollover and reopen the
+final-client disarm. A second broker flow verifies reboot acknowledgement,
+all-client teardown, immediate upstream reconnection, and a clean but
+incomplete HDF5 reboot close. HDF5 unit tests force a segment rollover and reopen the
 result with an independent reader. These host checks do not replace hardware
 tests when a later change touches firmware or the real-time/network path.
 

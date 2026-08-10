@@ -66,6 +66,9 @@ An MCU disconnect closes all downstream clients, clears stream state,
 finalises an active file as incomplete, and starts reconnecting. A storage
 failure terminates the broker rather than silently dropping promised data.
 `Ctrl-C` performs graceful stop, finalisation, and disarm.
+A requested MCU reboot follows the same client teardown immediately after its
+ACK, records a distinct clean-but-incomplete close reason, and reconnects
+without waiting for heartbeat failure.
 
 ## Development
 

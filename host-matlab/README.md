@@ -48,6 +48,8 @@ device.uploadTable(single([0, 1, 0, -1]), ...
 For continuous acquisition, combine `configureStream`, `StreamReceiver`,
 `startStream`, `receive`, and `stopStream`. Source selection remains by
 discovered name; wire indices are never cached across connections.
+`device.reboot()` safely schedules a normal MCU reboot and closes the invalid
+connection; construct a new `Device` after the board reappears.
 
 Run the package test suite with:
 

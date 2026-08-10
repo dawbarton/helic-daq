@@ -236,6 +236,7 @@ helic-daq get laser loop_time_max
 helic-daq set freq 17.5
 helic-daq set ctrl_kp 0.8            # PID gain (when the PID build is flashed)
 helic-daq diag-reset                 # clear timing and event diagnostics
+helic-daq reboot                     # safely reboot the MCU
 helic-daq sources
 helic-daq capture --sources adc0,out --seconds 2 -o capture.npz
 helic-daq capture --sources adc0,target,out --seconds 1 --plot
@@ -307,6 +308,34 @@ data.Properties.UserData
 MATLAB captures are tables with `index` followed by the requested source
 variables. Units are in `Properties.VariableUnits`; cumulative device-side
 drops and UDP packet loss are in `Properties.UserData`.
+
+### Rebooting the MCU
+
+Use the dedicated helper rather than writing the confirmation parameter by
+hand:
+
+```python
+dev.reboot()
+```
+
+```julia
+reboot!(dev)
+```
+
+```matlab
+device.reboot();
+```
+
+A successful call means that outputs have been quiesced and a normal RP2350
+reset has been scheduled. The helper closes its now-invalid connection. Wait
+for the device to reappear, then create a new `Device` so DHCP and discovery
+are repeated. The device starts disarmed after reboot. Through the broker, all
+clients are disconnected and must reconnect; an active recording is cleanly
+closed but marked incomplete.
+
+The raw `mcu_reboot` parameter accepts only `0x52454254`. This conspicuous
+value prevents casual or mistyped writes, but it is not authentication. The
+control service should only be reachable on a trusted laboratory network.
 
 Every experiment also exposes the `cmd_epoch` stream source. It starts at zero
 and increments once for each queued parameter command applied by the real-time

@@ -23,6 +23,8 @@ dev.upload_table(
     duration=0.2,
     interpolation="hold",
 )
+# Quiesces outputs, schedules reset, and closes dev:
+dev.reboot()
 ```
 
 For host-side development without hardware, run the protocol-v3 simulator:
