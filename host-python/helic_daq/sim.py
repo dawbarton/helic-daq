@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import math
 import random
 import socket
@@ -75,6 +76,7 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("cmd_backlog_max", "I", 1, False, 0),
         SimParam("arm", "I", 1, True, 0),
         SimParam("safety", "I", 1, False, 0),
+        SimParam("mcu_reboot", "I", 1, True, 0),
         SimParam("laser", "f", 1, False, 25.0),
         SimParam("laser_frames_received", "I", 1, False, 0),
         SimParam("laser_uart_errors", "I", 1, False, 0),
@@ -112,6 +114,7 @@ class Simulator:
         params: list[SimParam] | None = None,
     ):
         self.params = list(params) if params is not None else default_params(sample_rate)
+        self._initial_values = [copy.deepcopy(param.value) for param in self.params]
         self.sources = default_sources()
         self.version = version
         self.noise = noise
@@ -127,6 +130,7 @@ class Simulator:
         self._connection: socket.socket | None = None
         self._stream_generation = 0
         self._cmd_epoch = 0
+        self._reboot_after_reply = False
         self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._listener.bind((host, port))
@@ -225,6 +229,24 @@ class Simulator:
                     connection.sendall(protocol.encode_frame(response_type, seq, response))
                 except OSError:
                     return
+                if self._reboot_after_reply:
+                    self._perform_reboot()
+                    return
+
+    def _perform_reboot(self) -> None:
+        """Restore power-on state after replying to a simulated reboot."""
+        with self._lock:
+            for param, initial in zip(self.params, self._initial_values, strict=True):
+                param.value = copy.deepcopy(initial)
+            self.stream_setup = None
+            self.stream_target = None
+            self.table = []
+            self._staging = [0.0] * 4096
+            self._table_trigger_time = None
+            self._stream_generation += 1
+            self._cmd_epoch = 0
+            self._started = time.monotonic()
+            self._reboot_after_reply = False
 
     @staticmethod
     def _error(code: int, msg_type: int) -> tuple[int, bytes]:
@@ -317,7 +339,9 @@ class Simulator:
                 value < 0.0 or value >= 4.0 or not value.is_integer()
             ):
                 return self._error(6, msg_type)
-            queues_command = param.name not in ("diag_reset", "arm") and not (
+            if param.name == "mcu_reboot" and value != protocol.MCU_REBOOT_CONFIRMATION:
+                return self._error(6, msg_type)
+            queues_command = param.name not in ("diag_reset", "arm", "mcu_reboot") and not (
                 param.name in ("ctrl_reset", "table_trigger") and value == 0
             )
             with self._lock:
@@ -349,6 +373,9 @@ class Simulator:
                     self._by_name["safety"].value = (
                         self._by_name["safety"].value & ~1
                     ) | param.value
+                if param.name == "mcu_reboot":
+                    param.value = 0
+                    self._reboot_after_reply = True
                 if param.name == "table_trigger" and value:
                     self._table_trigger_time = (
                         self._by_name["ticks"].value / self._by_name["sample_freq"].value

@@ -17,6 +17,9 @@ class TestCrc16(unittest.TestCase):
 
 
 class TestFrame(unittest.TestCase):
+    def test_reboot_confirmation_matches_firmware(self):
+        self.assertEqual(protocol.MCU_REBOOT_CONFIRMATION, 0x5245_4254)
+
     def test_known_answer_frame(self):
         # Status request, seq 1, empty payload — same vector as helic-proto.
         frame = protocol.encode_frame(MsgType.STATUS, 1)

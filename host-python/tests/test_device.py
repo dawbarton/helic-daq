@@ -57,6 +57,7 @@ class TestDevice(unittest.TestCase):
         self.assertIn("table", names)
         self.assertIn("arm", names)
         self.assertIn("safety", names)
+        self.assertIn("mcu_reboot", names)
         self.assertIn("rig_laser_range", names)
         self.assertIn("laser_frames_received", names)
         coeffs = self.dev.param("forcing_coeffs")
@@ -101,6 +102,21 @@ class TestDevice(unittest.TestCase):
     def test_set_and_read_back(self):
         self.dev.set("freq", 17.5)
         self.assertEqual(self.dev.get("freq"), 17.5)
+
+    def test_reboot_requires_confirmation_and_restores_power_on_state(self):
+        self.dev.set("freq", 17.5)
+        initial_epoch = self.sim._cmd_epoch
+        with self.assertRaises(DeviceError) as caught:
+            self.dev.set("mcu_reboot", 1)
+        self.assertEqual(caught.exception.code, 6)
+        self.assertEqual(self.sim._cmd_epoch, initial_epoch)
+
+        self.dev.reboot()
+        self.assertEqual(self.dev._sock.fileno(), -1)
+        self.dev = Device("127.0.0.1", port=self.sim.port)
+        self.assertEqual(self.dev.get("freq"), 0.0)
+        self.assertEqual(self.dev.get("arm"), 0)
+        self.assertEqual(self.sim._cmd_epoch, 0)
 
     def test_invalid_rig_values_are_rejected_without_changing_shadow(self):
         for name, value, initial in [

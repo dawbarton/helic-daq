@@ -124,7 +124,7 @@ class TestSimulator(unittest.TestCase):
     def test_timing_diagnostics_match_firmware_registry(self):
         names = [param.name for param in self.dev.params]
         self.assertEqual(
-            names[23:32],
+            names[23:33],
             [
                 "wake_phase_min",
                 "wake_phase_max",
@@ -135,6 +135,7 @@ class TestSimulator(unittest.TestCase):
                 "cmd_backlog_max",
                 "arm",
                 "safety",
+                "mcu_reboot",
             ],
         )
         self.sim._by_name["loop_time_max"].value = 42
@@ -316,6 +317,25 @@ class TestSimulator(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(output.getvalue().strip(), "diagnostics reset")
         self.assertEqual(self.dev.get("loop_time_max"), 0)
+
+    def test_cli_reboot_command(self):
+        self.dev.set("freq", 17.5)
+        self.dev.close()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = cli.main(
+                [
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.sim.port),
+                    "reboot",
+                ]
+            )
+        self.dev = Device("127.0.0.1", self.sim.port)
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue().strip(), "MCU reboot scheduled")
+        self.assertEqual(self.dev.get("freq"), 0.0)
 
     def test_cli_refuses_one_shot_arm(self):
         self.dev.close()

@@ -8,6 +8,7 @@ classdef Protocol
         CONTROL_PORT = 2350
         STREAM_PORT = 2351
         DISCOVERY_PORT = 2352
+        MCU_REBOOT_CONFIRMATION = uint32(hex2dec('52454254'))
         HEADER_LENGTH = 6
         TRAILER_LENGTH = 2
         MAX_PAYLOAD = 1024

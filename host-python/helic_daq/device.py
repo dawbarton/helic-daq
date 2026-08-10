@@ -204,6 +204,15 @@ class Device:
         raw = self._pack_value(p, value)
         self._request(MsgType.SET_PAR, struct.pack("<H", p.index) + raw)
 
+    def reboot(self) -> None:
+        """Schedule a normal MCU reboot and invalidate this connection.
+
+        A successful reply means that the firmware has quiesced its outputs
+        and the RP2350 ROM has accepted the delayed reset request.
+        """
+        self.set("mcu_reboot", protocol.MCU_REBOOT_CONFIRMATION)
+        self.close()
+
     def upload_table(
         self,
         values,

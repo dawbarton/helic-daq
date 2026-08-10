@@ -24,11 +24,11 @@ classdef FakeTransport < handle
             names = ["firmware"; "sample_freq"; "freq"; "forcing_coeffs"; ...
                 "table"; "table_len"; "table_freq"; "table_gain"; ...
                 "table_interp"; "table_mode"; "table_mult"; "table_phase"; ...
-                "table_trigger"];
+                "table_trigger"; "mcu_reboot"];
             typeCodes = ["c"; "f"; "f"; "f"; "f"; "H"; ...
-                "f"; "f"; "I"; "I"; "I"; "f"; "I"];
-            counts = uint16([16; 1; 1; 5; 8; 1; 1; 1; 1; 1; 1; 1; 1]);
-            writable = logical([0; 0; 1; 1; 1; 0; 1; 1; 1; 1; 1; 1; 1]);
+                "f"; "f"; "I"; "I"; "I"; "f"; "I"; "I"];
+            counts = uint16([16; 1; 1; 5; 8; 1; 1; 1; 1; 1; 1; 1; 1; 1]);
+            writable = logical([0; 0; 1; 1; 1; 0; 1; 1; 1; 1; 1; 1; 1; 1]);
             indices = uint16((0:numel(names) - 1).');
             obj.Definitions = table(indices, names, typeCodes, counts, writable, ...
                 'VariableNames', {'Index', 'Name', 'TypeCode', 'Count', 'Writable'});
@@ -53,6 +53,7 @@ classdef FakeTransport < handle
                 uint32(0);
                 uint32(1);
                 single(0);
+                uint32(0);
                 uint32(0)
                 };
             initial = [initial; num2cell(single((0:49).'))];

@@ -111,6 +111,7 @@ function start_mock_device()
         (name = "table_mult", type_code = 'I', count = 1, writable = true, value = UInt32(1)),
         (name = "table_phase", type_code = 'f', count = 1, writable = true, value = Float32(0)),
         (name = "table_trigger", type_code = 'I', count = 1, writable = true, value = UInt32(0)),
+        (name = "mcu_reboot", type_code = 'I', count = 1, writable = true, value = UInt32(0)),
     ]
     append!(
         parameters,
@@ -147,6 +148,7 @@ function start_mock_device()
                     isnothing(request) && break
                     payload = UInt8[]
                     send_stream_to = nothing
+                    reboot_after_reply = false
                     if request.message_type == UInt8(P.STATUS)
                         payload = mock_status_payload(length(parameters), length(sources))
                     elseif request.message_type == UInt8(P.GET_PARAMS)
@@ -167,6 +169,12 @@ function start_mock_device()
                         io = IOBuffer(request.payload)
                         index = Int(P._read_le(io, UInt16)) + 1
                         values[index] = read(io)
+                        if parameters[index].name == "mcu_reboot"
+                            @test values[index] == mock_raw(
+                                'I', 1, P.MCU_REBOOT_CONFIRMATION,
+                            )
+                            reboot_after_reply = true
+                        end
                     elseif request.message_type == UInt8(P.SET_BLOCK)
                         io = IOBuffer(request.payload)
                         index = Int(P._read_le(io, UInt16)) + 1
@@ -218,6 +226,7 @@ function start_mock_device()
                     end
                     write(socket, P.encode_frame(request.message_type, request.sequence, payload))
                     flush(socket)
+                    reboot_after_reply && break
                     if !isnothing(send_stream_to)
                         send_mock_stream(
                             send_stream_to,
@@ -239,19 +248,19 @@ end
     mock = start_mock_device()
     device = Device("127.0.0.1"; port = mock.port)
     try
-        @test length(device.parameters) == 63
+        @test length(device.parameters) == 64
         @test parameter(device, :freq).index == 2
         @test device["firmware"] == "helic-daq test"
         @test status(device) == (
             protocol_version = P.VERSION,
-            n_params = 63,
+            n_params = 64,
             n_sources = 2,
             sample_rate = Float32(1000),
             uptime = 42.0,
         )
         device[:freq] = 12.5f0
         @test device[:freq] == 12.5f0
-        @test parameter(device, :paged_extra_049).index == 62
+        @test parameter(device, :paged_extra_049).index == 63
         @test device[:paged_extra_049] == 49.0f0
         device[:paged_extra_049] = 12.5f0
         @test device[:paged_extra_049] == 12.5f0
@@ -295,6 +304,8 @@ end
         @test recent[:index] == UInt64[100, 102, 104, 106]
         @test recent[:out] == Float32[0, 2, 4, 6]
         set_stream_quiet!(device, false)
+        reboot!(device)
+        @test !isopen(device)
     finally
         close(device)
         wait(mock.task)

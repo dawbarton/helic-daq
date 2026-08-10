@@ -6,6 +6,7 @@ const P = HelicDAQ.Protocol
     @test P.crc16(codeunits("123456789")) == 0x29b1
     @test P.crc16(UInt8[]) == 0xffff
     @test P.crc16(UInt8[0]) == 0xe1f0
+    @test P.MCU_REBOOT_CONFIRMATION == 0x5245_4254
 
     @test P.encode_frame(P.GET_PARAMS, 1, P.encode_param_page_request(0)) ==
         hex2bytes("484c010102000000890c")

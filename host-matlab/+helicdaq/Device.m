@@ -145,6 +145,13 @@ classdef Device < handle
             obj.request(helicdaq.Protocol.SET_PAR, payload);
         end
 
+        function reboot(obj)
+            %REBOOT Schedule a normal MCU reboot and close this connection.
+            obj.setParameter('mcu_reboot', ...
+                helicdaq.Protocol.MCU_REBOOT_CONFIRMATION);
+            obj.close();
+        end
+
         function information = status(obj)
             %STATUS Return protocol, registry, sample-rate, and uptime status.
             payload = obj.request(helicdaq.Protocol.STATUS, uint8([]));

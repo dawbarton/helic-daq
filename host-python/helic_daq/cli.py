@@ -89,6 +89,12 @@ def cmd_diag_reset(args) -> None:
     print("diagnostics reset")
 
 
+def cmd_reboot(args) -> None:
+    with _connect(args) as dev:
+        dev.reboot()
+    print("MCU reboot scheduled")
+
+
 def cmd_status(args) -> None:
     with _connect(args) as dev:
         for key, value in dev.status().items():
@@ -221,6 +227,8 @@ def main(argv=None) -> int:
     sub.add_parser("diag-reset", help="reset timing and event diagnostics").set_defaults(
         fn=cmd_diag_reset
     )
+
+    sub.add_parser("reboot", help="safely reboot the MCU").set_defaults(fn=cmd_reboot)
 
     sub.add_parser("status", help="device status").set_defaults(fn=cmd_status)
     p = sub.add_parser("find", help="discover HELIC-DAQ devices")

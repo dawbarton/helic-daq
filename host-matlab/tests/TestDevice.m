@@ -6,19 +6,19 @@ classdef TestDevice < matlab.unittest.TestCase
             device = helicdaq.Device("test", 'Transport', transport);
             cleanup = onCleanup(@() delete(device));
 
-            testCase.verifyEqual(height(device.Parameters), 63);
+            testCase.verifyEqual(height(device.Parameters), 64);
             testCase.verifyEqual(device.parameter('freq').Index, uint16(2));
             testCase.verifyEqual(device.getParameter('firmware'), "helic-daq test");
             information = device.status();
             testCase.verifyEqual(information.ProtocolVersion, helicdaq.Protocol.VERSION);
-            testCase.verifyEqual(information.ParameterCount, 63);
+            testCase.verifyEqual(information.ParameterCount, 64);
             testCase.verifyEqual(information.SourceCount, 2);
             testCase.verifyEqual(information.SampleRate, single(1000));
             testCase.verifyEqual(information.Uptime, seconds(42));
 
             device.setParameter('freq', 12.5);
             testCase.verifyEqual(device.getParameter('freq'), single(12.5));
-            testCase.verifyEqual(device.parameter('paged_extra_049').Index, uint16(62));
+            testCase.verifyEqual(device.parameter('paged_extra_049').Index, uint16(63));
             testCase.verifyEqual(device.getParameter('paged_extra_049'), single(49));
             device.setParameter('paged_extra_049', 12.5);
             testCase.verifyEqual(device.getParameter('paged_extra_049'), single(12.5));
@@ -27,6 +27,16 @@ classdef TestDevice < matlab.unittest.TestCase
             testCase.verifyEqual(values.Value{2}, single(12.5));
             testCase.verifyError(@() device.setParameter('firmware', "x"), ...
                 'helicdaq:ReadOnly');
+        end
+
+        function rebootClosesInvalidConnection(testCase)
+            transport = FakeTransport();
+            device = helicdaq.Device("test", 'Transport', transport);
+            cleanup = onCleanup(@() delete(device));
+            device.reboot();
+            testCase.verifyEqual(transport.parameterValue('mcu_reboot'), ...
+                helicdaq.Protocol.MCU_REBOOT_CONFIRMATION);
+            testCase.verifyError(@() device.status(), 'helicdaq:ConnectionClosed');
         end
 
         function tableUpload(testCase)

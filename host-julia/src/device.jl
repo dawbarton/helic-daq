@@ -324,6 +324,13 @@ function setparam!(device::Device, name::Union{AbstractString, Symbol}, value)
     return device
 end
 
+"""Schedule a normal MCU reboot, then close the invalid control connection."""
+function reboot!(device::Device)
+    setparam!(device, :mcu_reboot, Protocol.MCU_REBOOT_CONFIRMATION)
+    close(device)
+    return nothing
+end
+
 Base.getindex(device::Device, name::Union{AbstractString, Symbol}) = getparam(device, name)
 
 function Base.setindex!(device::Device, value, name::Union{AbstractString, Symbol})
