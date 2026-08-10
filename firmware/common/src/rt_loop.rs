@@ -14,7 +14,7 @@ use helic_core::table::{TableInterpolation, TableMode, TablePlayer, WaveTable};
 use static_cell::StaticCell;
 
 use crate::rig::{source_count, Rig, TickSource, MAX_SOURCES};
-use crate::table;
+use crate::{reboot, table};
 use crate::{SampleRate, HARMONICS};
 
 #[derive(Clone, Copy, Debug)]
@@ -330,6 +330,27 @@ fn run_rt_tick<R: Rig>(
     TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Run one bounded, experiment-specific output-quiescence step.
+///
+/// The stable source name is also checked in every production ELF by the
+/// real-time layout gate, because a network-triggered reboot must not make
+/// core 1 execute flash-resident code while network traffic occupies XIP.
+#[unsafe(link_section = ".data.ram_func")]
+#[inline]
+fn reboot_quiesce_step<R: Rig>(rig: &mut R, step: u8) -> bool {
+    rig.prepare_reboot(step)
+}
+
+#[unsafe(link_section = ".data.ram_func")]
+#[unsafe(export_name = "helic_run_reboot_quiesce")]
+#[inline(never)]
+fn run_reboot_quiesce() -> ! {
+    reboot::mark_quiesced();
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
 struct RtLoopState<R: Rig, T: TickSource> {
     rig: R,
     tick: T,
@@ -405,9 +426,17 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
 #[unsafe(link_section = ".data.ram_func")]
 #[inline(never)]
 fn run_hot_loop<R: Rig, T: TickSource>(mut state: RtLoopState<R, T>) -> ! {
+    let mut reboot_step = 0;
     loop {
         if !state.tick.wait() {
             TICK_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+        }
+        if reboot::is_requested() {
+            if reboot_quiesce_step(&mut state.rig, reboot_step) {
+                run_reboot_quiesce();
+            }
+            reboot_step = reboot_step.saturating_add(1);
+            continue;
         }
         run_rt_tick::<R>(
             &mut state.rig,

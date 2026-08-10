@@ -201,6 +201,13 @@ pub trait Rig {
     fn measure(&mut self, values: &mut [f32]);
     fn actuate(&mut self, out: f32);
 
+    /// Perform one bounded step towards the experiment's reboot-safe hardware
+    /// state, returning `true` when no further steps are required.
+    ///
+    /// This runs on core 1 at sample boundaries and must obey the same SRAM,
+    /// timing, and dependency constraints as [`actuate`](Self::actuate).
+    fn prepare_reboot(&mut self, step: u8) -> bool;
+
     /// Hard output limit applied to the summed actuator command every tick,
     /// after the controller/forcing/table sum and before `actuate`. A buggy
     /// or unstable controller cannot drive beyond what this returns. Only

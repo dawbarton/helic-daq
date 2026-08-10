@@ -45,6 +45,7 @@ pub const BASE_PARAMS: &[ParamDef] = &[
     // log. Kept to two entries to preserve a small, uniform interface.
     ParamDef::writable("arm", ParamType::U32, 1),
     ParamDef::read_only("safety", ParamType::U32, 1),
+    ParamDef::writable("mcu_reboot", ParamType::U32, 1),
 ];
 
 pub(super) const IDX_FREQ: usize = 10;
@@ -69,6 +70,7 @@ pub(super) const IDX_DIAG_RESET: usize = 28;
 pub(super) const IDX_COMMAND_BACKLOG_MAX: usize = 29;
 pub(super) const IDX_ARM: usize = 30;
 pub(super) const IDX_SAFETY: usize = 31;
+pub(super) const IDX_MCU_REBOOT: usize = 32;
 
 pub(super) const MAX_CTRL_PARAMS: usize = 16;
 pub(super) const MAX_RIG_PARAMS: usize = 16;

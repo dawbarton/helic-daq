@@ -20,6 +20,9 @@ SRAM_END = 0x2008_2000
 HOT_SYMBOLS = (
     "run_hot_loop",
     "run_rt_tick",
+    "run_reboot_quiesce",
+    "reboot_quiesce_step",
+    "prepare_reboot",
     "transfer_in_place",
     "__aeabi_memcpy4",
     "__aeabi_memclr4",
@@ -28,13 +31,20 @@ HOT_SYMBOLS = (
 REQUIRED_SYMBOLS = {
     "fw-cbc-rig": (
         "run_hot_loop",
+        "run_reboot_quiesce",
         "transfer_in_place",
         "__aeabi_memcpy4",
         "__aeabi_memclr4",
     ),
-    "fw-whirl-rig": ("run_hot_loop", "__aeabi_memcpy4", "__aeabi_memclr4"),
+    "fw-whirl-rig": (
+        "run_hot_loop",
+        "run_reboot_quiesce",
+        "__aeabi_memcpy4",
+        "__aeabi_memclr4",
+    ),
     "fw-pico2w-rig": (
         "run_hot_loop",
+        "run_reboot_quiesce",
         "transfer_in_place",
         "__aeabi_memcpy4",
         "__aeabi_memclr4",

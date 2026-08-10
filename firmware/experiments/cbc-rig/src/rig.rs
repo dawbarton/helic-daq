@@ -230,6 +230,24 @@ impl Rig for CbcRig {
             .write_volts(self.output_channel, MID_RAIL + out);
     }
 
+    #[unsafe(link_section = ".data.ram_func")]
+    fn prepare_reboot(&mut self, step: u8) -> bool {
+        // One transfer per sample boundary preserves the AD5064 inter-word
+        // timing while reproducing the audited power-on safe state. Writing
+        // both differential inputs covers any runtime output routing.
+        let (channel, volts, complete) = match step {
+            0 => (NEG_REF_CHANNEL, MID_RAIL, false),
+            1 => (OUTPUT_CHANNEL, MID_RAIL, false),
+            2 => (1, 0.0, false),
+            _ => (3, 0.0, true),
+        };
+        #[cfg(not(feature = "diag-skip-dac"))]
+        self.dac_raw.write_volts(channel, volts);
+        #[cfg(feature = "diag-skip-dac")]
+        let _ = (channel, volts);
+        complete
+    }
+
     #[inline]
     #[unsafe(link_section = ".data.ram_func")]
     fn clamp_output(&self, out: f32) -> f32 {

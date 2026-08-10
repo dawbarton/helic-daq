@@ -143,6 +143,13 @@ pub trait ParamRegistry {
     fn sample_rate(&self) -> SampleRate;
 }
 
+/// An action which the control server must perform after accepting a write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamAction {
+    None,
+    Reboot,
+}
+
 #[derive(Clone, Copy)]
 enum ShadowUpdate {
     None,
@@ -402,6 +409,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 let flags = armed | (tripped << 1) | (clamped << 2) | (quieted << 3);
                 out.copy_from_slice(&flags.to_le_bytes());
             }
+            IDX_MCU_REBOOT => out.copy_from_slice(&0u32.to_le_bytes()),
             i if i < BASE_PARAMS.len() + self.extras.len() => {
                 self.extras[i - BASE_PARAMS.len()].get(out)
             }
@@ -420,7 +428,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
 
     /// Write parameter `index` from raw little-endian bytes and forward the
     /// change to the RT loop.
-    pub fn set(&mut self, index: usize, data: &[u8]) -> Result<(), ErrorCode> {
+    pub fn set(&mut self, index: usize, data: &[u8]) -> Result<ParamAction, ErrorCode> {
         let def = self.def(index).ok_or(ErrorCode::BadIndex)?;
         if !def.writable {
             return Err(ErrorCode::ReadOnly);
@@ -458,7 +466,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             }
             IDX_CTRL_RESET => {
                 if u32::from_le_bytes(data.try_into().unwrap()) == 0 {
-                    return Ok(());
+                    return Ok(ParamAction::None);
                 }
                 (RtCommand::ResetController, ShadowUpdate::None)
             }
@@ -523,7 +531,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             }
             IDX_TABLE_TRIGGER => {
                 if u32::from_le_bytes(data.try_into().unwrap()) == 0 {
-                    return Ok(());
+                    return Ok(ParamAction::None);
                 }
                 (RtCommand::TriggerTable, ShadowUpdate::None)
             }
@@ -536,7 +544,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                         extra.reset_diagnostic();
                     }
                 }
-                return Ok(());
+                return Ok(ParamAction::None);
             }
             IDX_ARM => {
                 // Applied directly on core 0 (like `diag_reset`) so the
@@ -546,7 +554,16 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 } else {
                     rt_loop::safety_disarm();
                 }
-                return Ok(());
+                return Ok(ParamAction::None);
+            }
+            IDX_MCU_REBOOT => {
+                if u32::from_le_bytes(data.try_into().unwrap())
+                    != helic_proto::MCU_REBOOT_CONFIRMATION
+                {
+                    return Err(ErrorCode::BadValue);
+                }
+                crate::reboot::request();
+                return Ok(ParamAction::Reboot);
             }
             i if (BASE_PARAMS.len() + self.extras.len()
                 ..BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len())
@@ -593,7 +610,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             ShadowUpdate::RigParam(id, value) => self.rig_params[id] = value,
             ShadowUpdate::CtrlParam(id, value) => self.ctrl_params[id] = value,
         }
-        Ok(())
+        Ok(ParamAction::None)
     }
 
     pub fn set_block(&mut self, index: usize, offset: u32, data: &[u8]) -> Result<(), ErrorCode> {
@@ -634,7 +651,7 @@ impl<C: Controller, R: Rig> ParamRegistry for ParamStore<C, R> {
     }
 
     fn set(&mut self, index: usize, data: &[u8]) -> Result<(), ErrorCode> {
-        ParamStore::set(self, index, data)
+        ParamStore::set(self, index, data).map(|_| ())
     }
 
     fn set_block(&mut self, index: usize, offset: u32, data: &[u8]) -> Result<(), ErrorCode> {

@@ -161,6 +161,11 @@ impl Rig for WhirlRig {
     fn actuate(&mut self, _out: f32) {}
 
     #[unsafe(link_section = ".data.ram_func")]
+    fn prepare_reboot(&mut self, _step: u8) -> bool {
+        true
+    }
+
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_start(&mut self) {
         self.tick_pin.set_high();
     }

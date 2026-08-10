@@ -99,6 +99,13 @@ impl Rig for PicoDacRig {
     }
 
     #[unsafe(link_section = ".data.ram_func")]
+    fn prepare_reboot(&mut self, step: u8) -> bool {
+        let channel = usize::from(step.min(3));
+        self.dac_raw.write_volts(channel, 0.0);
+        step >= 3
+    }
+
+    #[unsafe(link_section = ".data.ram_func")]
     fn tick_start(&mut self) {
         self.tick_pin.set_high();
     }

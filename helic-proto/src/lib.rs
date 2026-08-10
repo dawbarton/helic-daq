@@ -36,6 +36,11 @@ pub const STREAM_PORT: u16 = 2351;
 /// UDP port for device-discovery beacons.
 pub const DISCOVERY_PORT: u16 = 2352;
 
+/// Deliberately conspicuous value required when writing the discoverable
+/// `mcu_reboot` parameter. This guards against accidental writes; it is not
+/// authentication.
+pub const MCU_REBOOT_CONFIRMATION: u32 = 0x5245_4254; // mnemonic: "REBT"
+
 /// Error codes carried in `MsgType::Error` responses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -111,5 +116,10 @@ mod tests {
             assert_eq!(ParamType::from_code(t as u8), Some(t));
         }
         assert_eq!(ParamType::from_code(b'x'), None);
+    }
+
+    #[test]
+    fn reboot_confirmation_is_stable() {
+        assert_eq!(MCU_REBOOT_CONFIRMATION, 0x5245_4254);
     }
 }

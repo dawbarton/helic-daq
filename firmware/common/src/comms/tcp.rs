@@ -4,7 +4,7 @@
 use defmt::{info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{IpAddress, Stack};
-use embassy_time::{Duration, Instant};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_io_async::{Read, Write};
 use helic_core::controller::Controller;
 use helic_proto::frame::{self, MsgType, HEADER_LEN, MAX_PAYLOAD, TRAILER_LEN};
@@ -12,7 +12,7 @@ use helic_proto::payload;
 use helic_proto::{ErrorCode, MAGIC, VERSION};
 
 use super::STREAM;
-use crate::params::ParamStore;
+use crate::params::{ParamAction, ParamStore};
 use crate::rig::{source, source_count, Rig, MAX_SOURCES};
 
 pub async fn control_run<C: Controller, R: Rig>(
@@ -83,7 +83,33 @@ async fn serve<C: Controller, R: Rig>(socket: &mut TcpSocket<'_>, store: &mut Pa
 
         // Dispatch. `handle` returns either a response payload length or an
         // error code to report.
-        let result = handle(ty, payload, store, socket, &mut resp_payload);
+        let mut action = ParamAction::None;
+        let mut result = handle(ty, payload, store, socket, &mut resp_payload, &mut action);
+        let mut reboot_scheduled = false;
+        if result.is_ok() && action == ParamAction::Reboot {
+            STREAM.lock(|s| s.borrow_mut().enabled = false);
+            crate::rt_loop::safety_disarm();
+
+            let started = Instant::now();
+            while !crate::reboot::is_quiesced()
+                && Instant::now().duration_since(started) < Duration::from_millis(20)
+            {
+                Timer::after_millis(1).await;
+            }
+            if !crate::reboot::is_quiesced() {
+                // A stuck core 1 cannot be made safer by retaining control;
+                // the chip reset is the remaining recovery mechanism.
+                warn!("control: core 1 reboot quiescence timed out");
+            }
+
+            let status = embassy_rp::rom_data::reboot(0, 250, 0, 0);
+            if status < 0 {
+                warn!("control: ROM rejected reboot request ({})", status);
+                result = Err(ErrorCode::Busy);
+            } else {
+                reboot_scheduled = true;
+            }
+        }
         let n = match result {
             Ok(n) => frame::encode(&mut resp_frame, ty, seq, &resp_payload[..n]),
             Err(code) => frame::encode(
@@ -97,9 +123,15 @@ async fn serve<C: Controller, R: Rig>(socket: &mut TcpSocket<'_>, store: &mut Pa
         // write_all: the inherent `write` may accept only part of the frame,
         // which would silently corrupt the response stream.
         if socket.write_all(&resp_frame[..n]).await.is_err() {
+            if reboot_scheduled {
+                core::future::pending().await
+            }
             return;
         }
         let _ = socket.flush().await;
+        if reboot_scheduled {
+            core::future::pending().await
+        }
     }
 }
 
@@ -109,6 +141,7 @@ fn handle<C: Controller, R: Rig>(
     store: &mut ParamStore<C, R>,
     socket: &TcpSocket<'_>,
     resp: &mut [u8; MAX_PAYLOAD],
+    action: &mut ParamAction,
 ) -> Result<usize, ErrorCode> {
     let Some(msg) = MsgType::from_u8(ty) else {
         return Err(ErrorCode::UnknownType);
@@ -156,7 +189,7 @@ fn handle<C: Controller, R: Rig>(
                 return Err(ErrorCode::BadLength);
             }
             let index = u16::from_le_bytes([payload[0], payload[1]]) as usize;
-            store.set(index, &payload[2..])?;
+            *action = store.set(index, &payload[2..])?;
             Ok(0)
         }
         MsgType::SetBlock => {

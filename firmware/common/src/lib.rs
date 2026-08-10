@@ -11,6 +11,7 @@ pub mod net;
 pub mod params;
 pub mod pulse_pio;
 pub mod raw_pio;
+pub mod reboot;
 pub mod rig;
 pub mod rt_loop;
 mod rt_mem;
