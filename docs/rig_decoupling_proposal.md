@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: proposed, not implemented. Revision 3. Supersedes parts of
+Status: proposed, not implemented. Revision 4. Supersedes parts of
 `docs/rt_program_proposal.md` (see "Relationship to the RT programme
 proposal"). Revision history and review responses are at the end.
 
@@ -39,7 +39,65 @@ The intended use is experimental structural dynamics: modal testing, force
 appropriation (phase-resonance or normal-mode testing), their nonlinear
 extensions via phase-locked excitation, and control-based continuation. Those
 applications, rather than MIMO in the abstract, fix several of the numbers above
-and one interface rule.
+and two interface rules.
+
+### Where computation lives: the host by default
+
+The governing principle is that work belongs on the host unless something forces
+it onto the device. Two things force it onto the device: sample-rate synthesis,
+and feedback loops whose bandwidth the network cannot carry. Everything else,
+including all measurement-side processing, is host work.
+
+This is already the codebase's practice rather than a new policy.
+`FourierEstimator` exists in `helic-core` with unit tests and **no firmware
+consumer at all**; control-based continuation already runs host-side. The
+division for an appropriation rig is therefore:
+
+| Runs on core 1 | Runs on the host |
+|---|---|
+| force-vector synthesis at sample rate | multi-channel, multi-harmonic response estimation |
+| one-channel fundamental demodulation, inside the PLL | mode indicator functions |
+| the PLL loop filter and NCO | the appropriation update law |
+| the safety gate | all reprocessing and offline analysis |
+
+Sustained raw streaming is hardware-proven, not assumed: `notes.md:50` records
+960 000 records of all 13 CBC sources over 120.25 s at 8 kHz with zero UDP loss,
+zero record drops, and a 35 µs loop maximum. A four-shaker rig needs 17 sources
+at roughly 3.6 Mbit/s, which is the configuration already verified.
+
+Host-side estimation is also scientifically better: `f64` rather than `f32`,
+exact per-period block integration rather than a one-pole IIR with documented
+ripple (`fourier.rs:80`), proper windowing, and the raw time series retained for
+reprocessing. At about 1.6 GB/hour to the broker's HDF5 that is unremarkable
+storage, and far more useful than keeping only reduced estimates.
+
+**Why the PLL is the exception.** It is a feedback loop, so putting the network
+inside it costs phase margin. A phase estimate needs at least one excitation
+period regardless of where it runs, so 50 ms at 20 Hz is the floor; nonlinear
+phase-resonance testing typically runs loop bandwidths of order 0.1–1 Hz. A
+50 ms round trip is then about 18° of phase margin at a 1 Hz crossover and under
+2° at 0.1 Hz, which is tolerable but not free, and host scheduling jitter is
+less predictable than its mean. Keeping the PLL on core 1 removes the question
+entirely, at the cost of one on-device demodulator.
+
+That demodulator is the minimum: one channel at the fundamental, owned privately
+by the `Pll`, not a general estimator bank. It should run `O(1)` every tick
+rather than performing a large update on `period_start`, so the tick stays
+uniform and no rare-expensive-tick pattern is reintroduced.
+
+### The master phase must be a stream source
+
+Host-side demodulation must use the same phase reference the device used. With
+frequency changing, whether under the PLL or from a host-commanded step applied
+at an unknown sample boundary, the host cannot reconstruct phase by counting
+samples; `cmd_epoch` reports *that* a command landed, not at what phase.
+
+So any programme owning a master phase accumulator exposes it as a signal named
+`phase`, in turns. As `f32` this retains 24 bits, about 2×10⁻⁵ degrees, against
+roughly 9 bits needed at 400 samples per period. This makes host-side estimation
+exact even while the PLL retunes continuously, which would otherwise be the main
+objection to moving estimation off the device. The master phase is independently
+useful for other host-side processing.
 
 ### Atomic force-vector replacement sets `MAX_RT_VALUES`
 
@@ -64,20 +122,20 @@ testing needs, since isolating a nonlinear normal mode requires appropriating a
 multi-harmonic force. `MAX_RT_VALUES = 33` would therefore have excluded the
 main intended application.
 
-`MAX_RT_VALUES = 132` costs `32 × ~540 = 17.3 KB` of queue SRAM, against
-roughly 390 KB free after the current ~130 KB. Halving `COMMAND_QUEUE_LEN` to 16
-recovers half of that if SRAM later becomes tight, and is the preferred lever
-because queue depth is a latency convenience while payload width is a
-capability. A `DoubleBuffer` for the force vector was considered and rejected:
-at 528 bytes the object is small enough that a wider command is simpler than a
-second state machine.
+`MAX_RT_VALUES = 132` costs `32 × ~540 = 17.3 KB` of queue SRAM, against roughly
+390 KB free after the current ~130 KB. Halving `COMMAND_QUEUE_LEN` to 16 recovers
+half of that if SRAM later becomes tight, and is the preferred lever because
+queue depth is a latency convenience while payload width is a capability. A
+`DoubleBuffer` for the force vector was considered and rejected: at 528 bytes the
+object is small enough that a wider command is simpler than a second state
+machine.
 
 **Consequent WCET item.** Applying two commands per tick now copies up to
 1056 bytes. On an aligned word copy this is a few microseconds against the
-current 34 µs maximum, but it makes SRAM residency of the compiler's EABI
-copy helpers more critical, not less. The layout gate already caught
-flash-resident copy helpers once (`notes.md`, 2026-07-15, image `b35d4b8`);
-`COMMANDS_PER_TICK` must be re-measured, not assumed, after this change.
+current 34 µs maximum, but it makes SRAM residency of the compiler's EABI copy
+helpers more critical, not less. The layout gate already caught flash-resident
+copy helpers once (`notes.md`, 2026-07-15, image `b35d4b8`);
+`COMMANDS_PER_TICK` must be re-measured, not assumed.
 
 ### Autonomous programme state is not a parameter shadow
 
@@ -93,30 +151,27 @@ parameter's shadow *is* its value. The rule becomes:
 > separately as a stream source or read-only telemetry. A writable parameter for
 > the same quantity is a setpoint, and must be documented as one.
 
-So a phase-locked programme exposes writable `freq_setpoint` and read-only
+So a phase-locked programme exposes writable `freq_setpoint` and streams
 `freq_actual`, and never lets a host infer the second from the first.
 
-### Slow modal quantities are telemetry, not sources
+### Coherence: the record path, not the telemetry path
 
-`MAX_SOURCES = 24` binds before compute does. A four-shaker rig streaming
-per-channel amplitude and phase estimates would need roughly 31 sources. But
-modal estimates change at about once per excitation period, so streaming them at
-8 kHz is waste. Route them to `ExtraParam` atomics polled over TCP, the
-mechanism `whirl-rig` already uses, and reserve stream sources for per-sample
-quantities. The worked example below fits in 19 sources on that basis.
+A `Record` (`rt_loop.rs:51`) is assembled inside one tick and enqueued as a
+single unit, so every value in it comes from the same tick by construction. The
+`ExtraParam` path has no equivalent: it is N independent relaxed loads served
+from a TCP request, with nothing tying them to a common instant.
 
-### Two-rate structure: the outer loop leaves the tick
+For a scalar such as whirl-rig's RPM that distinction does not matter. For
+correlated quantities, such as amplitude and phase across several channels, it
+does: a poll can straddle an update and return amplitude from one period with
+phase from the next. The rule is therefore:
 
-Demodulation and force synthesis are `O(N·H)` per tick and belong on core 1. The
-appropriation update law, which adjusts the force vector to drive a mode
-indicator towards its target, is per-period and belongs on core 0 or the host. A
-4×4 complex solve on a `period_start` tick would exceed the 125 µs budget
-outright.
+> `ExtraParam` is for independent scalars. Correlated multi-value quantities go
+> through the record path.
 
-This matches existing practice, where control-based continuation already runs
-host-side, and it preserves the WCET discipline: core 1 has no rare expensive
-tick. Where a programme must branch on `period_start`, that branch is the
-worst-case tick and must be bounded and measured.
+With estimation host-side and the PLL streaming its own outputs, nothing in the
+present design needs correlated telemetry, so this is a constraint that keeps a
+latent trap closed rather than a problem to solve.
 
 ### Hardware consequence: the vector `actuate` is required, not merely tidy
 
@@ -132,30 +187,39 @@ allows the rig to write N channels and strobe once; a scalar interface cannot
 express it. The vector boundary is justified by the hardware before it is
 justified by the control structure.
 
-### Two `helic-core` additions this implies
-
-Both are legitimate shared-crate changes under the capacity rule, and neither
-is rig-specific.
-
-1. **`FourierEstimator::update_with(&HarmonicFrame<H>, signal)`.** The current
-   `update` (`fourier.rs:50`) re-derives sin/cos per harmonic *per channel*, so
-   eight response channels do eight times the redundant LUT work. The shared
-   harmonic basis makes MIMO demodulation nearly free.
-2. **A period-coherent estimator alongside the one-pole IIR.** The IIR has
-   documented ripple, about 0.4% at τ = 2 s and f₀ = 20 Hz (`fourier.rs:80`).
-   Appropriation convergence criteria want unbiased estimates; exact integration
-   over one period, reset on `period_start`, settles in one period with no
-   ripple.
-
 ### Safety consequences
 
 - **A global trip that quiets every shaker simultaneously is correct here**, not
   a limitation. Asymmetric quieting of an appropriated force vector would itself
   excite modes.
 - **Per-shaker force ratings differ**, which `clamp_output(actuator, ·)` covers.
-- **Stroke is the gap.** Shaker displacement limits bind at low frequency and an
+- **Stroke is a gap.** Shaker displacement limits bind at low frequency and an
   amplitude clamp on force does not protect them. A multi-shaker rig needs a
-  displacement-based `output_fault`, not only an output clamp.
+  displacement-based fault, not only an output clamp. The mechanism is still
+  open (see "Open questions").
+- **A device-side PLL adds a frequency-excursion failure mode.** The gate clamps
+  output *amplitude*; a PLL that loses lock or diverges sweeps the excitation
+  *frequency*, potentially dragging a large force vector through a resonance
+  with every existing check passing. This requires hard minimum and maximum
+  increment bounds inside the `Pll`, plus a loss-of-lock condition that can
+  latch the trip.
+- **Faults can now originate in the programme, not only the rig.** Loss of PLL
+  lock is a programme condition; `Rig::output_fault(inputs)` cannot see it. The
+  safety contract therefore gains `Program::fault()`, consulted alongside the
+  rig's, with either latching the global trip.
+
+### One `helic-core` addition this implies
+
+`Pll`: a self-contained phase-locked loop owning its own single-harmonic
+quadrature demodulator, loop filter, and NCO, with configurable target phase,
+loop gain, and hard frequency bounds. It is generic and expected to be reused
+across rigs, so it belongs in `helic-core` rather than any rig crate.
+
+`FourierEstimator::update_with(&HarmonicFrame<H>, signal)` is *not* required by
+this design, since no device-side consumer remains once estimation moves
+host-side. It stays a reasonable future optimisation if a rig ever needs a
+device-side estimator bank. Likewise, a period-coherent estimator is now a host
+library concern rather than a `helic-core` one.
 
 ## What currently forces a shared-code edit
 
@@ -212,10 +276,9 @@ firmware binary crate in revision 1, against developer-guide principle 4
 **Discipline.** `helic-fw-common` also conflates the two cores. It holds `net/`,
 `comms/`, `laser.rs`, and `time_watchdog.rs` (core 0: Embassy, async, flash
 resident) alongside `rt_loop.rs`, `rt_mem.rs`, `analog_spi.rs`, and the PIO
-modules (core 1: SRAM, no Embassy, bounded WCET). Those are opposite
-disciplines in one dependency set, and `docs/overrun_handoff.md` records an
-entire debugging saga caused by core-0 work reaching the tick through the shared
-XIP cache.
+modules (core 1: SRAM, no Embassy, bounded WCET). Those are opposite disciplines
+in one dependency set, and `docs/overrun_handoff.md` records an entire debugging
+saga caused by core-0 work reaching the tick through the shared XIP cache.
 
 The split is clean in practice: `rt_loop.rs`'s only `embassy-time` use is
 `status_run` (line 7), a core-0 task, and `defmt` appears only in setup and that
@@ -225,12 +288,12 @@ same task. Moving `status_run` out leaves `embassy-rp` for `pac::TIMER0` plus
 | Crate | Contents | Testable |
 |---|---|---|
 | `helic-proto` | wire protocol, `ErrorCode`; broker protocol feature-gated | host |
-| `helic-core` | DSP: generators, controllers, estimators, filters, tables, `DoubleBuffer` | host |
+| `helic-core` | DSP: generators, controllers, estimators, filters, tables, `Pll`, `DoubleBuffer` | host |
 | **`helic-rt`** (new) | `Rig`, `TickSource`, `Program`, `ParamGroup`, `ParamDef`, `Payload`, `RtCommand`, `ParamStore`, safety gate, source assembly | host |
 | **`helic-fw-rt`** (new) | core 1: tick sources, `rt_mem`, `analog_spi`, PIO transports, the loop driver | cross-build |
 | **`helic-fw-net`** (new) | core 0: `net/`, `comms/`, `time_watchdog`, `status_run` | cross-build |
 | `helic-drivers` | chip and sensor logic, pure and host-testable | host |
-| `<rig>-program` | that rig's programme, controllers, and parameter shadows | host |
+| `<rig>-program` | that rig's programme, controllers, parameter shadows, and rig-specific DSP | host |
 | `fw-<rig>` | that rig's `board.rs`, `config.rs`, `rig.rs`, `main.rs` | cross-build |
 
 A rig repository contains `<rig>-program` and `fw-<rig>`, and its control logic
@@ -238,9 +301,6 @@ is `cargo test`-able on the host exactly as `helic-core`'s is. This is still one
 codebase per rig.
 
 ### Dependency rules this makes enforceable
-
-The value of the split is that these become checkable in CI rather than
-maintained by review:
 
 - `helic-core` depends only on `libm`; no protocol, no Embassy.
 - `helic-rt` depends on `helic-core`, `helic-proto`, and `heapless`; no Embassy
@@ -250,20 +310,22 @@ maintained by review:
 - `helic-fw-net` may not depend on `helic-fw-rt` except through the queue
   endpoint types.
 
-### Two further placement questions
+### `helic-core::rpm` moves out
 
-- **`helic-core::rpm`** has exactly one consumer, `whirl-rig` (`rig.rs:10`). Is
-  period-to-RPM estimation with staleness reusable DSP, or whirl's experiment
-  logic? I would keep it in `helic-core`, since it is generic rotating-machinery
-  code, but it is the case the new rule has to adjudicate and the decision
-  should be explicit.
-- **Device integrations are misfiled as "common".** `laser.rs` is an Embassy
-  UART task for one sensor used by one rig, sitting in a crate every rig
-  depends on. The portable split itself is right, since
-  `helic-drivers/optoncdt.rs` is a pure parser, but the rule should be that
-  `helic-fw-*` holds mechanisms *every* rig uses, and a mechanism *some* rig
-  uses belongs in a device-integration crate or that rig's repository.
-  `analog_spi.rs` deserves the same question.
+`RpmEstimator` has exactly one consumer, `whirl-rig` (`rig.rs:10`), and RPM
+estimation from optical revolution pulses is whirl-specific instrumentation
+rather than general DSP. It moves to `whirl-rig-program`. This is the first
+concrete application of the reusable/experiment rule, and it removes
+`helic-core`'s only module with no second consumer.
+
+### Device integrations misfiled as "common"
+
+`laser.rs` is an Embassy UART task for one sensor used by one rig, sitting in a
+crate every rig depends on. The portable split itself is right, since
+`helic-drivers/optoncdt.rs` is a pure parser, but the rule should be that
+`helic-fw-*` holds mechanisms *every* rig uses, and a mechanism *some* rig uses
+belongs in a device-integration crate or that rig's repository.
+`analog_spi.rs` deserves the same question. Both remain open.
 
 `helic-core::safety` keeps the primitives (`clamp_channel_command`,
 `StaleCounter`); the vector gate that composes them lives in `helic-rt`.
@@ -293,7 +355,6 @@ pub struct RtCommand {
     pub payload: Payload,
 }
 
-// The queue is COMMAND_QUEUE_LEN of these; assert rather than assume.
 const _: () = assert!(core::mem::size_of::<RtCommand>() <= 560);
 ```
 
@@ -319,10 +380,6 @@ The receiving component reconstructs its own typed value, since the
 therefore carry a complete multi-actuator force vector, which is what makes
 atomic appropriation updates possible.
 
-Enum-valued parameters are still validated into a concrete Rust type on core 0
-and travel as their `u32` discriminant, so core 1 never parses an unvalidated
-host value.
-
 ### 2. Transactional writes, ordered centrally
 
 The current code enqueues before updating the shadow, and rolls back a blob
@@ -330,8 +387,6 @@ commit if the enqueue fails (`firmware/common/src/params.rs:596,623`). That
 ordering is a correctness property: a host receiving `Busy` must not then read
 back the value it was denied. Distributing `set` to components must not
 distribute that rule, or it becomes N places to get wrong.
-
-So the group stages, and the store decides:
 
 ```rust
 // helic-rt
@@ -347,10 +402,7 @@ pub trait ParamGroup {
     /// Validate `data` and stage the change. Must not alter any
     /// host-observable state: `reject` has to undo it completely.
     fn stage(&mut self, id: u16, data: &[u8]) -> Result<Staged, ErrorCode>;
-    /// The command was enqueued. Publish the staged value to the shadow.
     fn accept(&mut self, id: u16);
-    /// The command could not be enqueued. Discard the staged value and
-    /// release any staging buffer.
     fn reject(&mut self, id: u16);
 
     fn set_block(&mut self, _id: u16, _offset: u32, _data: &[u8]) -> Result<(), ErrorCode> {
@@ -392,13 +444,15 @@ impl ParamStore {
 ```
 
 Blob commits use the same path through `stage_commit`, so a failed enqueue calls
-`reject`, which returns the `CommitToken` and clears the pending state. The
-table can no longer be left permanently pending.
+`reject`, which returns the `CommitToken` and clears the pending state.
 
-`ParamStore` loses its `<C: Controller, R: Rig>` parameters, `PhantomData`, the
-23 `IDX_*` constants, the four-segment arithmetic repeated three times, and both
-hundred-line matches. Groups are `StaticCell`-initialised in the experiment's
-`main.rs`.
+**Parameter index order need not be preserved.** Both host libraries build
+name-to-parameter maps at discovery and derive indices from discovery order
+(`host-python/helic_daq/device.py:160`, `host-julia/src/device.jl:191`); neither
+hard-codes an index. Platform parameters can therefore be an ordinary group, and
+the golden registry test asserts the *set* of `(name, type, count, writable)`
+rather than a verbatim order. Stream **source** order is a different matter and
+is preserved, since it defines the record layout.
 
 `ParamDef` gains a kind so blob handling stops being an `index == IDX_TABLE`
 special case:
@@ -435,7 +489,6 @@ pub struct CommitToken(u8);
 
 impl<T: Send> DoubleBuffer<T> {
     pub const fn new(a: T, b: T) -> Self;
-    /// Split once into two uniquely owned endpoints, one per core.
     pub fn split(&'static self) -> (Staging<T>, Active<T>);
 }
 
@@ -471,16 +524,11 @@ Four soundness properties, each enforced rather than documented:
 
 `CommitToken` crosses cores inside `Payload`, so it is `Copy` plain data and
 therefore forgeable within the crate. The pending-state check in `activate` is
-the second line of defence, making a duplicated or reordered command inert
-rather than unsound.
+the second line of defence.
 
 `BufferError` is local to `helic-core`, which depends only on `libm`; returning
 `helic_proto::ErrorCode` would have introduced a `helic-core → helic-proto` edge
 that does not currently exist.
-
-Core 1 holds `Active<WaveTable>` and calls `.get()` per tick instead of caching a
-`&'static WaveTable` field. The call is `#[inline]` and should resolve to one
-load, but it sits in the hot path and must be confirmed by ELF inspection.
 
 ### 4. Rig, programme, and the MIMO safety contract
 
@@ -511,39 +559,42 @@ pub trait Program {
     fn apply(&mut self, domain: u8, id: u16, payload: Payload);
     fn step(&mut self, inputs: &[f32], dt: f32, ctx: &StepCtx, outputs: &mut [f32]);
     fn write_signals(&self, out: &mut [f32]);
+
+    /// Programme-originated fault: loss of PLL lock, divergence, or any
+    /// condition the rig cannot observe from its inputs. Consulted by the
+    /// safety gate alongside `Rig::output_fault`.
+    fn fault(&self) -> bool { false }
 }
 ```
 
 `Rig` loses `type Ctrl`: a rig describes hardware, and how many controllers run
 against it is the programme's business.
 
-The vector safety contract, stated rather than cross-referenced:
+The vector safety contract:
 
 - **Output buffer** is `[f32; MAX_ACTUATORS]`, with only the
   `R::ACTUATORS.len()` prefix used.
 - **Setup asserts** `P::OUTPUTS == R::ACTUATORS.len()` and
   `P::OUTPUTS <= MAX_ACTUATORS`.
-- **Faults are global and per-tick.** `output_fault(inputs)` is called once per
-  tick and any fault latches one global trip that quiets *every* actuator. For
-  multi-shaker excitation this is the correct behaviour, not a limitation:
-  asymmetric quieting of an appropriated force vector would itself excite modes.
-  Per-axis trip state is a separate future design.
-- **Clamping is per actuator index**, via `clamp_output(actuator, value)`, which
-  accommodates differing shaker force ratings.
-- **Counters are per tick, not per actuator.** `SAFETY_QUIET_TICKS` increments
-  once on a quieted tick; `SAFETY_CLAMP_TICKS` increments once if any output was
-  clamped that tick. This preserves the existing counters and `safety` bitfield.
+- **Faults are global and per-tick**, and may originate in either the rig or the
+  programme. Either latches one global trip that quiets *every* actuator. For
+  multi-shaker excitation this is correct, not a limitation: asymmetric quieting
+  of an appropriated force vector would itself excite modes.
+- **Clamping is per actuator index**, via `clamp_output(actuator, value)`.
+- **Counters are per tick, not per actuator.**
 - **Streamed actuator values are the post-safety applied values**, matching
   today's behaviour (`notes.md`, 2026-07-18).
-- **A non-gated rig applies every output verbatim** and the gate compiles away,
-  so `whirl-rig` and `pico2w-rig` stay unarmed and behaviourally unchanged.
+- **A non-gated rig applies every output verbatim** and the gate compiles away.
+- **Autonomous excitation is bounded at source.** A programme that drives its own
+  frequency must clamp the commanded increment to host-set minimum and maximum
+  bounds inside the `Pll`, independently of the output gate, because the gate
+  limits amplitude and cannot see a frequency excursion.
 
-The gate becomes a pure function in `helic-rt`, host-testable over the vector
-cases:
+The gate becomes a pure function in `helic-rt`, host-testable:
 
 ```rust
-pub fn safety_gate<R: Rig>(
-    rig: &mut R, inputs: &[f32], commanded: &[f32], applied: &mut [f32],
+pub fn safety_gate<R: Rig, P: Program>(
+    rig: &mut R, program: &P, inputs: &[f32], commanded: &[f32], applied: &mut [f32],
 ) -> SafetyEvents;
 ```
 
@@ -556,14 +607,9 @@ consumes `source`/`source_count`, so it changes with this stage.
 
 `HARMONICS` moves to a const generic on the programme. `MAX_TABLE_LEN` becomes a
 const generic on `WaveTable<const N: usize = 4096>`, defaulted so existing code
-is unaffected. Both matter for RAM budgeting once several components own
-buffers.
+is unaffected.
 
 ## Double buffering: options considered
-
-**The two patterns.** Small POD travels inside the queue element, which is
-itself the double buffer. `WaveTable` at 16 KB is far too large for 32 slots and
-needs a buffer swap.
 
 **A. Value-in-command.** Retained as the default for coefficient banks, gains,
 and force vectors, now expressed as the non-generic `Payload::Values` and sized
@@ -571,19 +617,16 @@ by the appropriation requirement above.
 
 **B. Generic `DoubleBuffer<T>` with split endpoints.** Recommended for blobs.
 
-**C. Per-object mailbox polled by core 1.** Drops the activation command and is
-immune to a full queue. Rejected because it decouples activation from
-`cmd_epoch`: the guarantee that a table swap is visible in exactly the record
-whose `cmd_epoch` reports that command is hardware-verified (`notes.md`,
-2026-07-16, the live 0.45 V to 1.65 V re-commit, and the `forcing,out,cmd_epoch`
-transition at sample 885064).
+**C. Per-object mailbox polled by core 1.** Rejected because it decouples
+activation from `cmd_epoch`: the guarantee that a table swap is visible in
+exactly the record whose `cmd_epoch` reports that command is hardware-verified
+(`notes.md`, 2026-07-16, the live 0.45 V to 1.65 V re-commit, and the
+`forcing,out,cmd_epoch` transition at sample 885064).
 
 **D. `Pool<T, N>`.** The generalisation if several blobs must swap
-independently. `DoubleBuffer<T>` is `Pool<T, 2>` and the endpoint split extends
-unchanged. Not proposed now.
+independently. `DoubleBuffer<T>` is `Pool<T, 2>`. Not proposed now.
 
-**RAM budget.** One `DoubleBuffer<WaveTable<4096>>` is 32 KB. Four per-axis
-tables would be 128 KB on top of the ~130 KB already used, which is why
+**RAM budget.** One `DoubleBuffer<WaveTable<4096>>` is 32 KB, which is why
 `MAX_TABLE_LEN` should become a const generic: a MIMO rig can choose
 `WaveTable<512>` and pay 4 KB per buffer.
 
@@ -607,51 +650,52 @@ The discovered registry, source names, source order, and wire format are
 unchanged. What changed is that the order is visible in one place in the
 experiment crate rather than implied by arithmetic in the shared crate.
 
-### Example 2: force appropriation, entirely in the rig's own crates
+### Example 2: force appropriation with host-side estimation
 
-Four shakers, four response channels, phase-locked excitation. This exercises
-atomic vector update, autonomous frequency, and the two-rate split together.
+Four shakers, four response channels, phase-locked excitation. The device
+synthesises the force vector, runs the PLL, and streams raw data plus phase; the
+host does all estimation and the appropriation law.
 
 ```rust
 // appropriation-program/src/lib.rs   (no_std, host-tested, no Embassy)
-use helic_core::{FourierCoeffs, FourierEstimator, FourierSignal, HarmonicGenerator, Pll};
+use helic_core::{FourierCoeffs, FourierSignal, HarmonicGenerator, Pll};
 use helic_rt::{ParamDef, ParamGroup, ParamType, Payload, Program, RtCommand, Staged, StepCtx};
 
 const SHAKERS: usize = 4;
-const RESPONSES: usize = 4;
 const H: usize = 5;
 const VECTOR_LEN: usize = SHAKERS * (1 + 2 * H);   // 44 values
 
 pub const DOMAIN: u8 = 1;
 
 mod ids {
-    pub const FREQ_SETPOINT: u16 = 0;   // setpoint only; PLL owns the truth
+    pub const FREQ_SETPOINT: u16 = 0;   // setpoint only; the PLL owns the truth
     pub const FORCE_VECTOR: u16 = 1;    // all shakers, all harmonics, atomic
     pub const PLL_GAIN: u16 = 2;
     pub const TARGET_PHASE: u16 = 3;    // −90° for phase resonance
-    pub const EXCITATION_MODE: u16 = 4; // fixed frequency | phase-locked
-    pub const RESET: u16 = 5;
+    pub const FREQ_MIN: u16 = 4;        // hard NCO bounds: see safety contract
+    pub const FREQ_MAX: u16 = 5;
+    pub const EXCITATION_MODE: u16 = 6; // fixed frequency | phase-locked
+    pub const RESET: u16 = 7;
 }
-
-// ---- core 1 -------------------------------------------------------------
 
 pub struct Appropriation {
     harmonics: HarmonicGenerator<H>,
     forces: [FourierSignal<H>; SHAKERS],
-    responses: [FourierEstimator<H>; RESPONSES],
-    pll: Pll,
+    pll: Pll,                    // owns its own single-harmonic demodulator
     mode: ExcitationMode,
-    commanded: [f32; SHAKERS],
+    pll_channel: usize,
+    phase: f32,
     freq_actual: f32,
     phase_error: f32,
 }
 
 impl Program for Appropriation {
     const OUTPUTS: usize = SHAKERS;
-    // Per-sample quantities only. Modal estimates are telemetry, not sources.
+    // Per-sample quantities only. All estimation is host-side, computed from
+    // the streamed responses against the streamed `phase`.
     const SIGNALS: &'static [(&'static str, &'static str)] = &[
-        ("f0_cmd", "N"), ("f1_cmd", "N"), ("f2_cmd", "N"), ("f3_cmd", "N"),
-        ("freq_actual", "Hz"), ("phase_error", "deg"),
+        ("phase", "turn"), ("freq_actual", "Hz"),
+        ("phase_error", "deg"), ("pll_locked", "bool"),
     ];
 
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
@@ -672,6 +716,8 @@ impl Program for Appropriation {
             (ids::FREQ_SETPOINT, Payload::U32(inc)) => self.harmonics.set_increment(inc),
             (ids::PLL_GAIN, Payload::F32(v)) => self.pll.set_gain(v),
             (ids::TARGET_PHASE, Payload::F32(v)) => self.pll.set_target_phase(v),
+            (ids::FREQ_MIN, Payload::U32(inc)) => self.pll.set_min_increment(inc),
+            (ids::FREQ_MAX, Payload::U32(inc)) => self.pll.set_max_increment(inc),
             (ids::EXCITATION_MODE, Payload::U32(m)) => self.mode = ExcitationMode::from_u32(m),
             (ids::RESET, _) => self.reset(),
             _ => {}
@@ -682,29 +728,33 @@ impl Program for Appropriation {
     fn step(&mut self, inputs: &[f32], dt: f32, ctx: &StepCtx, outputs: &mut [f32]) {
         let frame = self.harmonics.step(ctx.lut);
 
-        // O(N·H) demodulation against the shared basis: no redundant LUT work.
-        for (i, est) in self.responses.iter_mut().enumerate() {
-            est.update_with(frame, inputs[SHAKERS + i]);
+        // O(1) per tick: the PLL demodulates one channel at the fundamental
+        // internally. It clamps its own output to the configured bounds.
+        if self.mode == ExcitationMode::PhaseLocked {
+            let increment = self.pll.update(frame, inputs[self.pll_channel], dt);
+            self.harmonics.set_increment(increment);
+            self.phase_error = self.pll.phase_error();
         }
 
-        // O(1) per tick. The appropriation law that adjusts the force vector
-        // is per-period and runs on core 0 or the host; it is not here.
-        if self.mode == ExcitationMode::PhaseLocked {
-            self.phase_error = self.pll.phase_error(&self.responses[0], frame);
-            self.harmonics.set_increment(self.pll.update(self.phase_error, dt));
-        }
+        self.phase = frame.phase_turns();
         self.freq_actual = self.harmonics.frequency_hz(ctx.sample_rate);
 
         for (j, force) in self.forces.iter().enumerate() {
-            self.commanded[j] = force.sample(frame);
-            outputs[j] = self.commanded[j];
+            outputs[j] = force.sample(frame);
         }
     }
 
     fn write_signals(&self, out: &mut [f32]) {
-        out[..SHAKERS].copy_from_slice(&self.commanded);
-        out[SHAKERS] = self.freq_actual;
-        out[SHAKERS + 1] = self.phase_error;
+        out[0] = self.phase;
+        out[1] = self.freq_actual;
+        out[2] = self.phase_error;
+        out[3] = if self.pll.locked() { 1.0 } else { 0.0 };
+    }
+
+    /// Loss of lock is a programme condition the rig cannot see from its
+    /// inputs, so it reaches the safety gate through here.
+    fn fault(&self) -> bool {
+        self.mode == ExcitationMode::PhaseLocked && !self.pll.locked()
     }
 }
 ```
@@ -713,17 +763,6 @@ The core-0 half validates the whole vector before staging it:
 
 ```rust
 impl ParamGroup for AppropriationShadow {
-    fn params(&self) -> &'static [ParamDef] {
-        &[
-            ParamDef::writable("freq_setpoint", ParamType::F32, 1),
-            ParamDef::writable("force_vector", ParamType::F32, VECTOR_LEN as u16),
-            ParamDef::writable("pll_gain", ParamType::F32, 1),
-            ParamDef::writable("target_phase", ParamType::F32, 1),
-            ParamDef::writable("excitation_mode", ParamType::U32, 1),
-            ParamDef::writable("ctrl_reset", ParamType::U32, 1),
-        ]
-    }
-
     fn stage(&mut self, id: u16, data: &[u8]) -> Result<Staged, ErrorCode> {
         let cmd = |payload| Staged::Rt(RtCommand { domain: DOMAIN, id, payload });
         match id {
@@ -743,22 +782,24 @@ impl ParamGroup for AppropriationShadow {
 }
 ```
 
-Note three things this example establishes.
+Four things this example establishes.
 
-**`freq_setpoint` is writable but is not the value.** `freq_actual` is a
-separate stream source because the PLL owns the truth, per the autonomous-state
-rule. A host must never infer the second from the first.
+**The source budget is comfortable.** 8 inputs (4 force, 4 response), 4
+programme signals, 4 actuators, and `cmd_epoch` is 17 of 24. Moving estimation
+host-side is what makes that work: on-device per-channel, per-harmonic estimates
+would have needed roughly 31 sources.
 
-**Per-channel modal estimates are not sources.** Response amplitude and phase
-per channel per harmonic would be 40 additional sources. They change at about
-once per period, so they are published to `ExtraParam` atomics and polled over
-TCP instead. The source budget is then 8 inputs, 6 programme signals, 4
-actuators, and `cmd_epoch`, which is 19 of 24.
+**`freq_setpoint` is writable but is not the value.** `freq_actual` is streamed
+because the PLL owns the truth, per the autonomous-state rule.
 
-**Files changed under `helic-core`, `helic-rt`, `helic-fw-rt`, or
-`helic-fw-net` to support this rig: none**, given `update_with` and `Pll` exist
-as shared primitives. `fw-appropriation-rig` holds only `board.rs`, `config.rs`,
-`rig.rs`, and `main.rs`.
+**`phase` is streamed so host demodulation stays exact** while the PLL retunes
+continuously.
+
+**Nothing correlated goes through `ExtraParam`.** All coupled quantities travel
+in the record, which is coherent per tick by construction.
+
+Files changed under `helic-core`, `helic-rt`, `helic-fw-rt`, or `helic-fw-net`
+to support this rig: none, given `Pll` exists as a shared primitive.
 
 ### Example 3: a table as an ordinary component
 
@@ -799,12 +840,13 @@ impl ParamGroup for TableShadow {
 | Second actuator | `rig.rs`, `rt_loop.rs`, `params.rs`, `schema.rs` | rig crates only |
 | Second controlled axis | `rt_loop.rs`, `params.rs`, `schema.rs` | rig crates only |
 | Four-shaker appropriation rig | not expressible | rig crates only |
+| Rig-specific estimator (e.g. RPM) | `helic-core` | rig crates only |
 | Rig with no waveform table | not expressible; params advertised and inert | omit the component |
 | Second buffered blob | copy `table.rs` | one `DoubleBuffer<T>` static |
 | Different harmonic count (≤16) | `firmware/common/src/lib.rs` | const generic on the programme |
 | Shorter tables to save RAM | `helic-core/src/table.rs` | const generic on `WaveTable` |
 | >24 sources, >4 actuators, >132 payload values | shared crates | shared crates, deliberately |
-| New reusable estimator or controller | `helic-core` | `helic-core`, correctly |
+| New genuinely reusable primitive (e.g. `Pll`) | `helic-core` | `helic-core`, correctly |
 
 ## Repository separation
 
@@ -818,58 +860,52 @@ A rig repository contains `<rig>-program` and `fw-<rig>`, and needs:
    `[workspace.dependencies]` cannot be inherited across repositories.
 4. A copy of, or a shared action for, the `check_rt_layout.py` gate.
 
-Point 3 is the main friction. Pinning exact Embassy versions across repositories
-that must interoperate with one `helic-fw-rt` is a real maintenance cost, while
-a version range weakens the "one tested dependency set" property. A reasonable
-path is to keep the three production rigs here and treat the crate boundary as
-the contract that *permits* an external rig, verified by one out-of-workspace
-test rig rather than by moving everything at once.
+Point 3 is the main friction and remains open. A reasonable path is to keep the
+three production rigs here and treat the crate boundary as the contract that
+*permits* an external rig, verified by one out-of-workspace test rig rather than
+by moving everything at once.
 
 ## Relationship to the RT programme proposal
 
-**Retained from `rt_program_proposal.md`:** `HarmonicFrame`/`HarmonicGenerator`
-and one shared basis per tick; `FourierSignal`; `ControlledAxis<C, H>`; removal
-of `PeriodicGenerator` and `GenSample`; the bounded logical output vector;
-`Rig::ACTUATORS`; the `SAFETY_GATED` opt-out; all mandatory table-phase
-semantics; the per-tick ordering.
+**Retained:** `HarmonicFrame`/`HarmonicGenerator` and one shared basis per tick;
+`FourierSignal`; `ControlledAxis<C, H>`; removal of `PeriodicGenerator` and
+`GenSample`; the bounded logical output vector; `Rig::ACTUATORS`; the
+`SAFETY_GATED` opt-out; all mandatory table-phase semantics; the per-tick
+ordering.
 
-**Superseded:** the slot-indexed `SetCoeffs`/`SetIncrement` scheme, which leaves
-twelve other variants in place; `ParamStore<P, R>` remaining generic;
-`RtProgram`'s parameter methods, replaced by the component's `ParamGroup` half;
-retention of `GENERATED_SOURCES` and the table's special-cased command path.
+**Superseded:** the slot-indexed `SetCoeffs`/`SetIncrement` scheme;
+`ParamStore<P, R>` remaining generic; `RtProgram`'s parameter methods, replaced
+by the component's `ParamGroup` half; retention of `GENERATED_SOURCES` and the
+table's special-cased command path.
 
-Note that `rt_program_proposal.md` anticipated the atomic multi-axis update
-requirement ("atomic multi-axis coefficient replacement should use a complete
-copied bank or a double-buffered bank swap") but deferred it. Sizing
-`MAX_RT_VALUES` from the appropriation case resolves it in favour of the copied
-bank.
+`rt_program_proposal.md` anticipated the atomic multi-axis update requirement
+but deferred it. Sizing `MAX_RT_VALUES` from the appropriation case resolves it
+in favour of the copied bank.
 
 ## Migration plan
 
 1. **`helic-rt` crate created**, initially by moving `Rig`, `TickSource`, and
-   the parameter types out of `helic-fw-common` unchanged. Proves the
-   portability boundary before anything depends on it.
+   the parameter types out of `helic-fw-common` unchanged.
 2. **`helic-fw-common` split** into `helic-fw-rt` and `helic-fw-net`, with the
    dependency rules added to CI. Mechanical; no behaviour change.
 3. **`DoubleBuffer<T>` with split endpoints into `helic-core`**, with host
-   tests. Reimplement `table.rs` on top of it. Verifiable on hardware by
-   repeating the existing table re-commit regression.
-4. **`RtCommand`, `Payload`, and the size assertion**, with existing dispatch
-   rewritten to match on `(domain, id, payload)`. Re-measure `COMMANDS_PER_TICK`
-   WCET at the new payload width and confirm EABI copy helpers remain in SRAM.
-5. **`ParamGroup` stage/accept/reject and the `ParamStore` walk.** Convert the
-   four existing segments into groups reproducing the current registry exactly.
-   Largest single commit; must change no discovered name or index.
+   tests. Reimplement `table.rs` on top of it.
+4. **`RtCommand`, `Payload`, and the size assertion.** Re-measure
+   `COMMANDS_PER_TICK` WCET at the new payload width and confirm EABI copy
+   helpers remain in SRAM.
+5. **`ParamGroup` stage/accept/reject and the `ParamStore` walk.** Largest
+   single commit; must change no discovered parameter *name* and no source order.
 6. **`Program` trait and `StandardProgram`**, absorbing phase, coefficients,
-   controller, and table player out of `RtLoopState`. Split the table into its
-   own group in the same change.
+   controller, and table player out of `RtLoopState`. Add the `phase` signal
+   convention. Split the table into its own group in the same change.
 7. **Bounded output vector**, `Rig::ACTUATORS`, slice `actuate`, the vector
-   safety gate, and generic source assembly (including `comms/tcp.rs`). Migrate
-   all three rigs together.
+   safety gate including `Program::fault`, and generic source assembly
+   (including `comms/tcp.rs`). Migrate all three rigs together.
 8. **Const generics** for `HARMONICS` and `MAX_TABLE_LEN`, defaulted.
-9. **`helic-core` additions for modal work**: `FourierEstimator::update_with`
-   and a period-coherent estimator. Independent of stages 1 to 8.
-10. **An out-of-workspace test rig** as the final architectural acceptance test.
+9. **`RpmEstimator` moves** from `helic-core` to `whirl-rig-program`.
+10. **`Pll` added to `helic-core`**, with host tests including its frequency
+    bounds and lock detection. Independent of stages 1 to 9.
+11. **An out-of-workspace test rig** as the final architectural acceptance test.
 
 Stages 1 to 5 are worth doing regardless of whether MIMO arrives: they remove
 the offset arithmetic and the bespoke unsafe module without changing any
@@ -890,115 +926,131 @@ externally visible behaviour.
   none.
 - **`ParamStore::locate`** over registries with zero-length groups, one group,
   and groups crossing a discovery page boundary.
-- **Golden registry and golden source tests**: assembled name list and index
-  order for each production rig, asserted verbatim. Primary regression guard for
-  stages 5 to 7.
+- **Golden registry test**: the *set* of `(name, type, count, writable)` for each
+  production rig, asserted against the current registry. Order is deliberately
+  not asserted, since both host libraries discover by name.
+- **Golden source test**: names *and order*, asserted verbatim, since source
+  order defines the record layout.
 - **Command routing**: two groups with the same local id but different domains
   reach different components.
 - **`Payload` round trip** for every kind, including `Values` at 33 and 132
   lengths.
-- **Vector safety gate**, host-tested: global trip quiets all actuators;
-  per-actuator clamping; counters per tick not per actuator; non-gated rig
-  applies verbatim.
+- **Vector safety gate**, host-tested: a fault from either the rig or the
+  programme quiets all actuators; per-actuator clamping; counters per tick not
+  per actuator; non-gated rig applies verbatim.
+- **`Pll`**: locks to a known phase offset; the commanded increment never leaves
+  the configured bounds under any input including divergent ones; loss of lock
+  is reported.
+- **Phase source fidelity**: `f32` `phase` reconstructs the accumulator to well
+  within one sample step at the highest supported excitation frequency.
 - **`size_of::<RtCommand>()`** compile-time assertion, and a measured
   `COMMANDS_PER_TICK` WCET at full payload width.
 - **Dependency rules**: a CI check that `helic-rt` has no Embassy dependency and
   `helic-fw-rt` has no `embassy-net`/`embassy-time`/`embassy-executor`.
-- **Estimator equivalence**: `update_with` matches `update` sample for sample;
-  the period-coherent estimator is unbiased on a known multi-harmonic signal.
 
 Hardware regression is the full sequential suite in the developer guide, since
-stages 6 and 7 touch the entire tick calculation. The `cmd_epoch` coherence
-tests for coefficient replacement and table re-commit are the specific evidence
-stages 3 and 6 must not degrade; the 34 µs loop maximum with a fixed 36 µs wake
-phase is the timing baseline. Stage 4 additionally requires a fresh loop-maximum
-measurement, since the payload width changes per-tick copy cost.
+stages 6 and 7 touch the entire tick calculation. The `cmd_epoch` coherence tests
+for coefficient replacement and table re-commit are the specific evidence stages
+3 and 6 must not degrade; the 34 µs loop maximum with a fixed 36 µs wake phase is
+the timing baseline. Stage 4 additionally requires a fresh loop-maximum
+measurement.
 
 ## Risks and open questions
 
-- **Larger change than the existing proposal**, touching a tick path with
-  verified timing. Mitigated by stage ordering and the golden tests.
-- **`Program` risks becoming a god-trait.** If it grows past step, signals, and
-  apply, split it rather than letting policy drift back into the loop.
-- **Core-1 inlining is newly load-bearing.** A loop over axes or shakers may not
-  unroll as today's straight-line code does. Confirm by ELF inspection and
-  timing, not by reasoning about the source.
-- **The wider payload is the main new timing risk.** Two 528-byte copies per
-  tick is a few microseconds in principle, but the EABI copy-helper residency
+**Risks**
+
+- Larger change than the existing proposal, touching a tick path with verified
+  timing. Mitigated by stage ordering and the golden tests.
+- `Program` risks becoming a god-trait. If it grows past step, signals, apply,
+  and fault, split it rather than letting policy drift back into the loop.
+- Core-1 inlining is newly load-bearing; a loop over shakers may not unroll as
+  today's straight-line code does. Confirm by ELF inspection and timing.
+- The wider payload is the main new timing risk; the EABI copy-helper residency
   problem has bitten once already.
-- **`Active::get()` per tick** replaces a cached field; expected to be one
-  inlined load, must be verified.
-- **`MAX_RT_VALUES = 132` caps a single atomic update at 4 actuators × 16
-  harmonics.** Adequate for the intended appropriation work; an 8-shaker
-  multi-harmonic rig is a platform change.
-- **Open:** should platform parameters be an ordinary group or a privileged
-  first group? Ordinary is more uniform; first guarantees a stable prefix for
-  host code that incorrectly caches indices.
-- **Open:** does `helic-core::rpm` stay, or move to `whirl-rig-program`? The
-  answer defines where the reusable/experiment line actually falls.
-- **Open:** the PLL and mode-indicator primitives sketched in Example 2 do not
-  exist yet. Whether they are `helic-core` primitives or rig-local logic should
-  be settled before an appropriation rig is built, not during.
+- `Active::get()` per tick replaces a cached field; expected to be one inlined
+  load, must be verified.
+- `MAX_RT_VALUES = 132` caps a single atomic update at 4 actuators × 16
+  harmonics. An 8-shaker multi-harmonic rig is a platform change.
+
+**Open questions**
+
+1. **Stroke limiting mechanism.** An amplitude clamp on force does not protect
+   shaker displacement, which binds at low frequency. Is this a rig
+   `output_fault` on measured displacement, which requires the displacement to
+   be instrumented, or does the gate need a rate or DC-offset hook? This is the
+   one open question with a physical hazard attached and should be settled
+   before any shaker rig is built.
+2. **Per-actuator trip** remains deferred from `rt_program_proposal.md`. The
+   global trip is correct for appropriation; confirm the deferral explicitly
+   rather than inheriting it silently.
+3. **`MAX_ACTUATORS = 4`** derives from the AD5064 having four channels, not
+   from the application; ground vibration testing routinely uses more shakers. A
+   larger rig needs different DAC hardware anyway, so the coupling may be
+   genuine, but it is cheap to raise now and expensive later.
+4. **`MAX_GROUPS = 8`** is unjustified. Current usage is five.
+5. **`MAX_CTRL_PARAMS`/`MAX_RIG_PARAMS`/`MAX_EXTRA_PARAMS`** become meaningless
+   once groups own their storage; only the `u16` total and the discovery page
+   budget survive. Confirm they retire.
+6. **Device integrations** (`laser.rs`, `analog_spi.rs`) sitting in a crate every
+   rig depends on.
+7. **Embassy pinning across repositories.**
 
 ## Revision history
 
-**Revision 3** folds in a crate-boundary review and the constraints implied by
-the target applications:
+**Revision 4** settles where computation lives and follows the consequences:
 
-- **Split `helic-fw-common` into `helic-fw-rt` and `helic-fw-net`.** It
-  conflated core-0 and core-1 disciplines in one dependency set. The split makes
-  "no Embassy on the tick path" a checkable dependency rule rather than a review
-  rule, which matters given the flash/XIP contention history in
-  `docs/overrun_handoff.md`. Verified clean: `rt_loop.rs`'s only `embassy-time`
-  use is the core-0 `status_run`.
-- **Added explicit dependency rules** for CI, plus two open placement questions
-  (`helic-core::rpm`, and device integrations such as `laser.rs` sitting in a
-  crate every rig depends on).
-- **Raised `MAX_RT_VALUES` from 33 to 132.** Sized from force appropriation:
-  33 admits only single-harmonic appropriation, excluding the multi-harmonic
-  case that nonlinear phase-resonance testing requires. This closes the open
-  question left in revision 2 in favour of a wider command rather than a
-  `DoubleBuffer`, and adds a WCET item for the wider per-tick copy.
-- **Added the autonomous-state rule.** Phase-locked excitation means the
-  programme owns the frequency, so a writable parameter's shadow is no longer
-  necessarily its value. Autonomous quantities must be separately discoverable.
-- **Added the two-rate guideline**: demodulation and synthesis on core 1, the
-  per-period appropriation law on core 0 or the host.
-- **Justified the vector `actuate` from hardware**: ~LDAC tied low gives up to
-  9 µs inter-channel skew across four channels, which is 3.2° at 1 kHz.
-- **Added a force-appropriation worked example** replacing the generic two-axis
-  one, since it exercises atomic vector update, autonomous frequency, and the
-  two-rate split together.
-- **Added two `helic-core` items**: `FourierEstimator::update_with` for the
-  shared basis, and a period-coherent estimator alongside the IIR.
-- **Recorded that the global safety trip is correct for multi-shaker work**, and
-  that stroke limiting is a gap an amplitude clamp does not cover.
+- **Estimation moves host-side by default.** Confirmed as existing practice
+  rather than a new policy: `FourierEstimator` has no firmware consumer at all,
+  and sustained all-source streaming at 8 kHz is hardware-proven
+  (`notes.md:50`). Host-side is also scientifically better: `f64`, exact
+  per-period integration, and the raw time series retained.
+- **The PLL stays on core 1**, because it is a feedback loop and the network
+  inside it costs phase margin. It owns a private single-harmonic demodulator,
+  which is the minimum device-side estimation the arrangement requires, and runs
+  `O(1)` per tick rather than in a burst on `period_start`.
+- **`phase` becomes a stream source**, as turns in `f32`. This makes host-side
+  demodulation exact while the PLL retunes, which would otherwise have been the
+  main objection to moving estimation off the device. It is independently useful
+  for other host-side processing.
+- **Telemetry coherence is resolved by construction** and demoted to a
+  documented constraint: the record path is coherent per tick, `ExtraParam` is
+  not, so `ExtraParam` is for independent scalars only. The previous revision's
+  recommendation to publish correlated modal estimates that way was unsafe and
+  is withdrawn.
+- **Two new safety requirements from the device-side PLL.** Hard minimum and
+  maximum increment bounds inside the `Pll`, because the output gate limits
+  amplitude and cannot see a frequency excursion sweeping a large force vector
+  through a resonance; and `Program::fault()`, because loss of lock is a
+  programme condition `Rig::output_fault(inputs)` cannot observe.
+- **`helic-core::rpm` moves to `whirl-rig-program`.** RPM estimation from
+  optical revolution pulses is whirl-specific instrumentation, not general DSP.
+  This is the first application of the reusable/experiment rule and removes
+  `helic-core`'s only module with no second consumer.
+- **Parameter index order need not be preserved.** Both host libraries discover
+  by name (`device.py:160`, `device.jl:191`). The golden registry test therefore
+  asserts a set, not an order; the golden *source* test still asserts order,
+  since that defines the record layout. Platform parameters can be an ordinary
+  group.
+- **`helic-core` additions reduced to `Pll`.** `FourierEstimator::update_with`
+  is no longer required, since no device-side estimator bank remains, and the
+  period-coherent estimator becomes a host library concern.
+- Example 2 recast with host-side estimation, which simplifies the programme
+  substantially and brings the source budget to 17 of 24.
+
+**Revision 3** folded in a crate-boundary review and application-driven sizing:
+the `helic-fw-common` split into `helic-fw-rt` and `helic-fw-net` with
+CI-checkable dependency rules; `MAX_RT_VALUES` raised from 33 to 132 because 33
+admits only single-harmonic appropriation; the autonomous-state rule; the
+host/device division of labour; the vector `actuate` justified from ~LDAC
+skew; and a force-appropriation worked example.
 
 **Revision 2** responded to a review. Each finding was confirmed against the
-code and accepted:
-
-- **Parameter writes were not transactional.** The previous `set` mutated the
-  shadow before enqueue, so a `Busy` rejection left a read returning the
-  rejected value, and a failed blob enqueue could strand the table pending with
-  no rollback. Replaced by `stage`/`accept`/`reject` with the ordering written
-  once in `ParamStore::set`, chosen over passing the producer into each group
-  because it makes the invariant structural rather than documented.
-- **The payload contradicted variable harmonic counts.**
-  `Payload::Coeffs(FourierCoeffs<HARMONICS>)` retained a constant the proposal
-  elsewhere removed, so the example could not have compiled. Replaced by
-  non-generic `Values`, and the unfounded "queue size unchanged" claim replaced
-  by a `size_of` assertion.
-- **The generic `DoubleBuffer<T>` safe API was unsound**, in all six ways
-  identified. Replaced with an SPSC-style endpoint split, borrows tied to
-  endpoint borrows, a `CommitToken` verified against pending state, and
-  `Sync` bounded on `T: Send`. Error type made local, since `helic-core`
-  depends only on `libm`.
-- **The MIMO safety contract was missing.** Now states vector clamping, global
-  per-tick fault latching, per-tick counters, `MAX_ACTUATORS`, the
-  `P::OUTPUTS == R::ACTUATORS.len()` assertion, and post-safety streaming.
-- **Command identifiers were not component-local.** Added `domain` to the
-  command address.
-- **Rig-local programme logic had no host-testable home.** Resolved by moving
-  the contract types to the portable `helic-rt` crate.
-- **The goal needed a capacity qualification.** Adopted, with an explicit
-  capacity table.
+code and accepted: parameter writes were not transactional, and were replaced by
+`stage`/`accept`/`reject` with the ordering written once in `ParamStore::set`;
+`Payload::Coeffs(FourierCoeffs<HARMONICS>)` contradicted the const-generic `H`
+proposed elsewhere and became non-generic `Values`; the generic `DoubleBuffer<T>`
+safe API was unsound in all six ways identified and was replaced by an
+SPSC-style endpoint split; the MIMO safety contract was missing and is now
+stated; command identifiers were not component-local and gained a `domain`;
+rig-local programme logic had no host-testable home, resolved by the portable
+`helic-rt` crate; and the goal gained a capacity qualification.
