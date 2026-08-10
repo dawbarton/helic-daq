@@ -1,7 +1,7 @@
 //! Loopback TCP/UDP system test for shared streaming, replay, and recording.
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +25,7 @@ struct FakeState {
     configuration: SharedConfiguration,
     target: Arc<Mutex<Option<SocketAddr>>>,
     disarmed: Arc<AtomicBool>,
+    reboots: Arc<AtomicUsize>,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -35,6 +36,72 @@ async fn two_clients_share_stream_replay_and_recording() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_clients_work_without_recording() -> Result<()> {
     run_two_client_flow(false).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mcu_reboot_closes_clients_reconnects_and_finalises_recording() -> Result<()> {
+    let mcu_control = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let mcu_control_port = mcu_control.local_addr()?.port();
+    let mcu_stream = Arc::new(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?);
+    let mcu_stream_port = mcu_stream.local_addr()?.port();
+    let fake = FakeState::default();
+    tokio::spawn(fake_mcu_control(mcu_control, fake.clone()));
+    tokio::spawn(fake_mcu_stream(mcu_stream, fake.clone()));
+
+    let output = tempdir()?;
+    let control_port = free_tcp_port()?;
+    let broker = tokio::spawn(helic_broker::server::run(Config {
+        mcu_host: Ipv4Addr::LOCALHOST.to_string(),
+        output_dir: Some(output.path().to_path_buf()),
+        mcu_control_port,
+        mcu_stream_port,
+        mcu_discovery_port: free_udp_port()?,
+        control_port,
+        stream_port: free_udp_port()?,
+        discovery_port: free_udp_port()?,
+        history: Duration::from_secs(2),
+        segment_size: 1 << 30,
+        request_timeout: Duration::from_millis(500),
+        reconnect_delay: Duration::from_millis(20),
+        log_level: "warn".into(),
+    }));
+
+    let mut first = connect_when_ready(control_port).await?;
+    let mut second = connect_when_ready(control_port).await?;
+    let setup = [1, 0, 0, 0, 0, 0, 2, 0, 1];
+    assert_ack(&mut first, MsgType::StreamSetup as u8, &setup).await?;
+    let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    assert_ack(
+        &mut first,
+        MsgType::StreamStart as u8,
+        &receiver.local_addr()?.port().to_le_bytes(),
+    )
+    .await?;
+    receive_packet(&receiver).await?;
+
+    let mut reboot = 3u16.to_le_bytes().to_vec();
+    reboot.extend_from_slice(&helic_proto::MCU_REBOOT_CONFIRMATION.to_le_bytes());
+    assert_ack(&mut first, MsgType::SetPar as u8, &reboot).await?;
+    assert_connection_closed(&mut first).await?;
+    assert_connection_closed(&mut second).await?;
+    assert_eq!(fake.reboots.load(Ordering::Acquire), 1);
+
+    let mut replacement = connect_when_ready(control_port).await?;
+    let (response_type, _) = request(&mut replacement, MsgType::Status as u8, &[]).await?;
+    assert_eq!(response_type, MsgType::Status as u8);
+
+    let files = std::fs::read_dir(output.path())?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(files.len(), 1);
+    let mut recording = SwmrFileReader::open(&files[0])?;
+    assert_eq!(recording.read_dataset::<u8>("close_reason")?, vec![8]);
+    assert_eq!(recording.read_dataset::<u8>("clean_close")?, vec![1]);
+    assert_eq!(recording.read_dataset::<u8>("session_complete")?, vec![0]);
+
+    drop(replacement);
+    broker.abort();
+    Ok(())
 }
 
 async fn run_two_client_flow(recording_enabled: bool) -> Result<()> {
@@ -164,7 +231,17 @@ async fn run_two_client_flow(recording_enabled: bool) -> Result<()> {
 }
 
 async fn fake_mcu_control(listener: TcpListener, state: FakeState) -> Result<()> {
-    let (mut stream, peer) = listener.accept().await?;
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        serve_fake_mcu_connection(stream, peer, &state).await?;
+    }
+}
+
+async fn serve_fake_mcu_connection(
+    mut stream: TcpStream,
+    peer: SocketAddr,
+    state: &FakeState,
+) -> Result<()> {
     loop {
         let (message_type, sequence, payload) = match read_frame(&mut stream).await {
             Ok(frame) => frame,
@@ -174,7 +251,7 @@ async fn fake_mcu_control(listener: TcpListener, state: FakeState) -> Result<()>
         let response = match message_type {
             value if value == MsgType::Status as u8 => {
                 let mut payload = vec![helic_proto::VERSION];
-                payload.extend_from_slice(&3u16.to_le_bytes());
+                payload.extend_from_slice(&4u16.to_le_bytes());
                 payload.push(2);
                 payload.extend_from_slice(&1000f32.to_le_bytes());
                 payload.extend_from_slice(&42u32.to_le_bytes());
@@ -186,6 +263,15 @@ async fn fake_mcu_control(listener: TcpListener, state: FakeState) -> Result<()>
             value if value == MsgType::SetPar as u8 => {
                 if payload == [2, 0, 0, 0, 0, 0] {
                     state.disarmed.store(true, Ordering::Release);
+                }
+                if payload.len() == 6
+                    && payload[..2] == [3, 0]
+                    && u32::from_le_bytes(payload[2..].try_into().unwrap())
+                        == helic_proto::MCU_REBOOT_CONFIRMATION
+                {
+                    state.reboots.fetch_add(1, Ordering::AcqRel);
+                    *state.target.lock().await = None;
+                    *state.configuration.lock().await = None;
                 }
                 Vec::new()
             }
@@ -214,6 +300,12 @@ async fn fake_mcu_control(listener: TcpListener, state: FakeState) -> Result<()>
             }
         };
         write_frame(&mut stream, response_type, sequence, &response).await?;
+        if state.reboots.load(Ordering::Acquire) != 0
+            && message_type == MsgType::SetPar as u8
+            && payload.get(..2) == Some(&[3, 0])
+        {
+            return Ok(());
+        }
     }
 }
 
@@ -254,11 +346,12 @@ fn parameter_page(request: &[u8]) -> Vec<u8> {
     assert_eq!(request, [0, 0]);
     let mut payload = Vec::new();
     payload.extend_from_slice(&0u16.to_le_bytes());
-    payload.extend_from_slice(&3u16.to_le_bytes());
+    payload.extend_from_slice(&4u16.to_le_bytes());
     for (name, type_code, count, writable) in [
         ("firmware", b'c', 16u16, 0u8),
         ("experiment", b'c', 16u16, 0u8),
         ("arm", b'I', 1u16, 1u8),
+        ("mcu_reboot", b'I', 1u16, 1u8),
     ] {
         payload.extend_from_slice(name.as_bytes());
         payload.push(0);
@@ -276,6 +369,7 @@ fn parameter_values(request: &[u8]) -> Vec<u8> {
             0 => fixed_text("helic-daq test").to_vec(),
             1 => fixed_text("cbc-rig").to_vec(),
             2 => 0u32.to_le_bytes().to_vec(),
+            3 => 0u32.to_le_bytes().to_vec(),
             _ => Vec::new(),
         })
         .collect()
@@ -310,6 +404,13 @@ async fn assert_ack(stream: &mut TcpStream, message_type: u8, payload: &[u8]) ->
     let (response_type, response) = request(stream, message_type, payload).await?;
     assert_eq!(response_type, message_type, "error response: {response:?}");
     assert!(response.is_empty());
+    Ok(())
+}
+
+async fn assert_connection_closed(stream: &mut TcpStream) -> Result<()> {
+    let mut byte = [0; 1];
+    let length = timeout(Duration::from_secs(1), stream.read(&mut byte)).await??;
+    assert_eq!(length, 0, "broker left a stale client connection open");
     Ok(())
 }
 

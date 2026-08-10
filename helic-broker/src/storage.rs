@@ -47,6 +47,7 @@ pub enum CloseReason {
     StorageError = 5,
     BrokerShutdown = 6,
     StartRejected = 7,
+    McuReboot = 8,
 }
 
 impl CloseReason {

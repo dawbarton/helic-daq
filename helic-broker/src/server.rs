@@ -55,6 +55,7 @@ struct DeviceMetadata {
     experiment: String,
     firmware: String,
     arm_index: Option<u16>,
+    mcu_reboot_index: Option<u16>,
     mac: [u8; 6],
 }
 
@@ -220,7 +221,11 @@ impl App {
         self.upstream.lock().await.is_some()
     }
 
-    async fn request(&self, message_type: u8, payload: &[u8]) -> Result<UpstreamResponse> {
+    async fn request_with_generation(
+        &self,
+        message_type: u8,
+        payload: &[u8],
+    ) -> Result<(u64, UpstreamResponse)> {
         let (generation, result) = {
             let mut upstream = self.upstream.lock().await;
             let Some(upstream) = upstream.as_mut() else {
@@ -233,13 +238,19 @@ impl App {
             (generation, result)
         };
         match result {
-            Ok(response) => Ok(response),
+            Ok(response) => Ok((generation, response)),
             Err(error) => {
                 self.mark_upstream_failed(generation, &error.to_string())
                     .await;
                 Err(error)
             }
         }
+    }
+
+    async fn request(&self, message_type: u8, payload: &[u8]) -> Result<UpstreamResponse> {
+        self.request_with_generation(message_type, payload)
+            .await
+            .map(|(_, response)| response)
     }
 
     async fn mark_upstream_failed(&self, generation: u64, reason: &str) {
@@ -276,6 +287,44 @@ impl App {
         let next = self.epoch.borrow().wrapping_add(1);
         self.epoch.send_replace(next);
         self.reconnect.notify_one();
+    }
+
+    /// Retire an upstream session after its successful reboot acknowledgement.
+    /// This is an expected lifecycle transition, not a heartbeat failure.
+    async fn complete_mcu_reboot(&self, generation: u64) {
+        let removed = {
+            let mut upstream = self.upstream.lock().await;
+            if upstream
+                .as_ref()
+                .is_some_and(|candidate| candidate.generation == generation)
+            {
+                upstream.take().is_some()
+            } else {
+                false
+            }
+        };
+        if !removed {
+            return;
+        }
+        tracing::info!(generation, "MCU reboot acknowledged; reconnecting");
+        let was_running = {
+            let mut state = self.state.lock().await;
+            let was_running = state.running;
+            state.running = false;
+            state.configuration = None;
+            state.received_records = 0;
+            state.history.clear();
+            state.detach_all();
+            state.table_owner = None;
+            was_running
+        };
+        *self.metadata.write().await = None;
+        let next = self.epoch.borrow().wrapping_add(1);
+        self.epoch.send_replace(next);
+        self.reconnect.notify_one();
+        if was_running {
+            let _ = self.stop_recording(CloseReason::McuReboot).await;
+        }
     }
 
     async fn force_upstream_disconnect(&self, reason: &str) {
@@ -504,6 +553,7 @@ struct Handled {
     response_type: u8,
     payload: Vec<u8>,
     datagrams: Vec<(Arc<[u8]>, SocketAddr)>,
+    reboot_generation: Option<u64>,
 }
 
 impl Handled {
@@ -512,6 +562,7 @@ impl Handled {
             response_type: response.message_type,
             payload: response.payload,
             datagrams: Vec::new(),
+            reboot_generation: None,
         }
     }
 
@@ -520,6 +571,7 @@ impl Handled {
             response_type: message_type,
             payload: Vec::new(),
             datagrams: Vec::new(),
+            reboot_generation: None,
         }
     }
 
@@ -528,6 +580,7 @@ impl Handled {
             response_type: MsgType::Error as u8,
             payload: vec![code, request_type],
             datagrams: Vec::new(),
+            reboot_generation: None,
         }
     }
 }
@@ -709,6 +762,10 @@ async fn discover_device(upstream: &mut UpstreamControl, app: &App) -> Result<De
         .iter()
         .find(|parameter| parameter.name == "arm")
         .map(|parameter| parameter.index);
+    let mcu_reboot_index = parameters
+        .iter()
+        .find(|parameter| parameter.name == "mcu_reboot")
+        .map(|parameter| parameter.index);
     let mac = query_mac(
         upstream.peer_ip,
         upstream.udp.local_addr()?.ip(),
@@ -722,6 +779,7 @@ async fn discover_device(upstream: &mut UpstreamControl, app: &App) -> Result<De
         experiment,
         firmware,
         arm_index,
+        mcu_reboot_index,
         mac,
     })
 }
@@ -990,6 +1048,7 @@ async fn serve_client(app: Arc<App>, mut stream: TcpStream, peer: SocketAddr) ->
             };
             let (message_type, sequence, payload) = request?;
             let handled = handle_request(&app, client_id, peer, message_type, &payload).await?;
+            let reboot_generation = handled.reboot_generation;
             write_frame(
                 &mut stream,
                 handled.response_type,
@@ -1001,6 +1060,10 @@ async fn serve_client(app: Arc<App>, mut stream: TcpStream, peer: SocketAddr) ->
                 if let Err(error) = app.downstream_udp.send_to(&datagram, target).await {
                     tracing::warn!(client_id, %target, %error, "historical replay send failed");
                 }
+            }
+            if let Some(generation) = reboot_generation {
+                app.complete_mcu_reboot(generation).await;
+                return Ok(());
             }
         }
     }
@@ -1030,6 +1093,7 @@ async fn handle_request(
                 response_type: message_type,
                 payload: encoded,
                 datagrams: Vec::new(),
+                reboot_generation: None,
             })
         }
         broker::QUIET_STREAM_START => start_client(app, client_id, peer, payload, true).await,
@@ -1043,8 +1107,31 @@ async fn handle_request(
         value if value == MsgType::SetBlock as u8 || value == MsgType::Commit as u8 => {
             table_request(app, client_id, message_type, payload).await
         }
+        value if value == MsgType::SetPar as u8 => set_parameter(app, payload).await,
         _ => Ok(Handled::response(app.request(message_type, payload).await?)),
     }
+}
+
+async fn set_parameter(app: &App, payload: &[u8]) -> Result<Handled> {
+    let reboot_index = app
+        .metadata
+        .read()
+        .await
+        .as_ref()
+        .and_then(|metadata| metadata.mcu_reboot_index);
+    let requested_index = payload
+        .get(..2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]));
+    let (generation, response) = app
+        .request_with_generation(MsgType::SetPar as u8, payload)
+        .await?;
+    let is_reboot = response.message_type == MsgType::SetPar as u8
+        && requested_index.is_some_and(|index| Some(index) == reboot_index);
+    let mut handled = Handled::response(response);
+    if is_reboot {
+        handled.reboot_generation = Some(generation);
+    }
+    Ok(handled)
 }
 
 async fn stream_setup(app: &App, payload: &[u8]) -> Result<Handled> {
@@ -1180,6 +1267,7 @@ async fn start_client(
             response_type: response.message_type,
             payload: response.payload,
             datagrams: Vec::new(),
+            reboot_generation: None,
         });
     }
     Ok(Handled::empty(request_type))
@@ -1276,6 +1364,7 @@ async fn get_recent(
             .into_iter()
             .map(|packet| (packet, endpoint))
             .collect(),
+        reboot_generation: None,
     })
 }
 
