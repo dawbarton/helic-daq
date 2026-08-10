@@ -1,6 +1,6 @@
 # Hardware verification status
 
-Last updated 2026-07-22. Read this before a hardware session and update the
+Last updated 2026-08-10. Read this before a hardware session and update the
 verification boundary, failures and fitted-hardware assumptions afterwards.
 
 ## Verified on hardware
@@ -387,6 +387,48 @@ diagnostics. The displacement/stale-laser trip was not deliberately re-induced
 in this session; the 2026-07-18 blind-laser test and unit tests remain the
 evidence for that path. ADC0 remains temporarily wired as the A-minus-C
 loopback and must be restored before use as the experiment signal.
+
+## Network MCU reboot verification (2026-08-10)
+
+At 2026-08-10T16:08:02+00:00, release CBC firmware reported identity
+`0.1.0 830d290` on the W5500 rig at `192.168.1.235`. The ADC was attached,
+but the laser and actuator were powered down. The first post-flash regression
+attempt timed out in TCP connection after an incomplete ARP exchange, matching
+the known post-flash link symptom. An ordered target reset and direct W5500
+reflash restored the link; RTT then reported the 8 kHz core-1 loop, 14 sources,
+and a 34 us loop maximum with zero overruns, timeouts or jitter.
+
+The network reboot interface was exercised directly while a continuous
+two-source UDP stream was active. Writes of `0`, `1`, and `0x52454253` to
+`mcu_reboot` were rejected with `BadValue`; the exact confirmation token was
+accepted. TCP and UDP stopped, the device reappeared after approximately
+2.51 s with 2.182 s uptime, and the same identity, `arm = 0`, and
+`mcu_reboot = 0`. A second consecutive reboot gave the same timings and clean
+diagnostics. Thus reboot acceptance, connection loss, reset, network recovery,
+and the disarmed post-boot state are hardware-verified. The per-channel DAC
+quiescence sequence is covered by code and unit tests, but was not observed
+electrically in this session because the actuator was unpowered.
+
+The current release broker was then tested with two clients, live streaming,
+and recording. After the reboot acknowledgement it disconnected both clients,
+failed its first immediate reconnect while the MCU was down, and connected as
+generation 2 approximately 3.10 s later with the same firmware identity. The
+closed HDF5 session contained 197003 records and recorded
+`close_reason = 8`, `clean_close = 1`, and `session_complete = 0`; no partial
+file remained. A replacement client discovered the fresh registry and saw the
+device disarmed.
+
+The required CBC regressions passed after the reflash. The 8000-record
+all-14-source capture was contiguous with zero UDP loss, device drops,
+overruns, timeouts or clock jitter; the loop maximum was 34 us and wake phase
+was fixed at 36/36 us. The 60000-record `adc0,out` capture likewise had zero
+loss, drops, gaps or timing faults at 8000.371 ticks/s, with a 34 us maximum
+and 36/36 us wake phase. After a 300 s client-free interval, firmware uptime
+was 384.766 s and the tick count had advanced by 2512257 with zero record
+drops, overruns, timeouts or jitter. A final 512-record quiet capture had
+`out == 0`, zero packet loss and device drops, `arm = 0`, `mcu_reboot = 0`,
+and clean timing counters; `safety = 0b1010` reflects the expected absent-laser
+trip and quiet state.
 
 ## Next hardware session
 
