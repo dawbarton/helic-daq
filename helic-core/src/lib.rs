@@ -27,4 +27,7 @@ pub use phase::PhaseAccumulator;
 pub use pid::{Pid, PidConfig};
 pub use safety::{clamp_channel_command, StaleCounter};
 pub use table::{TableInterpolation, TableMode, TablePlayer, WaveTable, MAX_TABLE_LEN};
-pub use table_buffer::{Active as ActiveTable, BufferError, CommitToken, Staging, TableBuffer};
+pub use table_buffer::{
+    Active, ActiveTable, ActiveValues, BufferError, CommitToken, DoubleBuffer, Staging,
+    TableBuffer, ValueBuffer, ValueStaging,
+};

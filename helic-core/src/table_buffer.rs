@@ -1,4 +1,4 @@
-//! Owner-checked cross-core buffer for uploaded waveform tables.
+//! Owner-checked cross-core double buffers for large real-time values.
 
 use core::cell::{Cell, UnsafeCell};
 use core::marker::PhantomData;
@@ -6,50 +6,59 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::WaveTable;
 
-// Zero must mean idle so the complete 32 KiB `TableBuffer::new()` value is
-// zero-initialised and remains in `.bss` when held by a `ConstStaticCell`.
-// Pending bank ids are therefore encoded as bank + 1.
+// Zero must mean idle so zero-valued buffers remain in `.bss` when held by a
+// `ConstStaticCell`. Pending bank ids are therefore encoded as bank + 1.
 const NO_PENDING: u8 = 0;
 
-/// A table commit cannot begin while an earlier commit awaits activation.
+/// A buffer commit cannot begin while an earlier commit awaits activation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BufferError {
     Busy,
 }
 
-/// Linear proof that one table-bank activation is outstanding.
+/// Linear proof that one bank activation is outstanding.
 ///
 /// The token is deliberately neither [`Copy`] nor [`Clone`]. It moves from
 /// [`Staging::commit`] through the cross-core command queue and is consumed by
-/// exactly one of [`Active::activate`] or [`Staging::cancel`].
+/// exactly one of [`Active::activate`] or [`Staging::cancel`]. Its erased value
+/// type lets the non-generic command envelope carry table or force-vector
+/// commits; the owner address prevents cross-buffer replay.
 #[derive(Debug)]
 pub struct CommitToken {
     owner: usize,
     bank: u8,
 }
 
-/// Two waveform banks shared through uniquely owned staging and active ends.
-pub struct TableBuffer {
-    banks: [UnsafeCell<WaveTable>; 2],
+/// Two banks shared through uniquely owned staging and active endpoints.
+pub struct DoubleBuffer<T> {
+    banks: [UnsafeCell<T>; 2],
     // Written only by the active endpoint during activation.
     active: AtomicU8,
     // Whole-word stores publish bank + 1, or NO_PENDING.
     pending: AtomicU8,
 }
 
+/// Waveform-table buffer retained as the convenient default specialisation.
+pub type TableBuffer = DoubleBuffer<WaveTable>;
+/// Buffer for an atomic fixed-width force or parameter vector.
+pub type ValueBuffer<const N: usize> = DoubleBuffer<[f32; N]>;
+/// Core-1 endpoint for waveform tables.
+pub type ActiveTable = Active<WaveTable>;
+/// Core-1 endpoint for fixed-width value vectors.
+pub type ActiveValues<const N: usize> = Active<[f32; N]>;
+/// Core-0 endpoint for fixed-width value vectors.
+pub type ValueStaging<const N: usize> = Staging<[f32; N]>;
+
 // SAFETY: `split` yields one non-Sync endpoint for each core. `Staging` mutates
 // only the inactive bank while no commit is pending; `Active` reads only its
 // cached active bank. The Release/Acquire protocol makes staged writes visible
 // before activation and the new active id visible before staging resumes.
-unsafe impl Sync for TableBuffer {}
+unsafe impl<T: Send> Sync for DoubleBuffer<T> {}
 
-impl TableBuffer {
-    pub const fn new() -> Self {
+impl<T: 'static> DoubleBuffer<T> {
+    const fn from_banks(first: T, second: T) -> Self {
         Self {
-            banks: [
-                UnsafeCell::new(WaveTable::empty()),
-                UnsafeCell::new(WaveTable::empty()),
-            ],
+            banks: [UnsafeCell::new(first), UnsafeCell::new(second)],
             active: AtomicU8::new(0),
             pending: AtomicU8::new(NO_PENDING),
         }
@@ -70,8 +79,8 @@ impl TableBuffer {
     /// let _first = buffer.split();
     /// let _second = buffer.split();
     /// ```
-    pub fn split(&'static mut self) -> (Staging, Active) {
-        let buf: &'static TableBuffer = self;
+    pub fn split(&'static mut self) -> (Staging<T>, Active<T>) {
+        let buf: &'static DoubleBuffer<T> = self;
         (
             Staging {
                 buf,
@@ -91,21 +100,34 @@ impl TableBuffer {
     }
 }
 
-impl Default for TableBuffer {
+impl DoubleBuffer<WaveTable> {
+    pub const fn new() -> Self {
+        Self::from_banks(WaveTable::empty(), WaveTable::empty())
+    }
+}
+
+impl<const N: usize> DoubleBuffer<[f32; N]> {
+    /// Construct two zeroed value banks suitable for static `.bss` storage.
+    pub const fn values() -> Self {
+        Self::from_banks([0.0; N], [0.0; N])
+    }
+}
+
+impl Default for DoubleBuffer<WaveTable> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Core-0 ownership of the inactive table bank and commit publication.
+/// Core-0 ownership of an inactive bank and commit publication.
 ///
 /// This endpoint is `Send` but deliberately not `Sync`.
-pub struct Staging {
-    buf: &'static TableBuffer,
+pub struct Staging<T: 'static = WaveTable> {
+    buf: &'static DoubleBuffer<T>,
     _not_sync: PhantomData<Cell<()>>,
 }
 
-impl Staging {
+impl<T: 'static> Staging<T> {
     /// Borrow the inactive bank while no earlier commit is pending.
     ///
     /// The mutable borrow is tied to `self`, preventing two staging borrows.
@@ -122,14 +144,14 @@ impl Staging {
     /// first.write_block(0, &[1.0, 2.0]);
     /// second.write_block(0, &[3.0, 4.0]);
     /// ```
-    pub fn buffer(&mut self) -> Result<&mut WaveTable, BufferError> {
+    pub fn buffer(&mut self) -> Result<&mut T, BufferError> {
         if self.buf.pending.load(Ordering::Acquire) != NO_PENDING {
             return Err(BufferError::Busy);
         }
         let bank = self.buf.active.load(Ordering::Acquire) ^ 1;
         // SAFETY: no commit is pending, so `bank` is inactive. This uniquely
         // owned endpoint and the `&mut self` borrow prevent a second mutable
-        // reference on core 0; the active endpoint reads only the other bank.
+        // reference; the active endpoint reads only the other bank.
         Ok(unsafe { &mut *self.buf.banks[bank as usize].get() })
     }
 
@@ -156,17 +178,17 @@ impl Staging {
     }
 }
 
-/// Core-1 ownership of the table bank used by the real-time loop.
+/// Core-1 ownership of the bank used by the real-time loop.
 ///
 /// This endpoint is `Send` but deliberately not `Sync`.
-pub struct Active {
-    buf: &'static TableBuffer,
+pub struct Active<T: 'static = WaveTable> {
+    buf: &'static DoubleBuffer<T>,
     current: u8,
     _not_sync: PhantomData<Cell<()>>,
 }
 
-impl Active {
-    /// Borrow the cached active table without an atomic operation per tick.
+impl<T: 'static> Active<T> {
+    /// Borrow the cached active bank without an atomic operation per tick.
     ///
     /// Holding this borrow prevents activation through the same endpoint.
     ///
@@ -185,7 +207,7 @@ impl Active {
     /// ```
     #[inline(always)]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
-    pub fn get(&self) -> &WaveTable {
+    pub fn get(&self) -> &T {
         // SAFETY: `current` names the bank owned for shared reads by this
         // endpoint. Activation needs `&mut self`, so it cannot change while
         // the returned borrow is live.
@@ -264,6 +286,14 @@ mod tests {
     }
 
     #[test]
+    fn value_buffer_uses_the_same_publication_protocol() {
+        let (mut staging, mut active) = Box::leak(Box::new(ValueBuffer::<132>::values())).split();
+        staging.buffer().unwrap()[..4].copy_from_slice(&[1.0, -2.5, 3.25, 4.0]);
+        active.activate(staging.commit().unwrap());
+        assert_eq!(&active.get()[..4], &[1.0, -2.5, 3.25, 4.0]);
+    }
+
+    #[test]
     fn rejected_commit_leaves_active_bank_untouched() {
         let (mut staging, mut active) = endpoints();
         stage(&mut staging, &[1.0, 2.0]);
@@ -278,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn foreign_tokens_cannot_cancel_or_activate_this_buffer() {
+    fn foreign_tokens_cannot_cancel_or_activate_any_buffer_type() {
         let (mut staging_a, _active_a) = endpoints();
         let (mut staging_b, mut active_b) = endpoints();
         stage(&mut staging_a, &[1.0, 2.0]);
@@ -291,11 +321,12 @@ mod tests {
         active_b.activate(token_b);
         assert_eq!(active_b.get().values(), [3.0, 4.0]);
 
-        let (mut staging_c, _active_c) = endpoints();
-        let (_staging_d, mut active_d) = endpoints();
-        stage(&mut staging_c, &[5.0, 6.0]);
-        active_d.activate(staging_c.commit().unwrap());
-        assert!(active_d.get().is_empty());
+        let (mut table_staging, _table_active) = endpoints();
+        let (_values_staging, mut values_active) =
+            Box::leak(Box::new(ValueBuffer::<4>::values())).split();
+        stage(&mut table_staging, &[5.0, 6.0]);
+        values_active.activate(table_staging.commit().unwrap());
+        assert_eq!(*values_active.get(), [0.0; 4]);
     }
 
     #[test]

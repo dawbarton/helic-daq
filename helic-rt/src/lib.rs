@@ -17,7 +17,7 @@ mod shared;
 pub use channels::{
     command_id, CommandConsumer, CommandProducer, Payload, Record, RecordConsumer, RecordProducer,
     RtChannels, RtCommand, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN, DOMAIN_CONTROLLER,
-    DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, MAX_RT_VALUES, RECORD_QUEUE_LEN,
+    DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, MAX_FORCE_VALUES, MAX_RT_VALUES, RECORD_QUEUE_LEN,
 };
 pub use rig::{source, source_count, validate_sources, Rig, TickSource, MAX_SOURCES};
 pub use sample_rate::SampleRate;

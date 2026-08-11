@@ -5,12 +5,15 @@ use helic_core::CommitToken;
 
 use crate::MAX_SOURCES;
 
-/// Maximum number of scalar values carried atomically by one RT command.
+/// Maximum number of scalar values copied inline by one RT command.
 ///
-/// This accommodates four actuators with a mean and sixteen sine/cosine
-/// harmonic pairs each. Changing it changes queue SRAM use and command WCET,
-/// so it is a breaking platform change.
-pub const MAX_RT_VALUES: usize = 132;
+/// This accommodates one mean plus sixteen sine/cosine harmonic pairs. Wider
+/// vectors use an owner-checked [`helic_core::ValueBuffer`], because hardware
+/// timing rejected copying 132 values through this envelope. Changing this
+/// bound changes queue SRAM use and command WCET, so it is breaking.
+pub const MAX_RT_VALUES: usize = 33;
+/// Widest reviewed buffered force vector: four actuators at sixteen harmonics.
+pub const MAX_FORCE_VALUES: usize = 132;
 
 /// Command domain reserved for experiment hardware.
 pub const DOMAIN_RIG: u8 = 0;
@@ -52,9 +55,6 @@ pub mod command_id {
 /// Deliberately not `Copy` or `Clone`: `Buffer` contains a linear token whose
 /// ownership must travel back to the staging endpoint if enqueueing fails.
 #[derive(Debug)]
-// The fixed inline array is deliberate: allocation and indirection are
-// forbidden on the real-time path, and Stage 4 measures this copy's WCET.
-#[allow(clippy::large_enum_variant)]
 pub enum Payload {
     Unit,
     F32(f32),
@@ -71,7 +71,7 @@ pub struct RtCommand {
     pub payload: Payload,
 }
 
-const _: () = assert!(core::mem::size_of::<RtCommand>() <= 560);
+const _: () = assert!(core::mem::size_of::<RtCommand>() <= 160);
 
 pub const COMMAND_QUEUE_LEN: usize = 32;
 /// Maximum number of host commands applied at one sample boundary.
@@ -109,14 +109,15 @@ mod tests {
 
     #[test]
     fn command_envelope_stays_within_reviewed_sram_bound() {
-        assert_eq!(MAX_RT_VALUES, 132);
-        assert!(core::mem::size_of::<RtCommand>() <= 560);
+        assert_eq!(MAX_RT_VALUES, 33);
+        assert!(core::mem::size_of::<RtCommand>() <= 160);
     }
 
     #[test]
-    fn payload_is_large_enough_for_reviewed_force_vector() {
+    fn reviewed_force_vector_uses_the_buffered_capacity() {
         const ACTUATORS: usize = 4;
         const HARMONICS: usize = 16;
-        assert_eq!(ACTUATORS * (1 + 2 * HARMONICS), MAX_RT_VALUES);
+        assert_eq!(ACTUATORS * (1 + 2 * HARMONICS), MAX_FORCE_VALUES);
+        assert_eq!(1 + 2 * HARMONICS, MAX_RT_VALUES);
     }
 }
