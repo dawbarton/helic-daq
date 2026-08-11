@@ -173,9 +173,11 @@ PWM-wrap tick and omit the ADC read.
 The current loop owns the standard target/forcing/controller/table graph
 directly. The component-ownership refactor in
 [rig_decoupling_proposal.md](rig_decoupling_proposal.md) is being implemented
-in explicit regression-gated stages. Its first stage has moved the cross-core
-diagnostic, safety, and reboot state into the portable `helic-rt` crate; the
-`Program` and component-owned parameter contracts have not landed yet.
+in explicit regression-gated stages. Stages 0–3 have moved the cross-core
+state and portable contracts into `helic-rt`, split firmware support by
+execution domain, and replaced the global waveform buffers with owner-checked
+endpoints. The `Program` and component-owned parameter contracts have not
+landed yet.
 
 ```
 core 1 (real-time)                       core 0 (everything else)
@@ -261,10 +263,11 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   The firmware workspace enables the `rt-sram` feature for host-tested DSP,
   runtime, and driver crates, which cannot use the embedded linker section in
   desktop builds. Timing diagnostics read raw `TIMER0` registers.
-- `rt_mem`: SRAM implementations of the ARM EABI aligned copy and clear
-  helpers. LLVM emits these calls for fixed-array initialisation and moves in
-  otherwise SRAM-resident Rust; allowing the compiler-builtins versions in
-  flash reintroduced 68–75 µs network-dependent maxima during this refactor.
+- `rt_mem`: SRAM implementations of the ARM EABI generic and aligned copy and
+  clear helpers. LLVM emits these calls for fixed-array initialisation and
+  non-`Copy` command moves in otherwise SRAM-resident Rust; allowing the
+  compiler-builtins versions in flash reintroduced 68–75 µs network-dependent
+  maxima during this refactor.
 - Network reboot quiescence: core 0 publishes a release/acquire reboot request;
   core 1 diverts at the next sample boundary into bounded `Rig::prepare_reboot`
   steps, publishes completion, and spins in SRAM. CBC and Pico 2W issue one DAC
@@ -391,11 +394,14 @@ Core 0 never touches loop state. Four mechanisms keep communication bounded:
 - **Commands** (core 0 → 1): `heapless::spsc` queue of `RtCommand`.
   Array-valued parameters (coefficient sets) travel **by value**, so a tick
   can never observe a half-written array.
-- **Waveform tables** (core 0 → 1): two fixed 4096-sample buffers. Core 0
-  writes only the inactive buffer; `Commit` queues its id and core 1 switches
-  at a sample boundary. Further writes remain busy until core 1 publishes the
-  new active id, so neither core can access one buffer mutably and immutably
-  at the same time.
+- **Waveform tables** (core 0 → 1): each firmware owns one const-initialised
+  `TableBuffer` with two fixed 4096-sample banks. A one-time split gives core 0
+  a non-`Sync` staging endpoint and core 1 a non-`Sync` active endpoint.
+  `Commit` moves a linear, owner-checked token through the command queue, and
+  core 1 activates it at a sample boundary. Further writes remain busy until
+  activation publishes the new active bank; `table_len` is likewise published
+  by core 1 only after the switch. Release/Acquire ordering makes staged writes
+  visible without an atomic load on every tick.
 - **Records** (core 1 → 0): 256-deep `heapless::spsc` ring. The RT loop
   never blocks on it; overflow drops the record and increments
   `records_dropped`.

@@ -13,7 +13,6 @@ pub mod params;
 pub mod rig;
 mod sample_rate;
 mod shared;
-pub mod table;
 
 pub use channels::{
     CommandConsumer, CommandProducer, Record, RecordConsumer, RecordProducer, RtChannels,

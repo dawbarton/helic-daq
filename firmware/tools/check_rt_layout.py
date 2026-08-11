@@ -6,7 +6,6 @@ import argparse
 import subprocess
 from pathlib import Path
 
-
 FIRMWARE = Path(__file__).resolve().parents[1]
 DEFAULT_ELF_DIR = FIRMWARE / "target" / "thumbv8m.main-none-eabihf" / "release"
 SRAM_START = 0x2000_0000
@@ -24,8 +23,15 @@ HOT_SYMBOLS = (
     "reboot_quiesce_step",
     "prepare_reboot",
     "transfer_in_place",
+)
+
+EABI_HOT_SYMBOLS = (
+    "__aeabi_memcpy",
     "__aeabi_memcpy4",
+    "__aeabi_memcpy8",
+    "__aeabi_memclr",
     "__aeabi_memclr4",
+    "__aeabi_memclr8",
 )
 
 REQUIRED_SYMBOLS = {
@@ -33,21 +39,18 @@ REQUIRED_SYMBOLS = {
         "run_hot_loop",
         "run_reboot_quiesce",
         "transfer_in_place",
-        "__aeabi_memcpy4",
-        "__aeabi_memclr4",
+        *EABI_HOT_SYMBOLS,
     ),
     "fw-whirl-rig": (
         "run_hot_loop",
         "run_reboot_quiesce",
-        "__aeabi_memcpy4",
-        "__aeabi_memclr4",
+        *EABI_HOT_SYMBOLS,
     ),
     "fw-pico2w-rig": (
         "run_hot_loop",
         "run_reboot_quiesce",
         "transfer_in_place",
-        "__aeabi_memcpy4",
-        "__aeabi_memclr4",
+        *EABI_HOT_SYMBOLS,
     ),
 }
 
@@ -80,11 +83,16 @@ def check_elf(package: str, elf_dir: Path, nm: str) -> list[str]:
     found = symbols(elf, nm)
     errors: list[str] = []
     for required in REQUIRED_SYMBOLS[package]:
-        if not any(required in name and "Thunk" not in name for _, name in found):
+        if required in EABI_HOT_SYMBOLS:
+            present = any(required == name for _, name in found)
+        else:
+            present = any(required in name and "Thunk" not in name for _, name in found)
+        if not present:
             errors.append(f"{package}: required symbol {required!r} is absent")
 
     for address, name in found:
-        if "Thunk" in name or not any(marker in name for marker in HOT_SYMBOLS):
+        is_hot = name in EABI_HOT_SYMBOLS or any(marker in name for marker in HOT_SYMBOLS)
+        if "Thunk" in name or not is_hot:
             continue
         if not SRAM_START <= address < SRAM_END:
             errors.append(f"{package}: hot symbol at 0x{address:08x} is outside SRAM: {name}")

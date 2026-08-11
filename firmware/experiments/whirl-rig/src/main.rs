@@ -16,6 +16,7 @@ use embassy_rp::multicore::{spawn_core1, Stack as CoreStack};
 use embassy_rp::peripherals::{DMA_CH2, DMA_CH3, PIO0};
 use embassy_rp::pio;
 use embassy_time::Timer;
+use helic_core::TableBuffer;
 use helic_fw_rt::rt_loop as shared_rt;
 use helic_fw_support::comms;
 use helic_fw_support::net;
@@ -23,7 +24,7 @@ use helic_fw_support::net::wiznet::EthernetParts;
 use helic_rt::params::ParamStore;
 use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
 use panic_probe as _;
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 mod board;
 mod config;
@@ -49,6 +50,7 @@ bind_interrupts!(pub struct Irqs {
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static RT_SHARED: RtShared = RtShared::new();
+static TABLE: ConstStaticCell<TableBuffer> = ConstStaticCell::new(TableBuffer::new());
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -60,10 +62,12 @@ fn main() -> ! {
     let b = board::Board::new(p);
 
     let channels = shared_rt::init_channels();
+    let (table_staging, active_table) = TABLE.take().split();
     let controller = config::make_controller();
     let store = Store::new(
         channels.command_tx,
         &RT_SHARED,
+        table_staging,
         config::SAMPLE_RATE,
         helic_fw_support::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
@@ -81,6 +85,7 @@ fn main() -> ! {
             &RT_SHARED,
             channels.command_rx,
             channels.record_tx,
+            active_table,
         )
     });
 

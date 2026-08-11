@@ -55,9 +55,9 @@ layout checker, the regression-tool profiles, the user/developer guides and
   stretch flash-resident tick code past the whole sample period (see
   "Real-time isolation" in `docs/developer_guide.md`). Timing uses raw
   `TIMER0` reads; the ADC/DAC transfers use `helic_fw_rt::analog_spi`.
-  Fixed-array operations may lower to ARM EABI memory helpers, so keep
-  `rt_mem` and the layout check in place; SRAM annotations on the Rust caller
-  alone do not prove that compiler-generated calls avoid flash.
+  Fixed-array and non-`Copy` command moves may lower to ARM EABI memory
+  helpers, so keep `rt_mem` and the layout check in place; SRAM annotations on
+  the Rust caller alone do not prove that compiler-generated calls avoid flash.
   After touching the tick path, run the regression checklist in the
   developer guide before calling the change done.
 - Keep the BUSY edge-detect latch continuously armed in `BusyEdgeSpinTick`.
@@ -106,9 +106,10 @@ layout checker, the regression-tool profiles, the user/developer guides and
 - `firmware/tools/check_rt_layout.py` is the static hot-path gate. Build the
   complete release workspace immediately before running it; it checks all
   three production ELFs and must continue to require `run_hot_loop`, the ARM
-  EABI copy/clear helpers and each applicable analogue transfer symbol in
-  SRAM. Treat it as a minimum named-symbol guard, not a complete call-graph
-  proof. Inspect new compiler-generated calls after material tick-path changes.
+  EABI generic/aligned copy and clear helpers and each applicable analogue
+  transfer symbol in SRAM. Treat it as a minimum named-symbol guard, not a
+  complete call-graph proof. Inspect new compiler-generated calls after
+  material tick-path changes.
 - `firmware/tools/rt_regression.py` is the sequential hardware runner. It
   flashes one profile, checks identity, measures idle/TCP-poll/capture phases,
   verifies counters, rate, wake-phase spread and capture continuity, then

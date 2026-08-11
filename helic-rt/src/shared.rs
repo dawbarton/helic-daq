@@ -10,6 +10,8 @@ const REBOOT_QUIESCED: u32 = 2;
 pub struct Live {
     pub ticks: AtomicU32,
     pub loop_time_last_us: AtomicU32,
+    /// Length of the table most recently activated by core 1.
+    pub active_table_len: AtomicU32,
 }
 
 impl Live {
@@ -17,6 +19,7 @@ impl Live {
         Self {
             ticks: AtomicU32::new(0),
             loop_time_last_us: AtomicU32::new(0),
+            active_table_len: AtomicU32::new(0),
         }
     }
 }
@@ -218,6 +221,7 @@ mod tests {
         let shared = RtShared::new();
         shared.live.ticks.store(17, Ordering::Relaxed);
         shared.live.loop_time_last_us.store(23, Ordering::Relaxed);
+        shared.live.active_table_len.store(7, Ordering::Relaxed);
         shared.diagnostics.overruns.store(3, Ordering::Relaxed);
         shared
             .diagnostics
@@ -234,6 +238,7 @@ mod tests {
 
         assert_eq!(shared.live.ticks.load(Ordering::Relaxed), 17);
         assert_eq!(shared.live.loop_time_last_us.load(Ordering::Relaxed), 23);
+        assert_eq!(shared.live.active_table_len.load(Ordering::Relaxed), 7);
         assert_eq!(shared.diagnostics.overruns.load(Ordering::Relaxed), 0);
         assert_eq!(
             shared.diagnostics.wake_phase_min_us.load(Ordering::Relaxed),

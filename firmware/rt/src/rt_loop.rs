@@ -9,15 +9,14 @@ use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
 use helic_core::phase::PhaseAccumulator;
-use helic_core::table::{TablePlayer, WaveTable};
+use helic_core::table::TablePlayer;
+use helic_core::ActiveTable;
 use helic_rt::{
     source_count, CommandConsumer, Record, RecordProducer, Rig, RtChannels, RtCommand, RtShared,
     SampleRate, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN, HARMONICS, MAX_SOURCES,
     RECORD_QUEUE_LEN,
 };
 use static_cell::StaticCell;
-
-use helic_rt::table;
 
 /// Mask for a command epoch that remains exactly representable as `f32`.
 const COMMAND_EPOCH_MASK: u32 = (1 << 24) - 1;
@@ -99,7 +98,7 @@ fn run_rt_tick<R: Rig>(
     forcing_coeffs: &mut FourierCoeffs<HARMONICS>,
     command_epoch: &mut u32,
     table_player: &mut TablePlayer,
-    active_table: &mut &'static WaveTable,
+    active_table: &mut ActiveTable,
     index: &mut u32,
     last_tick: &mut Option<u32>,
     n_inputs: usize,
@@ -155,7 +154,13 @@ fn run_rt_tick<R: Rig>(
             RtCommand::SetTableMultiplier(multiplier) => table_player.set_multiplier(multiplier),
             RtCommand::SetTablePhase(offset) => table_player.set_phase_offset(offset),
             RtCommand::TriggerTable => table_player.trigger(),
-            RtCommand::UseTable(buffer) => *active_table = table::activate(buffer),
+            RtCommand::UseTable(token) => {
+                active_table.activate(token);
+                shared
+                    .live
+                    .active_table_len
+                    .store(active_table.get().len() as u32, Ordering::Relaxed);
+            }
             RtCommand::ResetController => controller.reset(),
             RtCommand::SetCtrlParam(id, value) => controller.set_param(id, value),
             RtCommand::SetRigParam(id, value) => rig.set_param(id, value),
@@ -184,7 +189,7 @@ fn run_rt_tick<R: Rig>(
     let target = target_coeffs.evaluate(lut, theta);
     let forcing = forcing_coeffs.evaluate(lut, theta);
     let controller_out = controller.tick(&values[..n_inputs], target, dt);
-    let table_out = table_player.step(active_table, theta, period_start);
+    let table_out = table_player.step(active_table.get(), theta, period_start);
     let out_cmd = controller_out + forcing + table_out;
     // Hard output safety stage. For a non-gated rig this is a compile-time
     // no-op (the const is false), so the summed command is applied verbatim.
@@ -291,7 +296,7 @@ struct RtLoopState<R: Rig, T: TickSource> {
     forcing_coeffs: FourierCoeffs<HARMONICS>,
     command_epoch: u32,
     table_player: TablePlayer,
-    active_table: &'static WaveTable,
+    active_table: ActiveTable,
     index: u32,
     last_tick: Option<u32>,
     n_inputs: usize,
@@ -302,6 +307,7 @@ struct RtLoopState<R: Rig, T: TickSource> {
 /// Perform all fallible, logging, and Embassy-dependent setup in flash before
 /// entering the SRAM hot loop. Keeping this boundary explicit makes it harder
 /// for future initialisation work to become reachable from a sample tick.
+#[allow(clippy::too_many_arguments)]
 pub fn run_rt_loop<R: Rig, T: TickSource>(
     mut rig: R,
     tick: T,
@@ -310,6 +316,7 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
     shared: &'static RtShared,
     commands: CommandConsumer,
     records: RecordProducer,
+    active_table: ActiveTable,
 ) -> ! {
     let n_inputs = R::INPUTS.len();
     let n_telemetry = R::Ctrl::TELEMETRY.len();
@@ -340,7 +347,7 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
         forcing_coeffs: FourierCoeffs::zero(),
         command_epoch: 0,
         table_player: TablePlayer::new(),
-        active_table: table::active(),
+        active_table,
         index: 0,
         last_tick: None,
         n_inputs,

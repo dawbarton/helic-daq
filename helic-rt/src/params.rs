@@ -16,9 +16,10 @@ use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableInterpolation, TableMode};
+use helic_core::{BufferError, Staging as TableStaging, MAX_TABLE_LEN};
 use helic_proto::{ErrorCode, ParamType};
 
-use crate::{table, validate_sources, CommandProducer, Rig, RtCommand, SampleRate, HARMONICS};
+use crate::{validate_sources, CommandProducer, Rig, RtCommand, SampleRate, HARMONICS};
 
 mod schema;
 
@@ -160,6 +161,7 @@ enum ShadowUpdate {
 pub struct ParamStore<C: Controller, R: Rig> {
     commands: CommandProducer,
     shared: &'static RtShared,
+    table: TableStaging,
     sample_rate: SampleRate,
     firmware_version: &'static str,
     experiment: &'static str,
@@ -179,9 +181,11 @@ pub struct ParamStore<C: Controller, R: Rig> {
 }
 
 impl<C: Controller, R: Rig> ParamStore<C, R> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         commands: CommandProducer,
         shared: &'static RtShared,
+        table: TableStaging,
         sample_rate: SampleRate,
         firmware_version: &'static str,
         experiment: &'static str,
@@ -219,6 +223,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         let store = Self {
             commands,
             shared,
+            table,
             sample_rate,
             firmware_version,
             experiment,
@@ -380,7 +385,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             IDX_FORCING => serialize_coeffs(&self.forcing, out),
             IDX_CTRL_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
             IDX_TABLE => return Err(ErrorCode::BadLength),
-            IDX_TABLE_LEN => out.copy_from_slice(&table::active_len().to_le_bytes()),
+            IDX_TABLE_LEN => out.copy_from_slice(
+                &(self.shared.live.active_table_len.load(Ordering::Relaxed) as u16).to_le_bytes(),
+            ),
             IDX_TABLE_FREQ => out.copy_from_slice(&self.table_freq_hz.to_le_bytes()),
             IDX_TABLE_GAIN => out.copy_from_slice(&self.table_gain.to_le_bytes()),
             IDX_TABLE_INTERPOLATION => out.copy_from_slice(&self.table_interpolation.to_le_bytes()),
@@ -657,23 +664,68 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         if index != IDX_TABLE {
             return Err(ErrorCode::BadIndex);
         }
-        table::set_block(offset, data)
+        if !data.len().is_multiple_of(4) {
+            return Err(ErrorCode::BadLength);
+        }
+        let offset = offset as usize;
+        let count = data.len() / 4;
+        if offset
+            .checked_add(count)
+            .is_none_or(|end| end > MAX_TABLE_LEN)
+        {
+            return Err(ErrorCode::BadLength);
+        }
+        let staging = self.table.buffer().map_err(map_buffer_error)?;
+        for (index, raw) in data.chunks_exact(4).enumerate() {
+            let value = f32::from_le_bytes(raw.try_into().unwrap());
+            let written = staging.write_block(offset + index, &[value]);
+            debug_assert!(written);
+        }
+        Ok(())
     }
 
     pub fn commit(&mut self, index: usize, len: u32) -> Result<(), ErrorCode> {
         if index != IDX_TABLE {
             return Err(ErrorCode::BadIndex);
         }
-        let buffer = table::begin_commit(len)?;
-        if self.commands.enqueue(RtCommand::UseTable(buffer)).is_err() {
-            table::cancel_commit();
-            return Err(ErrorCode::Busy);
+        let len = len as usize;
+        if !(2..=MAX_TABLE_LEN).contains(&len) {
+            return Err(ErrorCode::BadValue);
+        }
+        {
+            let staging = self.table.buffer().map_err(map_buffer_error)?;
+            if !staging
+                .prefix(len)
+                .unwrap()
+                .iter()
+                .all(|value| value.is_finite())
+            {
+                return Err(ErrorCode::BadValue);
+            }
+            let length_set = staging.set_len(len);
+            debug_assert!(length_set);
+        }
+        let token = self.table.commit().map_err(map_buffer_error)?;
+        match self.commands.enqueue(RtCommand::UseTable(token)) {
+            Ok(()) => {}
+            Err(RtCommand::UseTable(returned)) => {
+                self.table.cancel(returned);
+                return Err(ErrorCode::Busy);
+            }
+            // The queue returns the exact value passed above.
+            Err(_) => unreachable!(),
         }
         Ok(())
     }
 
     pub const fn sample_rate(&self) -> SampleRate {
         self.sample_rate
+    }
+}
+
+fn map_buffer_error(error: BufferError) -> ErrorCode {
+    match error {
+        BufferError::Busy => ErrorCode::Busy,
     }
 }
 
@@ -750,6 +802,7 @@ mod tests {
 
     use heapless::spsc::Queue;
     use helic_core::controller::PassThrough;
+    use helic_core::TableBuffer;
 
     use super::*;
     use crate::{source, source_count, RtCommand, COMMAND_QUEUE_LEN};
@@ -779,14 +832,20 @@ mod tests {
         }
     }
 
-    fn store() -> (ParamStore<PassThrough, TestRig>, crate::CommandConsumer) {
+    fn store_with_table() -> (
+        ParamStore<PassThrough, TestRig>,
+        crate::CommandConsumer,
+        helic_core::ActiveTable,
+    ) {
         let queue = Box::leak(Box::new(Queue::<RtCommand, COMMAND_QUEUE_LEN>::new()));
         let (tx, rx) = queue.split();
         let shared = Box::leak(Box::new(RtShared::new()));
+        let (table, active) = Box::leak(Box::new(TableBuffer::new())).split();
         (
             ParamStore::new(
                 tx,
                 shared,
+                table,
                 SampleRate::Hz8000,
                 "0.1.0 test",
                 "test-rig",
@@ -794,7 +853,13 @@ mod tests {
                 &PassThrough,
             ),
             rx,
+            active,
         )
+    }
+
+    fn store() -> (ParamStore<PassThrough, TestRig>, crate::CommandConsumer) {
+        let (store, commands, _active) = store_with_table();
+        (store, commands)
     }
 
     #[test]
@@ -882,5 +947,54 @@ mod tests {
         store.set(IDX_FREQ, &20.0f32.to_le_bytes()).unwrap();
         let expected = PhaseAccumulator::increment_for(20.0, 8000.0);
         assert!(matches!(rx.dequeue(), Some(RtCommand::SetIncrement(value)) if value == expected));
+    }
+
+    #[test]
+    fn full_command_queue_returns_table_token_and_restores_staging() {
+        let (mut store, _rx) = store();
+        store
+            .set_block(
+                IDX_TABLE,
+                0,
+                &[1.0f32.to_le_bytes(), 2.0f32.to_le_bytes()].concat(),
+            )
+            .unwrap();
+
+        loop {
+            match store.set(IDX_FREQ, &20.0f32.to_le_bytes()) {
+                Ok(ParamAction::None) => {}
+                Err(ErrorCode::Busy) => break,
+                result => panic!("unexpected queue-fill result: {result:?}"),
+            }
+        }
+        assert_eq!(store.commit(IDX_TABLE, 2), Err(ErrorCode::Busy));
+        assert!(store.set_block(IDX_TABLE, 0, &3.0f32.to_le_bytes()).is_ok());
+    }
+
+    #[test]
+    fn table_length_changes_only_after_core_one_activation() {
+        let (mut store, mut rx, mut active) = store_with_table();
+        let bytes: std::vec::Vec<_> = [1.0f32, 2.0, 3.0]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        store.set_block(IDX_TABLE, 0, &bytes).unwrap();
+        store.commit(IDX_TABLE, 3).unwrap();
+
+        let mut out = [0_u8; 2];
+        store.get(IDX_TABLE_LEN, &mut out).unwrap();
+        assert_eq!(u16::from_le_bytes(out), 0);
+
+        let Some(RtCommand::UseTable(token)) = rx.dequeue() else {
+            panic!("table activation command was not enqueued");
+        };
+        active.activate(token);
+        store
+            .shared
+            .live
+            .active_table_len
+            .store(active.get().len() as u32, Ordering::Relaxed);
+        store.get(IDX_TABLE_LEN, &mut out).unwrap();
+        assert_eq!(u16::from_le_bytes(out), 3);
     }
 }

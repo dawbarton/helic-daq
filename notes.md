@@ -505,3 +505,41 @@ evidence:
   runs. This was a runner sequencing limit, not a firmware or link failure.
   The ADC and Ethernet paths were live; the laser and actuator supplies were
   down, so this stage adds no new electrical evidence for either powered path.
+
+## 2026-08-11T12:56+00:00 Rig-decoupling implementation stage 3
+
+- `helic-core::TableBuffer` now owns the two waveform banks and exposes one
+  non-`Sync` endpoint per core. Its commit token is linear and owner-checked;
+  host tests cover pending/cancel behaviour, rejected commits, cross-buffer
+  misuse, publication ordering, 100000 activation cycles, and four compile-fail
+  ownership invariants. Each firmware crate constructs the 32 KiB buffer in a
+  `ConstStaticCell`, rather than through a stack temporary. `table_len` is
+  published from core 1 only after activation.
+- Two release-only hazards were caught before acceptance. First, initial
+  staging mutations were accidentally placed inside `debug_assert!`, so the
+  release build activated an empty bank; unconditional mutation and a release
+  `helic-rt` test now cover this. Second, the non-`Copy` command made LLVM emit
+  generic `__aeabi_memcpy`; its SRAM veneer still jumped to the flash
+  compiler-builtins implementation. `rt_mem` and `check_rt_layout.py` now cover
+  the generic, 4-byte, and 8-byte variants of both copy and clear. CBC hot-loop
+  disassembly confirms every realised memory-helper call lands directly in
+  SRAM.
+- Static layout also invalidated the reviewed `pending = 2` idle encoding: one
+  non-zero byte inside `TableBuffer` placed both otherwise zeroed banks in
+  `.data`, adding roughly 32 KiB of flash initialisation. Encoding idle as zero
+  and pending as `bank + 1` preserves the state machine and puts the complete
+  const-initialised buffer in `.bss` as intended.
+- W5500 CBC firmware identity `0.1.0 940c1ea-dirty` retained protocol 3,
+  42 parameters, 14 sources, and 8 kHz sampling. A disarmed four-sample table
+  activation reported `table_len = 4`, generated -0.250 to +0.250 V in the
+  `table` source, kept applied `out` exactly zero, and atomically replaced it
+  with a three-sample table reporting length 3. Final-image activation reached
+  46 us and the 1600-record playback capture reached 36 us, with no timing
+  faults, loss, drops, or gaps.
+- The final-image 8000-record all-source regression had 34, 35, and 35 us
+  maxima for idle, TCP polling, and capture; the 60000-record `adc0,out`
+  regression had 34, 35, and 35 us. Both held wake phase at 36/36 us and had
+  zero overruns, timeouts, jitter, record/packet drops, and index gaps. The
+  laser and actuator supplies
+  remained down, so the table signal and safety-quiet behaviour are verified,
+  but no powered actuator response was measured.

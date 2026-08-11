@@ -3,10 +3,11 @@
 use heapless::spsc::{Consumer, Producer};
 use helic_core::generator::FourierCoeffs;
 use helic_core::table::{TableInterpolation, TableMode};
+use helic_core::CommitToken;
 
 use crate::{HARMONICS, MAX_SOURCES};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub enum RtCommand {
     SetIncrement(u32),
     SetTargetCoeffs(FourierCoeffs<HARMONICS>),
@@ -18,7 +19,7 @@ pub enum RtCommand {
     SetTableMultiplier(u32),
     SetTablePhase(u32),
     TriggerTable,
-    UseTable(u8),
+    UseTable(CommitToken),
     ResetController,
     SetCtrlParam(u16, f32),
     SetRigParam(u16, f32),

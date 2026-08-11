@@ -6,7 +6,10 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::WaveTable;
 
-const NO_PENDING: u8 = 2;
+// Zero must mean idle so the complete 32 KiB `TableBuffer::new()` value is
+// zero-initialised and remains in `.bss` when held by a `ConstStaticCell`.
+// Pending bank ids are therefore encoded as bank + 1.
+const NO_PENDING: u8 = 0;
 
 /// A table commit cannot begin while an earlier commit awaits activation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +33,7 @@ pub struct TableBuffer {
     banks: [UnsafeCell<WaveTable>; 2],
     // Written only by the active endpoint during activation.
     active: AtomicU8,
-    // Whole-word stores publish a bank id, or NO_PENDING.
+    // Whole-word stores publish bank + 1, or NO_PENDING.
     pending: AtomicU8,
 }
 
@@ -138,7 +141,7 @@ impl Staging {
         let bank = self.buf.active.load(Ordering::Relaxed) ^ 1;
         // Release makes all preceding writes through `buffer` visible to the
         // active endpoint's Acquire load before it reads the new bank.
-        self.buf.pending.store(bank, Ordering::Release);
+        self.buf.pending.store(bank + 1, Ordering::Release);
         Ok(CommitToken {
             owner: self.buf.identity(),
             bank,
@@ -197,10 +200,10 @@ impl Active {
             return;
         }
         let pending = self.buf.pending.load(Ordering::Acquire);
-        if pending == NO_PENDING || pending != token.bank {
+        if pending == NO_PENDING || pending - 1 != token.bank {
             return;
         }
-        self.current = pending;
+        self.current = pending - 1;
         self.buf.active.store(self.current, Ordering::Release);
         // Release pairs with the staging endpoint's next Acquire loads, which
         // must observe the new active bank before selecting the inactive one.

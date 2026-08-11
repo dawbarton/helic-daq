@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–2 completed 2026-08-11. Revision
+Status: implementation in progress; stages 0–3 completed 2026-08-11. Revision
 8.1. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
@@ -744,7 +744,11 @@ rather than transcribing it.
 **Two atomics, no packed state word, no CAS.** `table.rs`'s layout has `active`
 written only by core 1, and `pending` written by both cores but always as a
 whole-word store. There is no cross-core read-modify-write, so nothing for a
-`compare_exchange` to defend.
+`compare_exchange` to defend. Implementation changed the idle encoding from 2
+to 0, storing a pending bank as `bank + 1`: keeping the non-zero sentinel inside
+the same object as two zeroed 16 KiB banks forced the complete `ConstStaticCell`
+into `.data` rather than `.bss`, contrary to its purpose. The state machine is
+otherwise unchanged.
 
 **No generation counter.** An earlier revision encoded
 `(generation << 1) | bank` in an `AtomicU32`. That was doubly broken: at
@@ -769,14 +773,14 @@ use core::sync::atomic::AtomicU8;
 
 pub enum BufferError { Busy }
 
-const NO_PENDING: u8 = 2;   // as in table.rs today
+const NO_PENDING: u8 = 0;   // pending stores bank + 1, keeping new() all-zero
 
 pub struct TableBuffer<const N: usize> {
     banks: [UnsafeCell<WaveTable<N>>; 2],
     /// Written only by core 1, at activation.
     active: AtomicU8,
-    /// Bank id, or `NO_PENDING`. Written by core 0 on commit and cancel and by
-    /// core 1 on activation, always as a whole-word store.
+    /// Bank id plus one, or `NO_PENDING`. Written by core 0 on commit and
+    /// cancel and by core 1 on activation, always as a whole-word store.
     pending: AtomicU8,
 }
 
@@ -859,7 +863,7 @@ Staging::buffer()
 Staging::commit()
     if pending.load(Relaxed) != NO_PENDING { Busy }
     bank = active.load(Relaxed) ^ 1
-    pending.store(bank, Release)     // Release: staged writes happen-before
+    pending.store(bank + 1, Release) // Release: staged writes happen-before
                                      // the publication core 1 will Acquire
     CommitToken { owner: identity(), bank }
 
@@ -870,8 +874,8 @@ Staging::cancel(token)
 Active::activate(token)
     if token.owner != identity() { return }
     p = pending.load(Acquire)        // pairs with commit's Release
-    if p == NO_PENDING || p != token.bank { return }
-    self.current = p                 // cached for get()
+    if p == NO_PENDING || p - 1 != token.bank { return }
+    self.current = p - 1             // cached for get()
     active.store(self.current, Release)
     pending.store(NO_PENDING, Release)
 
@@ -1516,19 +1520,32 @@ production rigs here and treats the crate boundary as the contract that
    wake phase, and no timing faults, drops, loss, or index gaps. This matches
    the 32–34 us reference within measurement granularity, so the injected
    `&'static RtShared` and crate boundary have no observed tick-path cost.
-3. **Move the table buffer into `helic-core` as `TableBuffer`**, adding the
-   endpoint split, the linear owner-checked token, and `ConstStaticCell`
-   construction. This is a transcription of `table.rs`'s atomic protocol, not a
-   re-derivation of it; the borrow-rule compile-fail doctests come with it.
-4. **`RtCommand`, `Payload`, non-`Copy` propagation, and the returned-command
-   rejection path.** Measure `COMMANDS_PER_TICK` WCET at 132-value payloads and
+3. **Completed 2026-08-11: move the table buffer into `helic-core` as
+   `TableBuffer`**, with a one-time endpoint split, a linear owner-checked
+   token, and per-rig `ConstStaticCell` construction. Five state-machine tests,
+   a 100000-cycle liveness test, and four compile-fail doctests cover the
+   reviewed contract. The minimal non-`Copy` command change required to carry
+   the token landed here; the general payload/address redesign remains stage
+   4. `table_len` publication by core 1 also landed early to preserve its
+   active-not-pending wire semantics during migration. Explicit disassembly
+   found the resulting generic EABI copy call still reaching flash, so the SRAM
+   shims and layout gate now cover all generic, 4-byte, and 8-byte copy/clear
+   variants. W5500 CBC activation reached 46 us; steady all-source and
+   60000-record regressions reached 34–35 us, with fixed 36 us wake phase and
+   no timing faults, loss, drops, or gaps. Capacity remains fixed until the
+   stage-8 const-generic migration. The original `pending = 2` idle encoding
+   put the whole 32 KiB object in `.data`; zero-idle, `bank + 1` pending
+   encoding restores the intended `.bss` construction without changing the
+   state machine.
+4. **Complete the `RtCommand`/`Payload` redesign, address routing, and returned-
+   command rejection path.** Measure `COMMANDS_PER_TICK` WCET at 132-value payloads and
    confirm EABI copy helpers remain in SRAM. **This measurement gates the
    copy-versus-buffer decision.**
 5. **`ParamGroup` stage/accept/reject, the `ParamStore` walk, the
    `ResetDiagnostics` broadcast, and `validate()`.** Largest single commit; must
    change no discovered parameter name and no source order.
-6. **`Program` trait and `StandardProgram`**, the `phase` signal, and
-   `table_len` published from core 1. Split the table into its own group.
+6. **`Program` trait and `StandardProgram`**, the `phase` signal, and retention
+   of core-1 `table_len` publication. Split the table into its own group.
 7. **Bounded output vector**, `Rig::ACTUATORS`, slice `actuate`, `safety_decide`
    plus its atomic wrapper, `Program::fault`, the non-finite trip, and generic
    source assembly. Migrate all three rigs together.
@@ -1718,8 +1735,10 @@ to one buffer correction.
 
   It was also unnecessary. The generation defended against a *duplicated*
   token, which stopped being possible when the token became linear. The token
-  is now `{ owner, bank }` over `active: AtomicU8` and `pending: AtomicU8` with
-  a `2` sentinel, which is `table.rs` today plus an owner field.
+  is now `{ owner, bank }` over `active: AtomicU8` and `pending: AtomicU8`.
+  Implementation retained the two-atomic state machine but changed the idle
+  encoding from the old `2` sentinel to zero for `.bss` placement, as recorded
+  in §3.
 - **`DoubleBuffer<T>` becomes concrete `TableBuffer`.** Four revisions were
   spent making a generalisation safe for a design with zero consumers of it,
   which the document's own two-consumer rule forbids. The endpoint split, the
