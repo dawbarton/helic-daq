@@ -923,7 +923,9 @@ dependencies = [
  "heapless",
  "helic-core",
  "helic-drivers",
- "helic-fw-common",
+ "helic-fw-optoncdt",
+ "helic-fw-rt",
+ "helic-fw-support",
  "helic-proto",
  "helic-rt",
  "panic-probe",
@@ -948,7 +950,9 @@ dependencies = [
  "heapless",
  "helic-core",
  "helic-drivers",
- "helic-fw-common",
+ "helic-fw-optoncdt",
+ "helic-fw-rt",
+ "helic-fw-support",
  "helic-proto",
  "helic-rt",
  "panic-probe",
@@ -970,7 +974,8 @@ dependencies = [
  "heapless",
  "helic-core",
  "helic-drivers",
- "helic-fw-common",
+ "helic-fw-rt",
+ "helic-fw-support",
  "helic-proto",
  "helic-rt",
  "panic-probe",
@@ -1054,7 +1059,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "helic-fw-common"
+name = "helic-fw-optoncdt"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.1.1",
+ "embassy-rp",
+ "embassy-time",
+ "embedded-io-async 0.7.0",
+ "helic-drivers",
+]
+
+[[package]]
+name = "helic-fw-rt"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.1.1",
+ "embassy-rp",
+ "fixed",
+ "heapless",
+ "helic-core",
+ "helic-drivers",
+ "helic-rt",
+ "pio",
+ "static_cell",
+]
+
+[[package]]
+name = "helic-fw-support"
 version = "0.1.0"
 dependencies = [
  "cyw43",
@@ -1070,14 +1101,10 @@ dependencies = [
  "embassy-time",
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
- "fixed",
  "heapless",
  "helic-core",
- "helic-drivers",
  "helic-proto",
  "helic-rt",
- "pio",
- "rand_core 0.10.1",
  "static_cell",
 ]
 

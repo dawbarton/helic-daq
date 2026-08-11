@@ -30,8 +30,10 @@ layout checker, the regression-tool profiles, the user/developer guides and
 
 - Keep logic host-testable. DSP belongs in `helic-core`, portable peripheral
   logic in `helic-drivers`, and codecs in `helic-proto`. These crates are
-  `no_std` and tested at the repository root. RP2350-specific shared plumbing
-  belongs in `firmware/common`; experiment crates keep an auditable `board.rs`
+  `no_std` and tested at the repository root. Mandatory core-1 RP2350 plumbing
+  belongs in `firmware/rt`, universal core-0 services in `firmware/support`,
+  and optional hardware integrations in `firmware/integrations`; experiment
+  crates keep an auditable `board.rs`
   pin/ownership map, compile-time configuration, telemetry declarations and a
   thin experiment-local `Rig` implementation.
 - Keep every experiment crate predictable: `board.rs` owns only pins and
@@ -52,7 +54,7 @@ layout checker, the regression-tool profiles, the user/developer guides and
   XIP cache and the global cross-core spinlock let core-0 network traffic
   stretch flash-resident tick code past the whole sample period (see
   "Real-time isolation" in `docs/developer_guide.md`). Timing uses raw
-  `TIMER0` reads; the ADC/DAC transfers use `helic_fw_common::analog_spi`.
+  `TIMER0` reads; the ADC/DAC transfers use `helic_fw_rt::analog_spi`.
   Fixed-array operations may lower to ARM EABI memory helpers, so keep
   `rt_mem` and the layout check in place; SRAM annotations on the Rust caller
   alone do not prove that compiler-generated calls avoid flash.
@@ -65,7 +67,7 @@ layout checker, the regression-tool profiles, the user/developer guides and
 - Preserve hardware-timed sampling. ADC experiments use PWM-driven CONVST and
   the latched BUSY falling edge; ADC-free experiments poll the raw PWM-wrap
   latch. Do not replace either with software timing or an interrupt future.
-- Keep `helic_fw_common::time_watchdog` bound to `TIMER0_IRQ_1` and started
+- Keep `helic_fw_support::time_watchdog` bound to `TIMER0_IRQ_1` and started
   on core 0 in every experiment that uses embassy-time. The embassy-rp time
   driver can lose its alarm (`docs/overrun_handoff.md`); without the
   watchdog every core-0 timer can freeze until unrelated network traffic

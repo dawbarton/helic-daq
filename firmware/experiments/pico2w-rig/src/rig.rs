@@ -11,8 +11,8 @@ use embassy_rp::spi::{self, Blocking, Spi};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
-use helic_fw_common::analog_spi::{HotSpiConfig, RawSpiDevice, SramAd5064};
-use helic_fw_common::rig::PwmWrapSpinTick;
+use helic_fw_rt::analog_spi::{HotSpiConfig, RawSpiDevice, SramAd5064};
+use helic_fw_rt::rig::PwmWrapSpinTick;
 use helic_rt::{Rig, SampleRate};
 
 use crate::board::PicoDacParts;

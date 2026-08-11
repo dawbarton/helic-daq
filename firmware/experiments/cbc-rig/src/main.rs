@@ -8,7 +8,8 @@
 //!
 //! This file is intentionally orchestration rather than experiment logic. A
 //! new experiment normally changes the concrete parts and task wrappers here,
-//! implements `Rig` in `board.rs`, and reuses the runners in `firmware/common`.
+//! implements `Rig` in `rig.rs`, and composes the runners from
+//! `firmware/rt`, `firmware/support`, and the optoNCDT integration.
 //! See "Firmware architecture" and "Adding an experiment" in
 //! `docs/developer_guide.md`.
 
@@ -27,10 +28,10 @@ use embassy_rp::multicore::{spawn_core1, Stack as CoreStack};
 use embassy_rp::peripherals::{DMA_CH2, DMA_CH3, UART0};
 use embassy_rp::uart;
 use embassy_time::Timer;
-use helic_fw_common::comms;
-use helic_fw_common::net;
-use helic_fw_common::net::wiznet::EthernetParts;
-use helic_fw_common::rt_loop as shared_rt;
+use helic_fw_rt::rt_loop as shared_rt;
+use helic_fw_support::comms;
+use helic_fw_support::net;
+use helic_fw_support::net::wiznet::EthernetParts;
 use helic_rt::params::ParamStore;
 use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
 use panic_probe as _;
@@ -58,7 +59,7 @@ bind_interrupts!(pub struct Irqs {
     // Embassy turns this declarative list into type-safe interrupt tokens.
     // Bind only peripherals owned by this experiment.
     UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
-    TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
+    TIMER0_IRQ_1 => helic_fw_support::time_watchdog::TimeWatchdogHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH2>,
         embassy_rp::dma::InterruptHandler<DMA_CH3>;
 });
@@ -83,7 +84,7 @@ fn main() -> ! {
     );
     info!(
         "helic-daq firmware boot: {}",
-        helic_fw_common::identity::FIRMWARE_BANNER
+        helic_fw_support::identity::FIRMWARE_BANNER
     );
 
     let b = board::Board::new(p);
@@ -97,7 +98,7 @@ fn main() -> ! {
         channels.command_tx,
         &RT_SHARED,
         config::SAMPLE_RATE,
-        helic_fw_common::identity::FIRMWARE_VERSION,
+        helic_fw_support::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
         &controller,
@@ -122,7 +123,7 @@ fn main() -> ! {
     });
 
     // Bounded self-healing for lost embassy-time alarms; see `time_watchdog`.
-    helic_fw_common::time_watchdog::start();
+    helic_fw_support::time_watchdog::start();
 
     // `Executor::run` never returns. Embassy polls these cooperative async
     // tasks whenever interrupts or timers make progress possible.
@@ -199,12 +200,12 @@ async fn laser_task(parts: LaserParts) -> ! {
         LASER_RX_BUFFER.init([0; 4096]),
         uart_config,
     );
-    helic_fw_common::laser::configured_laser_run(
+    helic_fw_optoncdt::configured_laser_run(
         uart,
         config::LASER_MEASRATE_COMMAND,
         &telemetry::LASER_RANGE_MM,
         &telemetry::LASER_VALUE,
-        helic_fw_common::laser::LaserCounters::new(
+        helic_fw_optoncdt::LaserCounters::new(
             &telemetry::LASER_FRAMES_RECEIVED,
             &telemetry::LASER_UART_ERRORS,
             &telemetry::LASER_PARSE_ERRORS,
@@ -225,5 +226,5 @@ async fn status_task() -> ! {
         unreachable!()
     }
     #[cfg(not(feature = "diag-no-status-log"))]
-    shared_rt::status_run(&RT_SHARED).await
+    helic_fw_support::status::status_run(&RT_SHARED).await
 }

@@ -8,7 +8,7 @@ use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::peripherals::{CORE1, PIN_22, PIN_26, PIN_27, PIN_28, PIO0, PWM_SLICE4, SPI0};
 use embassy_rp::spi::{self, Async, Spi};
 use embassy_rp::{Peri, Peripherals};
-use helic_fw_common::net::wiznet::EthernetParts;
+use helic_fw_support::net::wiznet::EthernetParts;
 
 pub struct Board {
     pub led: Output<'static>,

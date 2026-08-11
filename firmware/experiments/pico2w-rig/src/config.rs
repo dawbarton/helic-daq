@@ -4,7 +4,7 @@
 //! the `pico2w-rig` connection instructions in `docs/user_guide.md`.
 
 use helic_core::controller::PassThrough;
-use helic_fw_common::net::NetConfig;
+use helic_fw_support::net::NetConfig;
 pub use helic_rt::SampleRate;
 
 /// Name advertised to discovery clients.

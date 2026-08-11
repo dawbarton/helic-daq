@@ -22,9 +22,11 @@ implementation details:
    is a firmware crate. `Rig`, `TickSource` and `Controller` are static generic
    choices, so extension does not introduce virtual dispatch in the tick.
 4. **Logic is portable; wiring is local.** DSP, codecs and peripheral logic
-   live in host-testable `no_std` crates. `firmware/common` contains reusable
-   RP2350 plumbing. An experiment keeps wiring, constants, telemetry and its
-   thin physical `Rig` adaptation; reusable mechanisms do not live there.
+   live in host-testable `no_std` crates. `firmware/rt` contains mandatory
+   core-1 RP2350 mechanisms, `firmware/support` contains universal core-0
+   services, and optional hardware integrations have their own crates. An
+   experiment keeps wiring, constants, telemetry and its thin physical `Rig`
+   adaptation; reusable mechanisms do not live there.
 5. **Host-visible state is discoverable.** Parameter and source names, types,
    sizes and units come from the connected firmware. Adding an experiment,
    rig parameter or controller signal must not require hard-coded host
@@ -79,7 +81,9 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `helic-broker/` | Loopback multi-client broker, recent history and optional HDF5 recording | host |
-| `firmware/common/` | Experiment-independent firmware support | `thumbv8m.main-none-eabihf` only |
+| `firmware/rt/` | Mandatory core-1 RP2350 mechanisms; no executor, time, network or core-0 support dependency | `thumbv8m.main-none-eabihf` only |
+| `firmware/support/` | Universal core-0 communication, network, identity, status and watchdog services | `thumbv8m.main-none-eabihf` only |
+| `firmware/integrations/optoncdt/` | Optional optoNCDT UART integration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/pico2w-rig/` | Pico 2W Wi-Fi signal generator, DAC and laser logger | `thumbv8m.main-none-eabihf` only |
@@ -90,8 +94,11 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 The split exists so that **everything with logic in it can be unit-tested on
 the host** (`cargo test` at the root plus the language-specific suites in
 `host-python/`, `host-julia/`, and `host-matlab/`).
-The firmware crates are deliberately thin: pin wiring, task plumbing and
-glue.
+The experiment crates are deliberately thin: pin wiring, task plumbing and
+glue. A module belongs in `helic-fw-support` only when it runs on core 0 and
+every production rig uses it; non-universal services belong in a separate
+integration crate. `tools/check_dependencies.py` enforces the critical crate
+boundaries in CI.
 
 ## Host broker architecture
 
@@ -243,7 +250,7 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   peripheral's raw wrap latch while the PWM slice continues to own the 2 kHz
   whirl or 8 kHz Pico 2W sample instant. The processor-facing PWM interrupt
   remains disabled.
-- `helic_fw_common::analog_spi`: register-level blocking SPI transfers in
+- `helic_fw_rt::analog_spi`: register-level blocking SPI transfers in
   `.data.ram_func` with precomputed clock/format configs. The embassy
   drivers still perform one-time init; only the per-tick CBC ADC/DAC and Pico
   2W DAC data paths bypass them.
@@ -292,7 +299,7 @@ happens every timer-waiting task on core 0 sleeps until unrelated traffic
 schedules a fresh deadline — observed on hardware as the record drain,
 status log and TCP timeouts freezing for minutes. It surfaced once core 1
 stopped re-arming the shared queue 8000×/s, which had been masking it.
-`helic_fw_common::time_watchdog` arms the unused TIMER0 alarm 1 as a 50 ms
+`helic_fw_support::time_watchdog` arms the unused TIMER0 alarm 1 as a 50 ms
 heartbeat that re-pends `TIMER0_IRQ_0`, so the driver re-checks its queue
 and any lost alarm is recovered within 50 ms. Experiments bind
 `TimeWatchdogHandler` to `TIMER0_IRQ_1` and call `time_watchdog::start()`
@@ -429,16 +436,16 @@ compiler-enforced).
 driver, or the CYW43439 driver. `config.rs` selects static addressing or DHCP.
 Three transport-independent server tasks:
 
-- `helic_fw_common::comms::tcp::control_run`: accepts one client, reads
+- `helic_fw_support::comms::tcp::control_run`: accepts one client, reads
   CRC-checked frames, dispatches to `ParamStore`, replies. Framing errors drop the
   connection (no meaningful resync inside TCP). Disconnect stops streaming.
-- `helic_fw_common::comms::udp::stream_task`: every 5 ms drains the record
+- `helic_fw_support::comms::udp::stream_task`: every 5 ms drains the record
   ring; when a session is active it packs the selected sources into
   ≤1472-byte packets. Session config lives in
-  `helic_fw_common::comms::STREAM`, a critical-section mutex shared by the two
+  `helic_fw_support::comms::STREAM`, a critical-section mutex shared by the two
   tasks. `StreamStart` bumps a generation counter, which
   re-arms the streamer (sequence reset, finite-capture countdown).
-- `helic_fw_common::comms::beacon::beacon_task`: answers UDP discovery
+- `helic_fw_support::comms::beacon::beacon_task`: answers UDP discovery
   requests with protocol version, experiment identity, control port and MAC.
 
 ### The parameter registry (`params.rs`)
@@ -496,7 +503,9 @@ closest. An experiment crate has a deliberately predictable anatomy:
 6. In `main.rs`, bind only owned interrupts, move the complete RT parts bundle
    to core 1, and compose the common TCP, stream, beacon, laser and RT runners.
    Put reusable algorithms in `helic-core`, portable device logic in
-   `helic-drivers`, and RP2350 mechanisms in `firmware/common`.
+   `helic-drivers`, mandatory core-1 RP2350 mechanisms in `firmware/rt`, and
+   universal core-0 services in `firmware/support`. Put optional hardware
+   services in a focused crate under `firmware/integrations`.
 
 Controller telemetry is appended after rig inputs, and the common loop then
 appends `target`, `forcing`, `table`, `out` and `cmd_epoch`; no experiment

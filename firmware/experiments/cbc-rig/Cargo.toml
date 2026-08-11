@@ -9,14 +9,14 @@ license.workspace = true
 # Select exactly one physical WIZnet chip. Features configure common network
 # plumbing at compile time and do not create run-time transport dispatch.
 default = ["board-w5500"]
-board-w5500 = ["helic-fw-common/net-wiznet-w5500"]
-board-w6100 = ["helic-fw-common/net-wiznet-w6100"]
+board-w5500 = ["helic-fw-support/net-wiznet-w5500"]
+board-w6100 = ["helic-fw-support/net-wiznet-w6100"]
 diag-no-status-log = []
 diag-no-udp = []
 diag-sample-4k = []
 diag-skip-adc = []
 diag-skip-dac = []
-diag-skip-record-enqueue = ["helic-fw-common/diag-skip-record-enqueue"]
+diag-skip-record-enqueue = ["helic-fw-rt/diag-skip-record-enqueue"]
 diag-wiznet-10mhz = []
 
 [dependencies]
@@ -26,7 +26,9 @@ helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
 helic-rt.workspace = true
-helic-fw-common = { workspace = true, features = ["net-wiznet"] }
+helic-fw-optoncdt.workspace = true
+helic-fw-rt.workspace = true
+helic-fw-support = { workspace = true, features = ["net-wiznet"] }
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
 defmt.workspace = true

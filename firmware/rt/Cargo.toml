@@ -1,0 +1,23 @@
+[package]
+name = "helic-fw-rt"
+description = "SRAM-resident RP2350 real-time mechanisms for HELIC-DAQ"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+diag-skip-record-enqueue = []
+# Desktop builds of the portable crates must not name an embedded linker
+# section; firmware enables their matching feature centrally here.
+rt-sram = ["helic-core/rt-sram", "helic-drivers/rt-sram", "helic-rt/rt-sram"]
+
+[dependencies]
+helic-core.workspace = true
+helic-drivers.workspace = true
+helic-rt.workspace = true
+defmt.workspace = true
+embassy-rp.workspace = true
+fixed.workspace = true
+heapless.workspace = true
+pio.workspace = true
+static_cell.workspace = true

@@ -76,6 +76,8 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: firmware -> target
+      - name: Check crate dependency boundaries
+        run: python3 tools/check_dependencies.py
       - run: cargo fmt --all -- --check
       - run: cargo clippy --release --workspace -- -D warnings
       - run: cargo build --release --workspace

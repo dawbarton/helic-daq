@@ -1,4 +1,4 @@
-//! Per-experiment hardware and sample-clock contracts.
+//! RP2350 implementations of the portable sample-clock contracts.
 
 use embassy_rp::gpio::{Input, Pin, Pull};
 use embassy_rp::pac;

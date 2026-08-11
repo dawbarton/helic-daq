@@ -1,6 +1,6 @@
 [package]
-name = "helic-fw-common"
-description = "Experiment-independent firmware support for HELIC-DAQ"
+name = "helic-fw-support"
+description = "Universal core-0 firmware support for HELIC-DAQ rigs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,15 +11,9 @@ net-cyw43 = ["dep:cyw43", "dep:cyw43-firmware", "dep:cyw43-pio", "dep:cyw43-setu
 net-wiznet = ["dep:embassy-net-wiznet", "dep:embedded-hal-bus"]
 net-wiznet-w5500 = ["net-wiznet"]
 net-wiznet-w6100 = ["net-wiznet"]
-diag-skip-record-enqueue = []
-# Every experiment enables this centrally through the firmware workspace. It is
-# a named feature only because the host-tested crates must not use an embedded
-# linker section during ordinary desktop builds.
-rt-sram = ["helic-core/rt-sram", "helic-drivers/rt-sram", "helic-rt/rt-sram"]
 
 [dependencies]
 helic-core.workspace = true
-helic-drivers.workspace = true
 helic-proto.workspace = true
 helic-rt.workspace = true
 cyw43 = { workspace = true, optional = true }
@@ -35,8 +29,5 @@ embassy-sync.workspace = true
 embassy-time.workspace = true
 embedded-hal-bus = { workspace = true, optional = true }
 embedded-io-async.workspace = true
-fixed.workspace = true
 heapless.workspace = true
-pio.workspace = true
-rand_core.workspace = true
 static_cell.workspace = true

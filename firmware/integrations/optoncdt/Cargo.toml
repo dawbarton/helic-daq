@@ -1,0 +1,13 @@
+[package]
+name = "helic-fw-optoncdt"
+description = "RP2350 optoNCDT UART integration for HELIC-DAQ"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+helic-drivers.workspace = true
+defmt.workspace = true
+embassy-rp.workspace = true
+embassy-time.workspace = true
+embedded-io-async.workspace = true

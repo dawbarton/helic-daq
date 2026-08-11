@@ -476,3 +476,32 @@ evidence:
   will report its own build. All production release ELFs cross-built and passed
   the SRAM layout gate. This stage adds no hardware evidence; timing measurement
   remains the stage-2 gate.
+
+## 2026-08-11T12:35+00:00 Rig-decoupling implementation stage 2
+
+- The RP2350 firmware layer is now split by execution domain: `helic-fw-rt`
+  owns mandatory core-1 mechanisms, `helic-fw-support` owns universal core-0
+  services, and the non-universal optoNCDT UART task has its own integration
+  crate. CI checks the portable crate dependency sets, rejects direct
+  executor/time/network dependencies and source use in `helic-fw-rt`, and
+  prevents `helic-fw-support` from reaching `helic-fw-rt` transitively.
+- All production release ELFs passed the real-time layout gate. Explicit CBC
+  symbol inspection placed `run_hot_loop`, `analog_spi::transfer_in_place`,
+  the reboot quiescence hand-off, `__aeabi_memcpy4`, and `__aeabi_memclr4` in
+  SRAM. Both W6100 wired variants also cross-built.
+- W5500 CBC firmware identity `0.1.0 d0fadf9-dirty` reported protocol 3,
+  42 parameters, 14 sources, and an 8 kHz sample rate. The 8000-record
+  all-source regression had 34 us loop maxima in idle, TCP-poll, and capture
+  phases, fixed 36/36 us wake phase, and zero overruns, timeouts, clock jitter,
+  record or packet drops, and index gaps. The 60000-record `adc0,out` capture
+  ran at 8000.158 ticks/s with a 34 us capture maximum; TCP polling reached
+  35 us, with the same zero-fault counters and fixed wake phase. These results
+  match the pre-split 32–34 us reference within timer granularity and show no
+  observable tick-path cost from the crate split or injected `RtShared`.
+- The regression runner's default 10 s flash timeout expired before probe-rs
+  completed this host's roughly 7 s erase/program cycle plus start-up, so its
+  first connection attempt saw an incomplete ARP entry. Allowing the flash to
+  finish, detaching the probe, and then using `--no-flash` produced both clean
+  runs. This was a runner sequencing limit, not a firmware or link failure.
+  The ADC and Ethernet paths were live; the laser and actuator supplies were
+  down, so this stage adds no new electrical evidence for either powered path.

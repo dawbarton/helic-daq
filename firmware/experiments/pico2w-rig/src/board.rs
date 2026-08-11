@@ -8,7 +8,7 @@ use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{CORE1, PIN_1, PWM_SLICE4, SPI1, UART0};
 use embassy_rp::spi::{Blocking, Spi};
 use embassy_rp::{Peri, Peripherals};
-use helic_fw_common::net::cyw43::WifiParts;
+use helic_fw_support::net::cyw43::WifiParts;
 
 use crate::rig::DAC_SPI_CONFIG;
 

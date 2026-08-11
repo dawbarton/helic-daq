@@ -440,7 +440,7 @@ the `cbc-rig` defaults:
 | Network | `NET_CONFIG` | static 192.168.1.235/24 |
 | Laser range | `LASER_RANGE_MM` | 50 mm |
 
-`HARMONICS` is a platform-wide constant in `firmware/common/src/lib.rs`, not
+`HARMONICS` is a platform-wide constant in `helic-rt/src/lib.rs`, not
 an experiment setting. Changing it also changes the Fourier coefficient array
 size exposed by the protocol and must be checked against payload and real-time
 budgets.

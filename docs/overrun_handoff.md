@@ -22,7 +22,7 @@ and fixed; see "Resolution" at the end of this document. In short:
   measurable spread; loop max 43 µs; 8000.0 ticks/s under full load.
 - A second, unrelated failure was exposed and mitigated: lost embassy-time
   alarms (embassy-rs/embassy#3758 class) could freeze all core-0 timers for
-  minutes. `helic_fw_common::time_watchdog` bounds this to 50 ms.
+  minutes. `helic_fw_support::time_watchdog` bounds this to 50 ms.
 - A later abstraction refactor exposed another hidden flash edge:
   compiler-generated `__aeabi_memcpy4`/`__aeabi_memclr4` calls. The current
   tree supplies SRAM implementations and checks their ELF addresses; keep
@@ -315,7 +315,7 @@ The BUSY falling edge is taken from the IO bank's raw edge-detect
 latch by an SRAM spin loop (`BusyEdgeSpinTick`) — the latch stays armed
 through the body, so a late tick catches up instead of skipping samples.
 ADC/DAC transfers use register-level SRAM SPI routines
-(`helic_fw_common::analog_spi`); embassy drivers still perform init. The
+(`helic_fw_rt::analog_spi`); embassy drivers still perform init. The
 whole per-tick instruction stream lives in `.data.ram_func` (~12.5 KiB).
 
 Measured with the same matrix and heavier runs (fw `0.1.0 d965b76`+):
@@ -339,7 +339,7 @@ occasionally loses the TIMER0 alarm. All core-0 timer-waiting tasks then
 sleep until unrelated network traffic schedules a fresh deadline — observed
 on hardware as the 5 ms record drain, 1 Hz status log and TCP timeouts all
 freezing for ~4 minutes (`records_dropped` grew by 1.75 M) until a host
-reconnect revived them. `helic_fw_common::time_watchdog` now re-pends the
+reconnect revived them. `helic_fw_support::time_watchdog` now re-pends the
 time driver's IRQ from TIMER0 alarm 1 every 50 ms, bounding any such stall.
 Consider reporting upstream.
 

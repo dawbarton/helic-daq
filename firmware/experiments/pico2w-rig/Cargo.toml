@@ -12,7 +12,9 @@ helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
 helic-rt.workspace = true
-helic-fw-common = { workspace = true, default-features = false, features = ["net-cyw43"] }
+helic-fw-optoncdt.workspace = true
+helic-fw-rt.workspace = true
+helic-fw-support = { workspace = true, features = ["net-cyw43"] }
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
 cyw43.workspace = true

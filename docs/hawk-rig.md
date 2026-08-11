@@ -342,7 +342,7 @@ beside the audited pin map, then expose only safe bound operations to `rig.rs`.
 
 ### SPI timing
 
-The existing `firmware/common/src/analog_spi.rs` raw SPI mechanism is a useful
+The existing `firmware/rt/src/analog_spi.rs` raw SPI mechanism is a useful
 base for both sensors because it reconfigures and transfers entirely from SRAM.
 It needs a timing-aware extension for the AS5048A. The encoder requires at
 least 350 ns from CS falling to the first clock, at least 50 ns after the last
@@ -515,7 +515,7 @@ lengths, IDs, parity, checksums, truncated replies, signed fields, angle wraps,
 range scaling, and all diagnostic bits. The Arduino code is behavioural and
 packet-layout evidence, not Rust code to translate line for line.
 
-### 2. Add RP2350 hot-path transports to `firmware/common`
+### 2. Add RP2350 hot-path transports to `firmware/rt`
 
 Add an ownership-preserving raw half-duplex UART type. Embassy may perform
 one-time pin and UART setup, after which the raw type owns the matching PAC

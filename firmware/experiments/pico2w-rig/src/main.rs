@@ -18,10 +18,10 @@ use embassy_rp::peripherals::{DMA_CH0, PIO1, UART0};
 use embassy_rp::pio;
 use embassy_rp::uart;
 use embassy_time::Timer;
-use helic_fw_common::comms;
-use helic_fw_common::net;
-use helic_fw_common::net::cyw43::WifiParts;
-use helic_fw_common::rt_loop as shared_rt;
+use helic_fw_rt::rt_loop as shared_rt;
+use helic_fw_support::comms;
+use helic_fw_support::net;
+use helic_fw_support::net::cyw43::WifiParts;
 use helic_rt::params::ParamStore;
 use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
 use panic_probe as _;
@@ -48,7 +48,7 @@ pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 bind_interrupts!(pub struct Irqs {
     UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
     PIO1_IRQ_0 => pio::InterruptHandler<PIO1>;
-    TIMER0_IRQ_1 => helic_fw_common::time_watchdog::TimeWatchdogHandler;
+    TIMER0_IRQ_1 => helic_fw_support::time_watchdog::TimeWatchdogHandler;
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>;
 });
 
@@ -69,7 +69,7 @@ fn main() -> ! {
     info!(
         "helic-daq {} boot: {}",
         config::EXPERIMENT,
-        helic_fw_common::identity::FIRMWARE_BANNER
+        helic_fw_support::identity::FIRMWARE_BANNER
     );
 
     let board = board::Board::new(p);
@@ -80,7 +80,7 @@ fn main() -> ! {
         channels.command_tx,
         &RT_SHARED,
         config::SAMPLE_RATE,
-        helic_fw_common::identity::FIRMWARE_VERSION,
+        helic_fw_support::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
         &controller,
@@ -100,7 +100,7 @@ fn main() -> ! {
         )
     });
 
-    helic_fw_common::time_watchdog::start();
+    helic_fw_support::time_watchdog::start();
 
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| {
@@ -171,11 +171,11 @@ async fn laser_task(parts: LaserParts) -> ! {
         LASER_RX_BUFFER.init([0; 4096]),
         config,
     );
-    helic_fw_common::laser::laser_run(
+    helic_fw_optoncdt::laser_run(
         rx,
         &telemetry::LASER_RANGE_MM,
         &telemetry::LASER_VALUE,
-        helic_fw_common::laser::LaserCounters::new(
+        helic_fw_optoncdt::LaserCounters::new(
             &telemetry::LASER_FRAMES_RECEIVED,
             &telemetry::LASER_UART_ERRORS,
             &telemetry::LASER_PARSE_ERRORS,
@@ -189,5 +189,5 @@ async fn laser_task(parts: LaserParts) -> ! {
 
 #[embassy_executor::task]
 async fn status_task() -> ! {
-    shared_rt::status_run(&RT_SHARED).await
+    helic_fw_support::status::status_run(&RT_SHARED).await
 }

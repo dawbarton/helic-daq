@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–1 completed 2026-08-11. Revision
+Status: implementation in progress; stages 0–2 completed 2026-08-11. Revision
 8.1. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
@@ -332,8 +332,9 @@ reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 
 - `helic-core` depends only on `libm`.
 - `helic-rt` depends on `helic-core`, `helic-proto`, `heapless`; no Embassy.
-- `helic-fw-rt` depends on `embassy-rp` (for `pac`) but **not** `embassy-net`,
-  `embassy-time`, or `embassy-executor`.
+- `helic-fw-rt` depends on `embassy-rp` (for `pac`) but has no direct dependency
+  on, or source use of, `embassy-net`, `embassy-time`, or `embassy-executor`.
+  (`embassy-rp` itself brings `embassy-time` transitively.)
 - `helic-fw-support` has **no** dependency on `helic-fw-rt`. Both consume the
   queue endpoint types and `&'static RtShared` from `helic-rt`, so no exception
   is needed.
@@ -1504,11 +1505,17 @@ production rigs here and treats the crate boundary as the contract that
    and is injected into `ParamStore`, so an external rig does not inherit the
    shared runtime crate's identity. Host golden tests now pin the fixed
    parameter schema and current source-segment order.
-2. **`helic-fw-common` split** into `helic-fw-rt` and `helic-fw-support`,
-   dependency rules added to CI, and the membership rule written into
-   `helic-fw-support`'s crate documentation. Verify by ELF inspection and a
-   loop-maximum measurement that injected `&'static RtShared` costs nothing on
-   the tick path.
+2. **Completed 2026-08-11: split `helic-fw-common`** into `helic-fw-rt` and
+   `helic-fw-support`, with the non-universal optoNCDT UART service in its own
+   integration crate. Dependency rules are enforced in CI, and the membership
+   rule is in `helic-fw-support`'s crate documentation. All three production
+   ELFs pass the SRAM layout gate; the CBC hot loop, analogue transfer, reboot
+   hand-off, and ARM EABI copy/clear helpers were also inspected explicitly in
+   SRAM. On the W5500 CBC rig, the 8000-record all-source and 60000-record
+   continuity regressions ran at 8 kHz with 34–35 us loop maxima, fixed 36 us
+   wake phase, and no timing faults, drops, loss, or index gaps. This matches
+   the 32–34 us reference within measurement granularity, so the injected
+   `&'static RtShared` and crate boundary have no observed tick-path cost.
 3. **Move the table buffer into `helic-core` as `TableBuffer`**, adding the
    endpoint split, the linear owner-checked token, and `ConstStaticCell`
    construction. This is a transcription of `table.rs`'s atomic protocol, not a

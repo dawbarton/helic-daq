@@ -9,7 +9,7 @@ use embassy_rp::peripherals::{CORE1, PIN_0, PIN_1, PIN_7, PIN_8, PWM_SLICE4, SPI
 use embassy_rp::spi::{self, Async, Blocking, Spi};
 use embassy_rp::{Peri, Peripherals};
 use helic_drivers::ad7609::ConfigPins;
-use helic_fw_common::net::wiznet::EthernetParts;
+use helic_fw_support::net::wiznet::EthernetParts;
 
 /// Resources grouped by their eventual core or task owner.
 pub struct Board {

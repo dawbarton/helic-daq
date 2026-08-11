@@ -54,7 +54,9 @@ See [notes.md](notes.md) for the precise hardware-verification boundary.
 | `helic-drivers/` | Portable peripheral drivers over `embedded-hal` traits; host-tested |
 | `helic-proto/` | Protocol framing, payloads and stream codec shared with firmware |
 | `helic-broker/` | Loopback-only shared stream broker with optional HDF5 recording |
-| `firmware/common/` | Experiment-independent RP2350 firmware support |
+| `firmware/rt/` | Mandatory RP2350 core-1 real-time mechanisms |
+| `firmware/support/` | Universal RP2350 core-0 services |
+| `firmware/integrations/` | Optional RP2350 hardware integrations |
 | `firmware/experiments/` | One binary, pin map and compile-time configuration per experiment |
 | `host-python/` | Python package `helic_daq`, simulator and `helic-daq` CLI |
 | `host-julia/` | Julia package `HelicDAQ` with a Tables.jl capture interface |
