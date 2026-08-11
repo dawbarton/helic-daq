@@ -33,8 +33,11 @@ use helic_fw_rt::rt_loop as shared_rt;
 use helic_fw_support::comms;
 use helic_fw_support::net;
 use helic_fw_support::net::wiznet::EthernetParts;
-use helic_rt::params::ParamStore;
-use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
+use helic_rt::params::{
+    ControllerGroup, GeneratorGroup, ParamStore, PlatformGroup, RigGroup, TableGroup,
+    TelemetryGroup, PROGRAM_DOMAINS,
+};
+use helic_rt::{source_count, RecordConsumer, Rig, RtShared, MAX_SOURCES};
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -46,7 +49,7 @@ mod telemetry;
 use board::LaserParts;
 use rig::CbcRig;
 
-type Store = ParamStore<config::ActiveController, CbcRig>;
+type Store = ParamStore;
 // This unnamed compile-time assertion fails the build if the chosen rig and
 // controller would overflow the fixed protocol source table.
 const _: () = assert!(source_count::<CbcRig>() <= MAX_SOURCES);
@@ -72,6 +75,12 @@ static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static RT_SHARED: RtShared = RtShared::new();
 static TABLE: ConstStaticCell<TableBuffer> = ConstStaticCell::new(TableBuffer::new());
+static PLATFORM_GROUP: StaticCell<PlatformGroup> = StaticCell::new();
+static GENERATOR_GROUP: StaticCell<GeneratorGroup> = StaticCell::new();
+static TABLE_GROUP: StaticCell<TableGroup> = StaticCell::new();
+static CONTROLLER_GROUP: StaticCell<ControllerGroup<config::ActiveController>> = StaticCell::new();
+static RIG_GROUP: StaticCell<RigGroup<CbcRig>> = StaticCell::new();
+static TELEMETRY_GROUP: StaticCell<TelemetryGroup> = StaticCell::new();
 static LASER_TX_BUFFER: StaticCell<[u8; 64]> = StaticCell::new();
 static LASER_RX_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
 
@@ -97,18 +106,28 @@ fn main() -> ! {
     let channels = shared_rt::init_channels();
     let (table_staging, active_table) = TABLE.take().split();
     let controller = config::make_controller();
-    let store = Store::new(
-        channels.command_tx,
+    let mut store = Store::new(channels.command_tx, &RT_SHARED, config::SAMPLE_RATE);
+    store.push(PLATFORM_GROUP.init(PlatformGroup::new(
         &RT_SHARED,
-        table_staging,
-        channels.target_staging,
-        channels.forcing_staging,
         config::SAMPLE_RATE,
         helic_fw_support::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
-        telemetry::EXTRA_PARAMS,
-        &controller,
-    );
+    )));
+    store.push(GENERATOR_GROUP.init(GeneratorGroup::new(
+        channels.target_staging,
+        channels.forcing_staging,
+        config::SAMPLE_RATE,
+    )));
+    store.push(TABLE_GROUP.init(TableGroup::new(
+        &RT_SHARED,
+        table_staging,
+        config::SAMPLE_RATE,
+    )));
+    store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, CbcRig::INPUTS.len())));
+    store.push(RIG_GROUP.init(RigGroup::<CbcRig>::new()));
+    store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));
+    store.validate(PROGRAM_DOMAINS);
+    helic_rt::validate_sources::<CbcRig>();
 
     // `move` transfers ownership of the analogue peripherals, controller and
     // queue endpoints into core 1. Core 0 cannot use them afterwards, which
@@ -182,7 +201,7 @@ async fn core0_main(spawner: Spawner, eth: EthernetParts, store: Store, records:
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
     // `-> !` is Rust's never type: a server task is expected to run forever.
-    comms::tcp::control_run(stack, store).await
+    comms::tcp::control_run::<CbcRig>(stack, store).await
 }
 
 /// Core 0: heartbeat LED.

@@ -1,80 +1,95 @@
-//! Name-based, discoverable parameter registry derived from rtc's host
-//! interface. Indices are connection-local.
+//! Component-owned, discoverable parameter groups and their transactional store.
 //!
-//! The host discovers parameters at connect (`GetParams`)
-//! and addresses them by index thereafter. Reads are served from core-0
-//! state: diagnostics come from atomics the RT loop maintains, writable
-//! values from the shadow copies kept here. Writes update the shadow and
-//! translate to an [`RtCommand`], which core 1 applies at a sample boundary
-//! — coefficient sets travel by value, so a tick never sees a torn array.
+//! Each group validates and stages its own values. [`ParamStore`] alone maps a
+//! discovered index to `(group, local id)`, constructs the command address,
+//! and accepts or rejects the staged update after queueing succeeds or fails.
 
-use core::marker::PhantomData;
-use core::sync::atomic::{AtomicU32, Ordering};
-
-use crate::RtShared;
-use helic_core::controller::Controller;
-use helic_core::generator::FourierCoeffs;
-use helic_core::phase::PhaseAccumulator;
-use helic_core::table::{TableInterpolation, TableMode};
-use helic_core::{BufferError, Staging as TableStaging, MAX_TABLE_LEN};
+use heapless::Vec;
 use helic_proto::{ErrorCode, ParamType};
 
-use crate::{
-    command_id, validate_sources, CoeffStaging, CommandProducer, Payload, Rig, RtCommand,
-    SampleRate, DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, HARMONICS,
+use crate::{CommandProducer, Payload, RtCommand, RtShared, SampleRate, DOMAIN_RIG};
+
+mod groups;
+
+pub use groups::{
+    ControllerGroup, GeneratorGroup, PlatformGroup, RigGroup, TableGroup, TelemetryGroup,
+    PROGRAM_DOMAINS,
 };
 
-mod schema;
+/// Serialized size of the current standard coefficient set.
+pub const COEFF_COUNT: u16 = (1 + 2 * crate::HARMONICS) as u16;
+pub const MAX_GROUPS: usize = 8;
+pub(crate) const MAX_CTRL_PARAMS: usize = 17;
+pub(crate) const MAX_RIG_PARAMS: usize = 16;
+pub(crate) const MAX_EXTRA_PARAMS: usize = 16;
 
-pub use schema::BASE_PARAMS;
-use schema::*;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamKind {
+    Scalar,
+    Array(u16),
+    Blob(u32),
+}
 
-/// Serialized size of a coefficient set: mean + a[K] + b[K].
-pub const COEFF_COUNT: u16 = (1 + 2 * HARMONICS) as u16;
-
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParamDef {
     pub name: &'static str,
     pub ty: ParamType,
     pub count: u16,
     pub writable: bool,
+    pub kind: ParamKind,
 }
 
 impl ParamDef {
-    const fn read_only(name: &'static str, ty: ParamType, count: u16) -> Self {
+    pub const fn read_only(name: &'static str, ty: ParamType, count: u16) -> Self {
         Self {
             name,
             ty,
             count,
             writable: false,
+            kind: if count == 1 {
+                ParamKind::Scalar
+            } else {
+                ParamKind::Array(count)
+            },
         }
     }
 
-    const fn writable(name: &'static str, ty: ParamType, count: u16) -> Self {
+    pub const fn writable(name: &'static str, ty: ParamType, count: u16) -> Self {
         Self {
             name,
             ty,
             count,
             writable: true,
+            kind: if count == 1 {
+                ParamKind::Scalar
+            } else {
+                ParamKind::Array(count)
+            },
+        }
+    }
+
+    pub const fn blob(name: &'static str, ty: ParamType, count: u16, maximum: u32) -> Self {
+        Self {
+            name,
+            ty,
+            count,
+            writable: true,
+            kind: ParamKind::Blob(maximum),
         }
     }
 }
 
 /// One experiment-owned, read-only scalar backed by an atomic word.
-///
-/// Separate constructors make it impossible to declare an unsupported size,
-/// a writable value without a setter, or a definition whose byte count does
-/// not match the storage read by the registry.
 #[derive(Clone, Copy)]
 pub struct ExtraParam {
     name: &'static str,
     ty: ParamType,
-    value: &'static AtomicU32,
+    value: &'static core::sync::atomic::AtomicU32,
     reset_on_diag: bool,
 }
 
 impl ExtraParam {
-    pub const fn f32(name: &'static str, value: &'static AtomicU32) -> Self {
+    pub const fn f32(name: &'static str, value: &'static core::sync::atomic::AtomicU32) -> Self {
         Self {
             name,
             ty: ParamType::F32,
@@ -83,7 +98,7 @@ impl ExtraParam {
         }
     }
 
-    pub const fn u32(name: &'static str, value: &'static AtomicU32) -> Self {
+    pub const fn u32(name: &'static str, value: &'static core::sync::atomic::AtomicU32) -> Self {
         Self {
             name,
             ty: ParamType::U32,
@@ -92,8 +107,10 @@ impl ExtraParam {
         }
     }
 
-    /// Declare a read-only event counter cleared by `diag_reset`.
-    pub const fn u32_event(name: &'static str, value: &'static AtomicU32) -> Self {
+    pub const fn u32_event(
+        name: &'static str,
+        value: &'static core::sync::atomic::AtomicU32,
+    ) -> Self {
         Self {
             name,
             ty: ParamType::U32,
@@ -102,23 +119,339 @@ impl ExtraParam {
         }
     }
 
-    const fn def(self) -> ParamDef {
-        ParamDef {
-            name: self.name,
-            ty: self.ty,
-            count: 1,
-            writable: false,
-        }
+    fn def(self) -> ParamDef {
+        ParamDef::read_only(self.name, self.ty, 1)
     }
 
     fn get(self, out: &mut [u8]) {
+        use core::sync::atomic::Ordering;
         out.copy_from_slice(&self.value.load(Ordering::Relaxed).to_le_bytes());
     }
 
     fn reset_diagnostic(self) {
+        use core::sync::atomic::Ordering;
         if self.reset_on_diag {
             self.value.store(0, Ordering::Relaxed);
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamAction {
+    None,
+    Reboot,
+    ResetDiagnostics,
+}
+
+#[cfg_attr(
+    feature = "diag-wide-command-payload",
+    allow(clippy::large_enum_variant)
+)]
+pub enum Staged {
+    Local(ParamAction),
+    Rt(Payload),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandTarget {
+    Core0,
+    Rig,
+    Program(u8),
+}
+
+pub trait ParamGroup {
+    fn target(&self) -> CommandTarget {
+        CommandTarget::Core0
+    }
+
+    fn params(&self) -> &[ParamDef];
+    fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode>;
+
+    /// Validate and stage without changing host-observable state.
+    ///
+    /// Returning `Err` must leave no pending state: the store cannot call
+    /// [`reject`](Self::reject) when staging itself fails.
+    fn stage(&mut self, id: u16, data: &[u8]) -> Result<Staged, ErrorCode>;
+
+    /// Map the group-local registry id to its component-local command id.
+    fn command_id(&self, id: u16) -> u16 {
+        id
+    }
+
+    fn accept(&mut self, id: u16);
+    fn reject(&mut self, id: u16, returned: Option<Payload>);
+
+    fn reset_diagnostics(&mut self) {}
+
+    fn set_block(&mut self, _id: u16, _offset: u32, _data: &[u8]) -> Result<(), ErrorCode> {
+        Err(ErrorCode::UnknownType)
+    }
+
+    fn stage_commit(&mut self, _id: u16, _len: u32) -> Result<Staged, ErrorCode> {
+        Err(ErrorCode::UnknownType)
+    }
+}
+
+struct GroupEntry {
+    group: &'static mut dyn ParamGroup,
+    target: CommandTarget,
+}
+
+/// Fixed-capacity walk over component-owned parameter groups.
+pub struct ParamStore {
+    commands: CommandProducer,
+    shared: &'static RtShared,
+    sample_rate: SampleRate,
+    entries: Vec<GroupEntry, MAX_GROUPS>,
+    validated: bool,
+}
+
+impl ParamStore {
+    pub const fn new(
+        commands: CommandProducer,
+        shared: &'static RtShared,
+        sample_rate: SampleRate,
+    ) -> Self {
+        Self {
+            commands,
+            shared,
+            sample_rate,
+            entries: Vec::new(),
+            validated: false,
+        }
+    }
+
+    /// Register a statically allocated group, capturing its target exactly once.
+    pub fn push(&mut self, group: &'static mut dyn ParamGroup) {
+        assert!(!self.validated, "cannot add groups after validation");
+        let entry = GroupEntry {
+            target: group.target(),
+            group,
+        };
+        assert!(
+            self.entries.push(entry).is_ok(),
+            "parameter group capacity exceeded"
+        );
+    }
+
+    /// Validate the complete composition before the control task starts.
+    pub fn validate(&mut self, program_domains: &[u8]) {
+        assert!(!self.validated, "parameter store validated twice");
+        let count = self.total_count();
+        assert!(
+            count <= u16::MAX as usize,
+            "parameter registry exceeds protocol index range"
+        );
+
+        for (index, def) in (0..count).map(|index| (index, self.def_unchecked(index).unwrap())) {
+            assert!(
+                def.name.is_ascii() && def.name.len() <= helic_proto::payload::MAX_PARAM_NAME_LEN,
+                "parameter name is non-ASCII or too long"
+            );
+            let encoded_len = def.name.len() + 5;
+            assert!(
+                encoded_len <= helic_proto::MAX_PAYLOAD - 4,
+                "parameter definition cannot fit in one discovery page"
+            );
+            if let ParamKind::Blob(maximum) = def.kind {
+                assert!(
+                    maximum <= u16::MAX as u32,
+                    "blob maximum cannot be represented by discovery"
+                );
+            }
+            for previous in 0..index {
+                assert_ne!(
+                    def.name,
+                    self.def_unchecked(previous).unwrap().name,
+                    "parameter names must be unique"
+                );
+            }
+        }
+
+        for (index, domain) in program_domains.iter().copied().enumerate() {
+            assert_ne!(
+                domain, DOMAIN_RIG,
+                "programme domain zero is reserved for the rig"
+            );
+            for previous in &program_domains[..index] {
+                assert_ne!(domain, *previous, "programme domains must be unique");
+            }
+            let claims = self
+                .entries
+                .iter()
+                .filter(|entry| entry.target == CommandTarget::Program(domain))
+                .count();
+            assert_eq!(claims, 1, "each programme domain needs exactly one group");
+        }
+        for entry in &self.entries {
+            if let CommandTarget::Program(domain) = entry.target {
+                assert!(
+                    program_domains.contains(&domain),
+                    "parameter group targets an unclaimed programme domain"
+                );
+            }
+        }
+        assert!(
+            self.entries
+                .iter()
+                .filter(|entry| entry.target == CommandTarget::Rig)
+                .count()
+                <= 1,
+            "only one parameter group may target the rig"
+        );
+        self.validated = true;
+    }
+
+    pub fn shared(&self) -> &'static RtShared {
+        self.shared
+    }
+
+    pub fn count(&self) -> usize {
+        self.assert_validated();
+        self.total_count()
+    }
+
+    pub fn def(&self, index: usize) -> Option<ParamDef> {
+        self.assert_validated();
+        self.def_unchecked(index)
+    }
+
+    pub fn get(&self, index: usize, out: &mut [u8]) -> Result<usize, ErrorCode> {
+        self.assert_validated();
+        let (group, id) = self.locate(index).ok_or(ErrorCode::BadIndex)?;
+        self.entries[group].group.get(id, out)
+    }
+
+    pub fn set(&mut self, index: usize, data: &[u8]) -> Result<ParamAction, ErrorCode> {
+        self.assert_validated();
+        let (group, id) = self.locate(index).ok_or(ErrorCode::BadIndex)?;
+        let def = self.entries[group]
+            .group
+            .params()
+            .get(id as usize)
+            .copied()
+            .ok_or(ErrorCode::BadIndex)?;
+        if !def.writable {
+            return Err(ErrorCode::ReadOnly);
+        }
+        if data.len() != def.ty.size() * def.count as usize {
+            return Err(ErrorCode::BadLength);
+        }
+        let staged = self.entries[group].group.stage(id, data)?;
+        self.finish_staged(group, id, staged)
+    }
+
+    pub fn set_block(&mut self, index: usize, offset: u32, data: &[u8]) -> Result<(), ErrorCode> {
+        self.assert_validated();
+        let (group, id) = self.locate(index).ok_or(ErrorCode::BadIndex)?;
+        self.entries[group].group.set_block(id, offset, data)
+    }
+
+    pub fn commit(&mut self, index: usize, len: u32) -> Result<(), ErrorCode> {
+        self.assert_validated();
+        let (group, id) = self.locate(index).ok_or(ErrorCode::BadIndex)?;
+        let staged = self.entries[group].group.stage_commit(id, len)?;
+        self.finish_staged(group, id, staged).map(|_| ())
+    }
+
+    pub const fn sample_rate(&self) -> SampleRate {
+        self.sample_rate
+    }
+
+    fn finish_staged(
+        &mut self,
+        group: usize,
+        id: u16,
+        staged: Staged,
+    ) -> Result<ParamAction, ErrorCode> {
+        match staged {
+            Staged::Local(action) => {
+                self.entries[group].group.accept(id);
+                if action == ParamAction::ResetDiagnostics {
+                    for entry in &mut self.entries {
+                        entry.group.reset_diagnostics();
+                    }
+                    #[cfg(feature = "diag-max-command-burst")]
+                    self.enqueue_max_command_burst()?;
+                    Ok(ParamAction::None)
+                } else {
+                    Ok(action)
+                }
+            }
+            Staged::Rt(payload) => {
+                let domain = match self.entries[group].target {
+                    CommandTarget::Rig => DOMAIN_RIG,
+                    CommandTarget::Program(domain) => domain,
+                    CommandTarget::Core0 => {
+                        self.entries[group].group.reject(id, Some(payload));
+                        return Err(ErrorCode::BadIndex);
+                    }
+                };
+                let command = RtCommand {
+                    domain,
+                    id: self.entries[group].group.command_id(id),
+                    payload,
+                };
+                match self.commands.enqueue(command) {
+                    Ok(()) => {
+                        self.entries[group].group.accept(id);
+                        Ok(ParamAction::None)
+                    }
+                    Err(returned) => {
+                        self.entries[group].group.reject(id, Some(returned.payload));
+                        Err(ErrorCode::Busy)
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "diag-max-command-burst")]
+    fn enqueue_max_command_burst(&mut self) -> Result<(), ErrorCode> {
+        if self.commands.capacity() - self.commands.len() < crate::COMMANDS_PER_TICK {
+            return Err(ErrorCode::Busy);
+        }
+        for _ in 0..crate::COMMANDS_PER_TICK {
+            let result = self.commands.enqueue(RtCommand {
+                domain: crate::DOMAIN_GENERATOR,
+                id: crate::command_id::generator::DIAGNOSTIC_VALUES,
+                payload: Payload::Values {
+                    len: crate::MAX_RT_VALUES as u8,
+                    data: [0.0; crate::MAX_RT_VALUES],
+                },
+            });
+            debug_assert!(result.is_ok());
+        }
+        Ok(())
+    }
+
+    fn assert_validated(&self) {
+        assert!(self.validated, "parameter store used before validation");
+    }
+
+    fn total_count(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|entry| entry.group.params().len())
+            .sum()
+    }
+
+    fn def_unchecked(&self, index: usize) -> Option<ParamDef> {
+        let (group, id) = self.locate(index)?;
+        self.entries[group].group.params().get(id as usize).copied()
+    }
+
+    /// The sole global-to-local index arithmetic in the runtime.
+    fn locate(&self, index: usize) -> Option<(usize, u16)> {
+        let mut base = 0;
+        for (group, entry) in self.entries.iter().enumerate() {
+            let count = entry.group.params().len();
+            if index < base + count {
+                return Some((group, (index - base) as u16));
+            }
+            base += count;
+        }
+        None
     }
 }
 
@@ -136,735 +469,7 @@ pub trait ParamRegistry {
     fn sample_rate(&self) -> SampleRate;
 }
 
-/// An action which the control server must perform after accepting a write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParamAction {
-    None,
-    Reboot,
-}
-
-#[derive(Clone, Copy)]
-enum ShadowUpdate {
-    None,
-    Freq(f32),
-    Target(FourierCoeffs<HARMONICS>),
-    Forcing(FourierCoeffs<HARMONICS>),
-    TableFreq(f32),
-    TableGain(f32),
-    TableInterpolation(u32),
-    TableMode(u32),
-    TableMult(u32),
-    TablePhase(f32),
-    RigParam(usize, f32),
-    CtrlParam(usize, f32),
-}
-
-/// Registry state: shadow copies of the writable parameters plus the
-/// command producer that forwards writes to the RT loop.
-pub struct ParamStore<C: Controller, R: Rig> {
-    commands: CommandProducer,
-    shared: &'static RtShared,
-    table: TableStaging,
-    target_buffer: CoeffStaging,
-    forcing_buffer: CoeffStaging,
-    sample_rate: SampleRate,
-    firmware_version: &'static str,
-    experiment: &'static str,
-    extras: &'static [ExtraParam],
-    freq_hz: f32,
-    target: FourierCoeffs<HARMONICS>,
-    forcing: FourierCoeffs<HARMONICS>,
-    table_freq_hz: f32,
-    table_gain: f32,
-    table_interpolation: u32,
-    table_mode: u32,
-    table_mult: u32,
-    table_phase: f32,
-    rig_params: [f32; MAX_RIG_PARAMS],
-    ctrl_params: [f32; MAX_CTRL_PARAMS],
-    types: PhantomData<(C, R)>,
-}
-
-impl<C: Controller, R: Rig> ParamStore<C, R> {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        commands: CommandProducer,
-        shared: &'static RtShared,
-        table: TableStaging,
-        target_buffer: CoeffStaging,
-        forcing_buffer: CoeffStaging,
-        sample_rate: SampleRate,
-        firmware_version: &'static str,
-        experiment: &'static str,
-        extras: &'static [ExtraParam],
-        controller: &C,
-    ) -> Self {
-        assert!(
-            Self::rig_names().len() <= MAX_RIG_PARAMS,
-            "rig exposes more parameters than ParamStore can shadow"
-        );
-        assert!(
-            Self::ctrl_names().len() <= MAX_CTRL_PARAMS,
-            "controller exposes more parameters than ParamStore can shadow"
-        );
-        assert!(
-            extras.len() <= MAX_EXTRA_PARAMS,
-            "experiment exposes more extra parameters than supported"
-        );
-        let mut rig_params = [0.0; MAX_RIG_PARAMS];
-        let mut ctrl_params = [0.0; MAX_CTRL_PARAMS];
-        let defaults = R::param_defaults();
-        assert!(
-            defaults.is_empty() || defaults.len() == Self::rig_names().len(),
-            "rig parameter defaults must be empty or match param_names"
-        );
-        rig_params[..defaults.len()].copy_from_slice(defaults);
-        for (id, value) in ctrl_params[..Self::ctrl_names().len()]
-            .iter_mut()
-            .enumerate()
-        {
-            *value = controller
-                .param_value(id as u16)
-                .expect("controllers exposing parameters must report their initial values");
-        }
-        let store = Self {
-            commands,
-            shared,
-            table,
-            target_buffer,
-            forcing_buffer,
-            sample_rate,
-            firmware_version,
-            experiment,
-            extras,
-            freq_hz: 0.0,
-            target: FourierCoeffs::zero(),
-            forcing: FourierCoeffs::zero(),
-            table_freq_hz: 0.0,
-            table_gain: 1.0,
-            table_interpolation: TableInterpolation::Linear as u32,
-            table_mode: 0,
-            table_mult: 1,
-            table_phase: 0.0,
-            rig_params,
-            ctrl_params,
-            types: PhantomData,
-        };
-        store.validate_registry();
-        validate_sources::<R>();
-        store
-    }
-
-    /// Shared state used by the control server for connection-loss quieting
-    /// and the ordered reboot handshake.
-    pub fn shared(&self) -> &'static RtShared {
-        self.shared
-    }
-
-    fn ctrl_names() -> &'static [&'static str] {
-        C::param_names()
-    }
-
-    fn rig_names() -> &'static [&'static str] {
-        R::param_names()
-    }
-
-    pub fn count(&self) -> usize {
-        BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() + Self::ctrl_names().len()
-    }
-
-    fn validate_registry(&self) {
-        assert!(
-            self.count() <= u16::MAX as usize,
-            "parameter registry exceeds the protocol index range"
-        );
-        for i in 0..self.count() {
-            let def = self.def(i).unwrap();
-            let max_name_len =
-                if (BASE_PARAMS.len()..BASE_PARAMS.len() + self.extras.len()).contains(&i) {
-                    helic_proto::payload::MAX_PARAM_NAME_LEN
-                } else {
-                    helic_proto::payload::MAX_NAME_LEN
-                };
-            assert!(
-                def.name.len() <= max_name_len && def.name.is_ascii(),
-                "parameter name is non-ASCII or exceeds its category limit"
-            );
-            for j in 0..i {
-                assert_ne!(
-                    def.name,
-                    self.def(j).unwrap().name,
-                    "parameter names must be unique"
-                );
-            }
-        }
-    }
-
-    /// Definition of parameter `index` (base or controller).
-    pub fn def(&self, index: usize) -> Option<ParamDef> {
-        if index < BASE_PARAMS.len() {
-            Some(BASE_PARAMS[index])
-        } else if index < BASE_PARAMS.len() + self.extras.len() {
-            Some(self.extras[index - BASE_PARAMS.len()].def())
-        } else if index < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() {
-            Self::rig_names()
-                .get(index - BASE_PARAMS.len() - self.extras.len())
-                .map(|name| ParamDef {
-                    name,
-                    ty: ParamType::F32,
-                    count: 1,
-                    writable: true,
-                })
-        } else {
-            Self::ctrl_names()
-                .get(index - BASE_PARAMS.len() - self.extras.len() - Self::rig_names().len())
-                .map(|name| ParamDef {
-                    name,
-                    ty: ParamType::F32,
-                    count: 1,
-                    writable: true,
-                })
-        }
-    }
-
-    /// Serialize the value of parameter `index` into `out`; returns the
-    /// number of bytes written.
-    pub fn get(&self, index: usize, out: &mut [u8]) -> Result<usize, ErrorCode> {
-        let def = self.def(index).ok_or(ErrorCode::BadIndex)?;
-        let size = def.ty.size() * def.count as usize;
-        if out.len() < size {
-            return Err(ErrorCode::BadLength);
-        }
-        let out = &mut out[..size];
-        match index {
-            0 => write_string(out, self.firmware_version),
-            1 => write_string(out, self.experiment),
-            2 => out.copy_from_slice(&self.sample_rate.hz().to_le_bytes()),
-            3 => out.copy_from_slice(&self.shared.live.ticks.load(Ordering::Relaxed).to_le_bytes()),
-            4 => out.copy_from_slice(
-                &self
-                    .shared
-                    .live
-                    .loop_time_last_us
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            5 => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .loop_time_max_us
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            6 => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .clock_jitter_us
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            7 => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .overruns
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            8 => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .tick_timeouts
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            9 => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .records_dropped
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            IDX_FREQ => out.copy_from_slice(&self.freq_hz.to_le_bytes()),
-            IDX_TARGET => serialize_coeffs(&self.target, out),
-            IDX_FORCING => serialize_coeffs(&self.forcing, out),
-            IDX_CTRL_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
-            IDX_TABLE => return Err(ErrorCode::BadLength),
-            IDX_TABLE_LEN => out.copy_from_slice(
-                &(self.shared.live.active_table_len.load(Ordering::Relaxed) as u16).to_le_bytes(),
-            ),
-            IDX_TABLE_FREQ => out.copy_from_slice(&self.table_freq_hz.to_le_bytes()),
-            IDX_TABLE_GAIN => out.copy_from_slice(&self.table_gain.to_le_bytes()),
-            IDX_TABLE_INTERPOLATION => out.copy_from_slice(&self.table_interpolation.to_le_bytes()),
-            IDX_TABLE_MODE => out.copy_from_slice(&self.table_mode.to_le_bytes()),
-            IDX_TABLE_MULT => out.copy_from_slice(&self.table_mult.to_le_bytes()),
-            IDX_TABLE_PHASE => out.copy_from_slice(&self.table_phase.to_le_bytes()),
-            IDX_TABLE_TRIGGER => out.copy_from_slice(&0u32.to_le_bytes()),
-            IDX_WAKE_PHASE_MIN => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .wake_phase_min_us
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            IDX_WAKE_PHASE_MAX => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .wake_phase_max_us
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            IDX_T_MEASURE_MAX => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .t_measure_max_us
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            IDX_T_ACTUATE_MAX => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .t_actuate_max_us
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            IDX_T_REST_MAX => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .t_rest_max_us
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            IDX_DIAG_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
-            IDX_COMMAND_BACKLOG_MAX => out.copy_from_slice(
-                &self
-                    .shared
-                    .diagnostics
-                    .command_backlog_max
-                    .load(Ordering::Relaxed)
-                    .to_le_bytes(),
-            ),
-            // `arm` reads back the current shared state; there is no separate
-            // core-0 shadow that could disagree with the safety gate.
-            IDX_ARM => {
-                out.copy_from_slice(&(self.shared.safety.load_inputs().armed as u32).to_le_bytes())
-            }
-            // `safety` packs the whole gate state into one pollable word:
-            // bit0 armed, bit1 latched trip, bit2 clamped since last reset,
-            // bit3 quieted since last reset. The exact clamp/quiet tick counts
-            // remain in the RT atomics and the status log.
-            IDX_SAFETY => {
-                let flags = self.shared.safety.flags(&self.shared.diagnostics);
-                out.copy_from_slice(&flags.to_le_bytes());
-            }
-            IDX_MCU_REBOOT => out.copy_from_slice(&0u32.to_le_bytes()),
-            i if i < BASE_PARAMS.len() + self.extras.len() => {
-                self.extras[i - BASE_PARAMS.len()].get(out)
-            }
-            i if i < BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len() => out
-                .copy_from_slice(
-                    &self.rig_params[i - BASE_PARAMS.len() - self.extras.len()].to_le_bytes(),
-                ),
-            i => out.copy_from_slice(
-                &self.ctrl_params
-                    [i - BASE_PARAMS.len() - self.extras.len() - Self::rig_names().len()]
-                .to_le_bytes(),
-            ),
-        }
-        Ok(size)
-    }
-
-    /// Write parameter `index` from raw little-endian bytes and forward the
-    /// change to the RT loop.
-    pub fn set(&mut self, index: usize, data: &[u8]) -> Result<ParamAction, ErrorCode> {
-        let def = self.def(index).ok_or(ErrorCode::BadIndex)?;
-        if !def.writable {
-            return Err(ErrorCode::ReadOnly);
-        }
-        if data.len() != def.ty.size() * def.count as usize {
-            return Err(ErrorCode::BadLength);
-        }
-        let (domain, id, payload, shadow) = match index {
-            IDX_FREQ => {
-                let freq = f32::from_le_bytes(data.try_into().unwrap());
-                if !(0.0..self.sample_rate.hz() / 2.0).contains(&freq) {
-                    return Err(ErrorCode::BadValue);
-                }
-                (
-                    DOMAIN_GENERATOR,
-                    command_id::generator::SET_INCREMENT,
-                    Payload::U32(PhaseAccumulator::increment_for(
-                        freq as f64,
-                        self.sample_rate.hz() as f64,
-                    )),
-                    ShadowUpdate::Freq(freq),
-                )
-            }
-            IDX_TARGET => {
-                let coeffs = deserialize_coeffs(data)?;
-                *self.target_buffer.buffer().map_err(map_buffer_error)? = coeffs;
-                let payload =
-                    Payload::Buffer(self.target_buffer.commit().map_err(map_buffer_error)?);
-                (
-                    DOMAIN_GENERATOR,
-                    command_id::generator::SET_TARGET,
-                    payload,
-                    ShadowUpdate::Target(coeffs),
-                )
-            }
-            IDX_FORCING => {
-                let coeffs = deserialize_coeffs(data)?;
-                *self.forcing_buffer.buffer().map_err(map_buffer_error)? = coeffs;
-                let payload =
-                    Payload::Buffer(self.forcing_buffer.commit().map_err(map_buffer_error)?);
-                (
-                    DOMAIN_GENERATOR,
-                    command_id::generator::SET_FORCING,
-                    payload,
-                    ShadowUpdate::Forcing(coeffs),
-                )
-            }
-            IDX_CTRL_RESET => {
-                if u32::from_le_bytes(data.try_into().unwrap()) == 0 {
-                    return Ok(ParamAction::None);
-                }
-                (
-                    DOMAIN_CONTROLLER,
-                    command_id::controller::RESET,
-                    Payload::Unit,
-                    ShadowUpdate::None,
-                )
-            }
-            IDX_TABLE => return Err(ErrorCode::BadLength),
-            IDX_TABLE_FREQ => {
-                let freq = f32::from_le_bytes(data.try_into().unwrap());
-                if !(0.0..self.sample_rate.hz() / 2.0).contains(&freq) {
-                    return Err(ErrorCode::BadValue);
-                }
-                (
-                    DOMAIN_TABLE,
-                    command_id::table::SET_INCREMENT,
-                    Payload::U32(PhaseAccumulator::increment_for(
-                        freq as f64,
-                        self.sample_rate.hz() as f64,
-                    )),
-                    ShadowUpdate::TableFreq(freq),
-                )
-            }
-            IDX_TABLE_GAIN => {
-                let gain = f32::from_le_bytes(data.try_into().unwrap());
-                if !gain.is_finite() {
-                    return Err(ErrorCode::BadValue);
-                }
-                (
-                    DOMAIN_TABLE,
-                    command_id::table::SET_GAIN,
-                    Payload::F32(gain),
-                    ShadowUpdate::TableGain(gain),
-                )
-            }
-            IDX_TABLE_INTERPOLATION => {
-                let interpolation = u32::from_le_bytes(data.try_into().unwrap());
-                TableInterpolation::from_u32(interpolation).ok_or(ErrorCode::BadValue)?;
-                (
-                    DOMAIN_TABLE,
-                    command_id::table::SET_INTERPOLATION,
-                    Payload::U32(interpolation),
-                    ShadowUpdate::TableInterpolation(interpolation),
-                )
-            }
-            IDX_TABLE_MODE => {
-                let mode = u32::from_le_bytes(data.try_into().unwrap());
-                TableMode::from_u32(mode).ok_or(ErrorCode::BadValue)?;
-                (
-                    DOMAIN_TABLE,
-                    command_id::table::SET_MODE,
-                    Payload::U32(mode),
-                    ShadowUpdate::TableMode(mode),
-                )
-            }
-            IDX_TABLE_MULT => {
-                let multiplier = u32::from_le_bytes(data.try_into().unwrap());
-                if multiplier == 0 {
-                    return Err(ErrorCode::BadValue);
-                }
-                (
-                    DOMAIN_TABLE,
-                    command_id::table::SET_MULTIPLIER,
-                    Payload::U32(multiplier),
-                    ShadowUpdate::TableMult(multiplier),
-                )
-            }
-            IDX_TABLE_PHASE => {
-                let phase = f32::from_le_bytes(data.try_into().unwrap());
-                if !(0.0..1.0).contains(&phase) {
-                    return Err(ErrorCode::BadValue);
-                }
-                let offset = (phase as f64 * 4294967296.0) as u32;
-                (
-                    DOMAIN_TABLE,
-                    command_id::table::SET_PHASE,
-                    Payload::U32(offset),
-                    ShadowUpdate::TablePhase(phase),
-                )
-            }
-            IDX_TABLE_TRIGGER => {
-                if u32::from_le_bytes(data.try_into().unwrap()) == 0 {
-                    return Ok(ParamAction::None);
-                }
-                (
-                    DOMAIN_TABLE,
-                    command_id::table::TRIGGER,
-                    Payload::Unit,
-                    ShadowUpdate::None,
-                )
-            }
-            IDX_DIAG_RESET => {
-                // Resets are applied directly: the diagnostics are atomics
-                // maintained by core 1 but safely writable from here.
-                if u32::from_le_bytes(data.try_into().unwrap()) != 0 {
-                    self.shared.diagnostics.reset();
-                    for extra in self.extras {
-                        extra.reset_diagnostic();
-                    }
-                    #[cfg(feature = "diag-max-command-burst")]
-                    self.enqueue_max_command_burst()?;
-                }
-                return Ok(ParamAction::None);
-            }
-            IDX_ARM => {
-                // Applied directly on core 0 (like `diag_reset`) so the
-                // safety-critical disarm path has no command-queue latency.
-                if u32::from_le_bytes(data.try_into().unwrap()) != 0 {
-                    self.shared.safety.arm();
-                } else {
-                    self.shared.safety.disarm();
-                }
-                return Ok(ParamAction::None);
-            }
-            IDX_MCU_REBOOT => {
-                if u32::from_le_bytes(data.try_into().unwrap())
-                    != helic_proto::MCU_REBOOT_CONFIRMATION
-                {
-                    return Err(ErrorCode::BadValue);
-                }
-                return Ok(ParamAction::Reboot);
-            }
-            i if (BASE_PARAMS.len() + self.extras.len()
-                ..BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len())
-                .contains(&i) =>
-            {
-                let id = (i - BASE_PARAMS.len() - self.extras.len()) as u16;
-                let value = f32::from_le_bytes(data.try_into().unwrap());
-                let value = R::normalise_param(id, value).ok_or(ErrorCode::BadValue)?;
-                (
-                    DOMAIN_RIG,
-                    id,
-                    Payload::F32(value),
-                    ShadowUpdate::RigParam(id as usize, value),
-                )
-            }
-            i if (BASE_PARAMS.len() + self.extras.len() + Self::rig_names().len()
-                ..self.count())
-                .contains(&i) =>
-            {
-                let id =
-                    (i - BASE_PARAMS.len() - self.extras.len() - Self::rig_names().len()) as u16;
-                let value = f32::from_le_bytes(data.try_into().unwrap());
-                let value =
-                    C::normalise_param(id, value, R::INPUTS.len()).ok_or(ErrorCode::BadValue)?;
-                (
-                    DOMAIN_CONTROLLER,
-                    id,
-                    Payload::F32(value),
-                    ShadowUpdate::CtrlParam(id as usize, value),
-                )
-            }
-            _ => return Err(ErrorCode::BadIndex),
-        };
-        let command = RtCommand {
-            domain,
-            id,
-            payload,
-        };
-        if let Err(returned) = self.commands.enqueue(command) {
-            self.reject_command(returned);
-            return Err(ErrorCode::Busy);
-        }
-        match shadow {
-            ShadowUpdate::None => {}
-            ShadowUpdate::Freq(freq) => self.freq_hz = freq,
-            ShadowUpdate::Target(coeffs) => self.target = coeffs,
-            ShadowUpdate::Forcing(coeffs) => self.forcing = coeffs,
-            ShadowUpdate::TableFreq(freq) => self.table_freq_hz = freq,
-            ShadowUpdate::TableGain(gain) => self.table_gain = gain,
-            ShadowUpdate::TableInterpolation(interpolation) => {
-                self.table_interpolation = interpolation
-            }
-            ShadowUpdate::TableMode(mode) => self.table_mode = mode,
-            ShadowUpdate::TableMult(multiplier) => self.table_mult = multiplier,
-            ShadowUpdate::TablePhase(phase) => self.table_phase = phase,
-            ShadowUpdate::RigParam(id, value) => self.rig_params[id] = value,
-            ShadowUpdate::CtrlParam(id, value) => self.ctrl_params[id] = value,
-        }
-        Ok(ParamAction::None)
-    }
-
-    pub fn set_block(&mut self, index: usize, offset: u32, data: &[u8]) -> Result<(), ErrorCode> {
-        if index != IDX_TABLE {
-            return Err(ErrorCode::BadIndex);
-        }
-        if !data.len().is_multiple_of(4) {
-            return Err(ErrorCode::BadLength);
-        }
-        let offset = offset as usize;
-        let count = data.len() / 4;
-        if offset
-            .checked_add(count)
-            .is_none_or(|end| end > MAX_TABLE_LEN)
-        {
-            return Err(ErrorCode::BadLength);
-        }
-        let staging = self.table.buffer().map_err(map_buffer_error)?;
-        for (index, raw) in data.chunks_exact(4).enumerate() {
-            let value = f32::from_le_bytes(raw.try_into().unwrap());
-            let written = staging.write_block(offset + index, &[value]);
-            debug_assert!(written);
-        }
-        Ok(())
-    }
-
-    pub fn commit(&mut self, index: usize, len: u32) -> Result<(), ErrorCode> {
-        if index != IDX_TABLE {
-            return Err(ErrorCode::BadIndex);
-        }
-        let len = len as usize;
-        if !(2..=MAX_TABLE_LEN).contains(&len) {
-            return Err(ErrorCode::BadValue);
-        }
-        {
-            let staging = self.table.buffer().map_err(map_buffer_error)?;
-            if !staging
-                .prefix(len)
-                .unwrap()
-                .iter()
-                .all(|value| value.is_finite())
-            {
-                return Err(ErrorCode::BadValue);
-            }
-            let length_set = staging.set_len(len);
-            debug_assert!(length_set);
-        }
-        let token = self.table.commit().map_err(map_buffer_error)?;
-        let command = RtCommand {
-            domain: DOMAIN_TABLE,
-            id: command_id::table::ACTIVATE,
-            payload: Payload::Buffer(token),
-        };
-        match self.commands.enqueue(command) {
-            Ok(()) => {}
-            Err(returned) => {
-                self.reject_command(returned);
-                return Err(ErrorCode::Busy);
-            }
-        }
-        Ok(())
-    }
-
-    /// Return ownership-bearing payloads after a command fails to reach core 1.
-    ///
-    /// Scalar and copied payloads require no unwind. A table activation token
-    /// must be cancelled through its unique staging endpoint, or the inactive
-    /// bank would remain permanently busy.
-    fn reject_command(&mut self, command: RtCommand) {
-        match (command.domain, command.id, command.payload) {
-            (DOMAIN_GENERATOR, command_id::generator::SET_TARGET, Payload::Buffer(token)) => {
-                self.target_buffer.cancel(token)
-            }
-            (DOMAIN_GENERATOR, command_id::generator::SET_FORCING, Payload::Buffer(token)) => {
-                self.forcing_buffer.cancel(token)
-            }
-            (DOMAIN_TABLE, command_id::table::ACTIVATE, Payload::Buffer(token)) => {
-                self.table.cancel(token)
-            }
-            _ => {}
-        }
-    }
-
-    /// Queue the exact two-command WCET case immediately after `diag_reset`.
-    ///
-    /// This diagnostic-only path changes no registry entry. Checking capacity
-    /// before either enqueue makes the pair transactional with respect to the
-    /// producer; the concurrent consumer can only increase available space.
-    #[cfg(feature = "diag-max-command-burst")]
-    fn enqueue_max_command_burst(&mut self) -> Result<(), ErrorCode> {
-        if self.commands.capacity() - self.commands.len() < crate::COMMANDS_PER_TICK {
-            return Err(ErrorCode::Busy);
-        }
-
-        #[cfg(feature = "diag-wide-command-payload")]
-        for _ in 0..crate::COMMANDS_PER_TICK {
-            let result = self.commands.enqueue(RtCommand {
-                domain: DOMAIN_GENERATOR,
-                id: command_id::generator::DIAGNOSTIC_VALUES,
-                payload: Payload::Values {
-                    len: COEFF_COUNT as u8,
-                    data: [0.0; crate::MAX_RT_VALUES],
-                },
-            });
-            debug_assert!(result.is_ok());
-        }
-
-        #[cfg(not(feature = "diag-wide-command-payload"))]
-        {
-            *self.target_buffer.buffer().map_err(map_buffer_error)? = FourierCoeffs::zero();
-            let target = self.target_buffer.commit().map_err(map_buffer_error)?;
-            let command = RtCommand {
-                domain: DOMAIN_GENERATOR,
-                id: command_id::generator::SET_TARGET,
-                payload: Payload::Buffer(target),
-            };
-            if let Err(returned) = self.commands.enqueue(command) {
-                self.reject_command(returned);
-                return Err(ErrorCode::Busy);
-            }
-
-            *self.forcing_buffer.buffer().map_err(map_buffer_error)? = FourierCoeffs::zero();
-            let forcing = self.forcing_buffer.commit().map_err(map_buffer_error)?;
-            let command = RtCommand {
-                domain: DOMAIN_GENERATOR,
-                id: command_id::generator::SET_FORCING,
-                payload: Payload::Buffer(forcing),
-            };
-            if let Err(returned) = self.commands.enqueue(command) {
-                self.reject_command(returned);
-                return Err(ErrorCode::Busy);
-            }
-        }
-        Ok(())
-    }
-
-    pub const fn sample_rate(&self) -> SampleRate {
-        self.sample_rate
-    }
-}
-
-fn map_buffer_error(error: BufferError) -> ErrorCode {
-    match error {
-        BufferError::Busy => ErrorCode::Busy,
-    }
-}
-
-impl<C: Controller, R: Rig> ParamRegistry for ParamStore<C, R> {
+impl ParamRegistry for ParamStore {
     fn count(&self) -> usize {
         ParamStore::count(self)
     }
@@ -894,56 +499,25 @@ impl<C: Controller, R: Rig> ParamRegistry for ParamStore<C, R> {
     }
 }
 
-fn write_string(out: &mut [u8], value: &str) {
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = value.as_bytes().get(i).copied().unwrap_or(0);
-    }
-}
-
-/// Wire layout of a coefficient set: mean, a[1..=K], b[1..=K], all f32 LE.
-fn serialize_coeffs(c: &FourierCoeffs<HARMONICS>, out: &mut [u8]) {
-    out[0..4].copy_from_slice(&c.mean.to_le_bytes());
-    for k in 0..HARMONICS {
-        out[4 + 4 * k..8 + 4 * k].copy_from_slice(&c.a[k].to_le_bytes());
-        let off = 4 + 4 * (HARMONICS + k);
-        out[off..off + 4].copy_from_slice(&c.b[k].to_le_bytes());
-    }
-}
-
-/// Non-finite coefficients are rejected: a NaN would propagate through the
-/// generators to `code_for_volts`, and an infinity pins the output at a rail.
-fn deserialize_coeffs(data: &[u8]) -> Result<FourierCoeffs<HARMONICS>, ErrorCode> {
-    let f = |i: usize| f32::from_le_bytes(data[4 * i..4 * i + 4].try_into().unwrap());
-    let mut c = FourierCoeffs::zero();
-    c.mean = f(0);
-    for k in 0..HARMONICS {
-        c.a[k] = f(1 + k);
-        c.b[k] = f(1 + HARMONICS + k);
-    }
-    let finite = c.mean.is_finite()
-        && c.a.iter().all(|v| v.is_finite())
-        && c.b.iter().all(|v| v.is_finite());
-    if finite {
-        Ok(c)
-    } else {
-        Err(ErrorCode::BadValue)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use core::sync::atomic::AtomicU32;
+    use core::sync::atomic::{AtomicU32, Ordering};
     use std::boxed::Box;
 
     use heapless::spsc::Queue;
     use helic_core::controller::PassThrough;
+    use helic_core::generator::FourierCoeffs;
     use helic_core::{DoubleBuffer, TableBuffer};
 
     use super::*;
-    use crate::{source, source_count, RtCommand, COMMAND_QUEUE_LEN};
+    use crate::{CommandConsumer, Rig, COMMAND_QUEUE_LEN};
 
     static EXTRA_VALUE: AtomicU32 = AtomicU32::new(0);
-    static EXTRAS: &[ExtraParam] = &[ExtraParam::f32("extra", &EXTRA_VALUE)];
+    static EXTRA_EVENT: AtomicU32 = AtomicU32::new(0);
+    static EXTRAS: &[ExtraParam] = &[
+        ExtraParam::f32("extra", &EXTRA_VALUE),
+        ExtraParam::u32_event("extra_event", &EXTRA_EVENT),
+    ];
 
     struct TestRig;
 
@@ -957,304 +531,441 @@ mod tests {
         fn prepare_reboot(&mut self, _step: u8) -> bool {
             true
         }
-
         fn param_names() -> &'static [&'static str] {
             &["rig_gain"]
         }
-
         fn param_defaults() -> &'static [f32] {
             &[1.0]
         }
     }
 
-    fn store_with_buffers() -> (
-        ParamStore<PassThrough, TestRig>,
-        crate::CommandConsumer,
+    fn store() -> (
+        ParamStore,
+        CommandConsumer,
         helic_core::ActiveTable,
-        crate::ActiveCoeffs,
         crate::ActiveCoeffs,
     ) {
         let queue = Box::leak(Box::new(Queue::<RtCommand, COMMAND_QUEUE_LEN>::new()));
-        let (tx, rx) = queue.split();
+        let (commands, consumer) = queue.split();
         let shared = Box::leak(Box::new(RtShared::new()));
-        let (table, active) = Box::leak(Box::new(TableBuffer::new())).split();
-        let (target_staging, target_active) = Box::leak(Box::new(DoubleBuffer::from_banks(
+        let (table, active_table) = Box::leak(Box::new(TableBuffer::new())).split();
+        let (target, active_target) = Box::leak(Box::new(DoubleBuffer::from_banks(
             FourierCoeffs::zero(),
             FourierCoeffs::zero(),
         )))
         .split();
-        let (forcing_staging, forcing_active) = Box::leak(Box::new(DoubleBuffer::from_banks(
+        let (forcing, _active_forcing) = Box::leak(Box::new(DoubleBuffer::from_banks(
             FourierCoeffs::zero(),
             FourierCoeffs::zero(),
         )))
         .split();
-        (
-            ParamStore::new(
-                tx,
-                shared,
-                table,
-                target_staging,
-                forcing_staging,
-                SampleRate::Hz8000,
-                "0.1.0 test",
-                "test-rig",
-                EXTRAS,
-                &PassThrough,
-            ),
-            rx,
-            active,
-            target_active,
-            forcing_active,
-        )
+
+        let mut store = ParamStore::new(commands, shared, SampleRate::Hz8000);
+        store.push(Box::leak(Box::new(PlatformGroup::new(
+            shared,
+            SampleRate::Hz8000,
+            "0.1.0 test",
+            "test-rig",
+        ))));
+        store.push(Box::leak(Box::new(GeneratorGroup::new(
+            target,
+            forcing,
+            SampleRate::Hz8000,
+        ))));
+        store.push(Box::leak(Box::new(TableGroup::new(
+            shared,
+            table,
+            SampleRate::Hz8000,
+        ))));
+        store.push(Box::leak(Box::new(ControllerGroup::new(
+            &PassThrough,
+            TestRig::INPUTS.len(),
+        ))));
+        store.push(Box::leak(Box::new(RigGroup::<TestRig>::new())));
+        store.push(Box::leak(Box::new(TelemetryGroup::new(EXTRAS))));
+        store.validate(PROGRAM_DOMAINS);
+        (store, consumer, active_table, active_target)
     }
 
-    fn store() -> (ParamStore<PassThrough, TestRig>, crate::CommandConsumer) {
-        let (store, commands, _table, _target, _forcing) = store_with_buffers();
-        (store, commands)
-    }
-
-    #[test]
-    fn platform_registry_is_wire_stable_after_relocation() {
-        let expected = [
-            ("firmware", ParamType::Char, 16, false),
-            ("experiment", ParamType::Char, 16, false),
-            ("sample_freq", ParamType::F32, 1, false),
-            ("ticks", ParamType::U32, 1, false),
-            ("loop_time_last", ParamType::U32, 1, false),
-            ("loop_time_max", ParamType::U32, 1, false),
-            ("clock_jitter", ParamType::U32, 1, false),
-            ("overruns", ParamType::U32, 1, false),
-            ("tick_timeouts", ParamType::U32, 1, false),
-            ("records_dropped", ParamType::U32, 1, false),
-            ("freq", ParamType::F32, 1, true),
-            ("target_coeffs", ParamType::F32, COEFF_COUNT, true),
-            ("forcing_coeffs", ParamType::F32, COEFF_COUNT, true),
-            ("ctrl_reset", ParamType::U32, 1, true),
-            (
-                "table",
-                ParamType::F32,
-                helic_core::table::MAX_TABLE_LEN as u16,
-                true,
-            ),
-            ("table_len", ParamType::U16, 1, false),
-            ("table_freq", ParamType::F32, 1, true),
-            ("table_gain", ParamType::F32, 1, true),
-            ("table_interp", ParamType::U32, 1, true),
-            ("table_mode", ParamType::U32, 1, true),
-            ("table_mult", ParamType::U32, 1, true),
-            ("table_phase", ParamType::F32, 1, true),
-            ("table_trigger", ParamType::U32, 1, true),
-            ("wake_phase_min", ParamType::U32, 1, false),
-            ("wake_phase_max", ParamType::U32, 1, false),
-            ("t_measure_max", ParamType::U32, 1, false),
-            ("t_actuate_max", ParamType::U32, 1, false),
-            ("t_rest_max", ParamType::U32, 1, false),
-            ("diag_reset", ParamType::U32, 1, true),
-            ("cmd_backlog_max", ParamType::U32, 1, false),
-            ("arm", ParamType::U32, 1, true),
-            ("safety", ParamType::U32, 1, false),
-            ("mcu_reboot", ParamType::U32, 1, true),
-        ];
-        assert_eq!(BASE_PARAMS.len(), expected.len());
-        for (definition, expected) in BASE_PARAMS.iter().zip(expected) {
-            assert_eq!(
-                (
-                    definition.name,
-                    definition.ty,
-                    definition.count,
-                    definition.writable,
-                ),
-                expected
-            );
-        }
+    fn index(store: &ParamStore, name: &str) -> usize {
+        (0..store.count())
+            .find(|index| store.def(*index).unwrap().name == name)
+            .unwrap()
     }
 
     #[test]
-    fn registry_and_sources_preserve_segment_order() {
-        let (store, _rx) = store();
-        assert_eq!(store.count(), BASE_PARAMS.len() + 2);
-        assert_eq!(store.def(BASE_PARAMS.len()).unwrap().name, "extra");
-        assert_eq!(store.def(BASE_PARAMS.len() + 1).unwrap().name, "rig_gain");
-
-        let sources: std::vec::Vec<_> = (0..source_count::<TestRig>())
-            .map(source::<TestRig>)
+    fn registry_preserves_the_complete_discovered_set() {
+        let (store, _commands, _table, _target) = store();
+        let mut names: std::vec::Vec<_> = (0..store.count())
+            .map(|index| store.def(index).unwrap().name)
             .collect();
-        assert_eq!(
-            sources,
-            [
-                Some(("adc0", "V")),
-                Some(("target", "V")),
-                Some(("forcing", "V")),
-                Some(("table", "V")),
-                Some(("out", "V")),
-                Some(("cmd_epoch", "count")),
-            ]
-        );
+        names.sort_unstable();
+        let mut expected = std::vec![
+            "arm",
+            "clock_jitter",
+            "cmd_backlog_max",
+            "ctrl_reset",
+            "diag_reset",
+            "experiment",
+            "extra",
+            "extra_event",
+            "firmware",
+            "forcing_coeffs",
+            "freq",
+            "loop_time_last",
+            "loop_time_max",
+            "mcu_reboot",
+            "overruns",
+            "records_dropped",
+            "rig_gain",
+            "safety",
+            "sample_freq",
+            "t_actuate_max",
+            "t_measure_max",
+            "t_rest_max",
+            "table",
+            "table_freq",
+            "table_gain",
+            "table_interp",
+            "table_len",
+            "table_mode",
+            "table_mult",
+            "table_phase",
+            "table_trigger",
+            "target_coeffs",
+            "tick_timeouts",
+            "ticks",
+            "wake_phase_max",
+            "wake_phase_min",
+        ];
+        expected.sort_unstable();
+        assert_eq!(names, expected);
     }
 
     #[test]
-    fn host_tested_store_still_enqueues_sample_boundary_commands() {
-        let (mut store, mut rx) = store();
-        store.set(IDX_FREQ, &20.0f32.to_le_bytes()).unwrap();
-        let expected = PhaseAccumulator::increment_for(20.0, 8000.0);
-        assert!(matches!(
-            rx.dequeue(),
-            Some(RtCommand {
-                domain: DOMAIN_GENERATOR,
-                id: command_id::generator::SET_INCREMENT,
-                payload: Payload::U32(value),
-            }) if value == expected
-        ));
-    }
+    fn global_walk_routes_and_accepts_only_after_enqueue() {
+        let (mut store, mut commands, _table, _target) = store();
+        let frequency = index(&store, "freq");
+        store.set(frequency, &20.0f32.to_le_bytes()).unwrap();
+        let command = commands.dequeue().unwrap();
+        assert_eq!(command.domain, crate::DOMAIN_GENERATOR);
+        assert_eq!(command.id, crate::command_id::generator::SET_INCREMENT);
 
-    #[test]
-    fn coefficient_write_uses_bounded_addressed_payload() {
-        let (mut store, mut rx, _table, mut target, _forcing) = store_with_buffers();
-        let coeffs = FourierCoeffs {
-            mean: 0.25,
-            a: core::array::from_fn(|i| i as f32 + 1.0),
-            b: core::array::from_fn(|i| -(i as f32) - 1.0),
-        };
-        let mut bytes = [0_u8; COEFF_COUNT as usize * 4];
-        serialize_coeffs(&coeffs, &mut bytes);
-        store.set(IDX_TARGET, &bytes).unwrap();
-
-        let Some(RtCommand {
-            domain: DOMAIN_GENERATOR,
-            id: command_id::generator::SET_TARGET,
-            payload: Payload::Buffer(token),
-        }) = rx.dequeue()
-        else {
-            panic!("target write was not routed to the generator");
-        };
-        target.activate(token);
-        assert_eq!(target.get().mean, coeffs.mean);
-        assert_eq!(target.get().a, coeffs.a);
-        assert_eq!(target.get().b, coeffs.b);
-    }
-
-    #[cfg(feature = "diag-max-command-burst")]
-    #[test]
-    fn diagnostic_reset_preloads_exact_per_tick_command_limit() {
-        let (mut store, mut rx) = store();
-        store.set(IDX_DIAG_RESET, &1_u32.to_le_bytes()).unwrap();
-
-        #[cfg(feature = "diag-wide-command-payload")]
-        for _ in 0..crate::COMMANDS_PER_TICK {
-            assert!(matches!(
-                rx.dequeue(),
-                Some(RtCommand {
-                    domain: DOMAIN_GENERATOR,
-                    id,
-                    payload: Payload::Values { len, .. },
-                }) if id == command_id::generator::DIAGNOSTIC_VALUES
-                    && len as u16 == COEFF_COUNT
-            ));
-        }
-
-        #[cfg(not(feature = "diag-wide-command-payload"))]
-        for expected_id in [
-            command_id::generator::SET_TARGET,
-            command_id::generator::SET_FORCING,
-        ] {
-            assert!(matches!(
-                rx.dequeue(),
-                Some(RtCommand {
-                    domain: DOMAIN_GENERATOR,
-                    id,
-                    payload: Payload::Buffer(_),
-                }) if id == expected_id
-            ));
-        }
-        assert!(rx.dequeue().is_none());
-    }
-
-    #[test]
-    fn full_command_queue_returns_table_token_and_restores_staging() {
-        let (mut store, _rx) = store();
-        store
-            .set_block(
-                IDX_TABLE,
-                0,
-                &[1.0f32.to_le_bytes(), 2.0f32.to_le_bytes()].concat(),
-            )
-            .unwrap();
-
-        loop {
-            match store.set(IDX_FREQ, &20.0f32.to_le_bytes()) {
-                Ok(ParamAction::None) => {}
-                Err(ErrorCode::Busy) => break,
-                result => panic!("unexpected queue-fill result: {result:?}"),
-            }
-        }
-        assert_eq!(store.commit(IDX_TABLE, 2), Err(ErrorCode::Busy));
-        assert!(store.set_block(IDX_TABLE, 0, &3.0f32.to_le_bytes()).is_ok());
-    }
-
-    #[test]
-    fn full_command_queue_returns_coefficient_token_and_restores_staging() {
-        let (mut store, mut rx) = store();
-        loop {
-            match store.set(IDX_FREQ, &20.0f32.to_le_bytes()) {
-                Ok(ParamAction::None) => {}
-                Err(ErrorCode::Busy) => break,
-                result => panic!("unexpected queue-fill result: {result:?}"),
-            }
-        }
-        let coefficients = [0_u8; COEFF_COUNT as usize * 4];
-        assert_eq!(store.set(IDX_TARGET, &coefficients), Err(ErrorCode::Busy));
-        rx.dequeue().unwrap();
-        assert_eq!(store.set(IDX_TARGET, &coefficients), Ok(ParamAction::None));
-    }
-
-    #[test]
-    fn full_command_queue_does_not_update_scalar_shadow() {
-        let (mut store, _rx) = store();
-        loop {
-            match store.set(IDX_FREQ, &20.0f32.to_le_bytes()) {
-                Ok(ParamAction::None) => {}
-                Err(ErrorCode::Busy) => break,
-                result => panic!("unexpected queue-fill result: {result:?}"),
-            }
-        }
-        assert_eq!(
-            store.set(IDX_FREQ, &21.0f32.to_le_bytes()),
-            Err(ErrorCode::Busy)
-        );
-        let mut out = [0_u8; 4];
-        store.get(IDX_FREQ, &mut out).unwrap();
+        let mut out = [0; 4];
+        store.get(frequency, &mut out).unwrap();
         assert_eq!(f32::from_le_bytes(out), 20.0);
     }
 
     #[test]
-    fn table_length_changes_only_after_core_one_activation() {
-        let (mut store, mut rx, mut active, _target, _forcing) = store_with_buffers();
-        let bytes: std::vec::Vec<_> = [1.0f32, 2.0, 3.0]
+    fn full_queue_rejects_scalar_and_buffer_transactionally() {
+        let (mut store, mut commands, _table, _target) = store();
+        let frequency = index(&store, "freq");
+        while store.set(frequency, &20.0f32.to_le_bytes()).is_ok() {}
+        assert_eq!(
+            store.set(frequency, &21.0f32.to_le_bytes()),
+            Err(ErrorCode::Busy)
+        );
+        let mut out = [0; 4];
+        store.get(frequency, &mut out).unwrap();
+        assert_eq!(f32::from_le_bytes(out), 20.0);
+
+        let target = index(&store, "target_coeffs");
+        let coefficients = [0; COEFF_COUNT as usize * 4];
+        assert_eq!(store.set(target, &coefficients), Err(ErrorCode::Busy));
+        commands.dequeue().unwrap();
+        assert_eq!(store.set(target, &coefficients), Ok(ParamAction::None));
+    }
+
+    #[test]
+    fn diagnostic_reset_broadcasts_without_touching_live_state() {
+        let (mut store, _commands, _table, _target) = store();
+        store.shared.live.ticks.store(17, Ordering::Relaxed);
+        store
+            .shared
+            .diagnostics
+            .overruns
+            .store(9, Ordering::Relaxed);
+        EXTRA_EVENT.store(11, Ordering::Relaxed);
+        let reset = index(&store, "diag_reset");
+        store.set(reset, &1_u32.to_le_bytes()).unwrap();
+        assert_eq!(store.shared.live.ticks.load(Ordering::Relaxed), 17);
+        assert_eq!(store.shared.diagnostics.overruns.load(Ordering::Relaxed), 0);
+        assert_eq!(EXTRA_EVENT.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn coefficient_buffer_activates_the_complete_staged_value() {
+        let (mut store, mut commands, _table, mut active_target) = store();
+        let target = index(&store, "target_coeffs");
+        let coefficients = FourierCoeffs {
+            mean: 0.25,
+            a: core::array::from_fn(|index| index as f32 + 1.0),
+            b: core::array::from_fn(|index| -(index as f32) - 1.0),
+        };
+        let mut bytes = [0; COEFF_COUNT as usize * 4];
+        bytes[..4].copy_from_slice(&coefficients.mean.to_le_bytes());
+        for harmonic in 0..crate::HARMONICS {
+            bytes[4 + 4 * harmonic..8 + 4 * harmonic]
+                .copy_from_slice(&coefficients.a[harmonic].to_le_bytes());
+            let offset = 4 + 4 * (crate::HARMONICS + harmonic);
+            bytes[offset..offset + 4].copy_from_slice(&coefficients.b[harmonic].to_le_bytes());
+        }
+        store.set(target, &bytes).unwrap();
+        let Some(RtCommand {
+            domain: crate::DOMAIN_GENERATOR,
+            id: crate::command_id::generator::SET_TARGET,
+            payload: Payload::Buffer(token),
+        }) = commands.dequeue()
+        else {
+            panic!("target write was not routed to its buffer activation");
+        };
+        active_target.activate(token);
+        assert_eq!(active_target.get().mean, coefficients.mean);
+        assert_eq!(active_target.get().a, coefficients.a);
+        assert_eq!(active_target.get().b, coefficients.b);
+    }
+
+    #[test]
+    fn failing_stage_leaves_no_coefficient_pending_state() {
+        let (mut store, _commands, _table, _target) = store();
+        let target = index(&store, "target_coeffs");
+        let mut invalid = [0; COEFF_COUNT as usize * 4];
+        invalid[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert_eq!(store.set(target, &invalid), Err(ErrorCode::BadValue));
+        assert_eq!(
+            store.set(target, &[0; COEFF_COUNT as usize * 4]),
+            Ok(ParamAction::None)
+        );
+    }
+
+    #[test]
+    fn table_length_is_published_only_after_core_one_activation() {
+        let (mut store, mut commands, mut active_table, _target) = store();
+        let table = index(&store, "table");
+        let table_len = index(&store, "table_len");
+        let bytes: std::vec::Vec<_> = [1.0_f32, 2.0, 3.0]
             .into_iter()
             .flat_map(f32::to_le_bytes)
             .collect();
-        store.set_block(IDX_TABLE, 0, &bytes).unwrap();
-        store.commit(IDX_TABLE, 3).unwrap();
+        store.set_block(table, 0, &bytes).unwrap();
+        store.commit(table, 3).unwrap();
 
-        let mut out = [0_u8; 2];
-        store.get(IDX_TABLE_LEN, &mut out).unwrap();
+        let mut out = [0; 2];
+        store.get(table_len, &mut out).unwrap();
         assert_eq!(u16::from_le_bytes(out), 0);
 
         let Some(RtCommand {
-            domain: DOMAIN_TABLE,
-            id: command_id::table::ACTIVATE,
+            domain: crate::DOMAIN_TABLE,
+            id: crate::command_id::table::ACTIVATE,
             payload: Payload::Buffer(token),
-        }) = rx.dequeue()
+        }) = commands.dequeue()
         else {
-            panic!("table activation command was not enqueued");
+            panic!("table commit was not routed to activation");
         };
-        active.activate(token);
+        active_table.activate(token);
         store
             .shared
             .live
             .active_table_len
-            .store(active.get().len() as u32, Ordering::Relaxed);
-        store.get(IDX_TABLE_LEN, &mut out).unwrap();
+            .store(active_table.get().len() as u32, Ordering::Relaxed);
+        store.get(table_len, &mut out).unwrap();
         assert_eq!(u16::from_le_bytes(out), 3);
+    }
+
+    #[test]
+    fn full_queue_returns_table_token_to_its_group() {
+        let (mut store, _commands, _table, _target) = store();
+        let table = index(&store, "table");
+        let frequency = index(&store, "freq");
+        store
+            .set_block(
+                table,
+                0,
+                &[1.0_f32.to_le_bytes(), 2.0_f32.to_le_bytes()].concat(),
+            )
+            .unwrap();
+        while store.set(frequency, &20.0_f32.to_le_bytes()).is_ok() {}
+        assert_eq!(store.commit(table, 2), Err(ErrorCode::Busy));
+        assert!(store.set_block(table, 0, &3.0_f32.to_le_bytes()).is_ok());
+    }
+
+    #[test]
+    fn rig_group_maps_global_index_to_local_command_id() {
+        let (mut store, mut commands, _table, _target) = store();
+        let rig_gain = index(&store, "rig_gain");
+        store.set(rig_gain, &2.5_f32.to_le_bytes()).unwrap();
+        assert!(matches!(
+            commands.dequeue(),
+            Some(RtCommand {
+                domain: DOMAIN_RIG,
+                id: 0,
+                payload: Payload::F32(2.5),
+            })
+        ));
+        let mut out = [0; 4];
+        store.get(rig_gain, &mut out).unwrap();
+        assert_eq!(f32::from_le_bytes(out), 2.5);
+    }
+
+    struct BadCore0Group {
+        rejected: &'static AtomicU32,
+    }
+
+    const BAD_PARAM: &[ParamDef] = &[ParamDef::writable("bad", ParamType::U32, 1)];
+
+    impl ParamGroup for BadCore0Group {
+        fn params(&self) -> &[ParamDef] {
+            BAD_PARAM
+        }
+        fn get(&self, _id: u16, _out: &mut [u8]) -> Result<usize, ErrorCode> {
+            Ok(0)
+        }
+        fn stage(&mut self, _id: u16, _data: &[u8]) -> Result<Staged, ErrorCode> {
+            Ok(Staged::Rt(Payload::U32(1)))
+        }
+        fn accept(&mut self, _id: u16) {}
+        fn reject(&mut self, _id: u16, returned: Option<Payload>) {
+            if matches!(returned, Some(Payload::U32(1))) {
+                self.rejected.store(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    #[test]
+    fn core_zero_group_rt_payload_is_rejected_and_returned() {
+        static REJECTED: AtomicU32 = AtomicU32::new(0);
+        let queue = Box::leak(Box::new(Queue::<RtCommand, COMMAND_QUEUE_LEN>::new()));
+        let (commands, _consumer) = queue.split();
+        let shared = Box::leak(Box::new(RtShared::new()));
+        let mut store = ParamStore::new(commands, shared, SampleRate::Hz8000);
+        store.push(Box::leak(Box::new(BadCore0Group {
+            rejected: &REJECTED,
+        })));
+        store.validate(&[]);
+        assert_eq!(store.set(0, &1_u32.to_le_bytes()), Err(ErrorCode::BadIndex));
+        assert_eq!(REJECTED.load(Ordering::Relaxed), 1);
+    }
+
+    struct TargetGroup {
+        target: CommandTarget,
+        defs: &'static [ParamDef],
+    }
+
+    impl ParamGroup for TargetGroup {
+        fn target(&self) -> CommandTarget {
+            self.target
+        }
+        fn params(&self) -> &[ParamDef] {
+            self.defs
+        }
+        fn get(&self, _id: u16, _out: &mut [u8]) -> Result<usize, ErrorCode> {
+            Ok(0)
+        }
+        fn stage(&mut self, _id: u16, _data: &[u8]) -> Result<Staged, ErrorCode> {
+            Ok(Staged::Local(ParamAction::None))
+        }
+        fn accept(&mut self, _id: u16) {}
+        fn reject(&mut self, _id: u16, _returned: Option<Payload>) {}
+    }
+
+    fn empty_store() -> ParamStore {
+        let queue = Box::leak(Box::new(Queue::<RtCommand, COMMAND_QUEUE_LEN>::new()));
+        let (commands, _consumer) = queue.split();
+        ParamStore::new(
+            commands,
+            Box::leak(Box::new(RtShared::new())),
+            SampleRate::Hz8000,
+        )
+    }
+
+    const TARGET_A: &[ParamDef] = &[ParamDef::read_only("target_a", ParamType::U32, 1)];
+    const TARGET_B: &[ParamDef] = &[ParamDef::read_only("target_b", ParamType::U32, 1)];
+
+    #[test]
+    #[should_panic(expected = "each programme domain needs exactly one group")]
+    fn validation_rejects_duplicate_programme_target() {
+        let mut store = empty_store();
+        store.push(Box::leak(Box::new(TargetGroup {
+            target: CommandTarget::Program(1),
+            defs: TARGET_A,
+        })));
+        store.push(Box::leak(Box::new(TargetGroup {
+            target: CommandTarget::Program(1),
+            defs: TARGET_B,
+        })));
+        store.validate(&[1]);
+    }
+
+    #[test]
+    #[should_panic(expected = "programme domain zero is reserved for the rig")]
+    fn validation_rejects_zero_programme_domain() {
+        empty_store().validate(&[0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "each programme domain needs exactly one group")]
+    fn validation_rejects_unreachable_programme_domain() {
+        empty_store().validate(&[1]);
+    }
+
+    #[test]
+    #[should_panic(expected = "unclaimed programme domain")]
+    fn validation_rejects_group_for_unknown_programme_domain() {
+        let mut store = empty_store();
+        store.push(Box::leak(Box::new(TargetGroup {
+            target: CommandTarget::Program(7),
+            defs: TARGET_A,
+        })));
+        store.validate(&[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "only one parameter group may target the rig")]
+    fn validation_rejects_multiple_rig_groups() {
+        let mut store = empty_store();
+        store.push(Box::leak(Box::new(TargetGroup {
+            target: CommandTarget::Rig,
+            defs: TARGET_A,
+        })));
+        store.push(Box::leak(Box::new(TargetGroup {
+            target: CommandTarget::Rig,
+            defs: TARGET_B,
+        })));
+        store.validate(&[]);
+    }
+
+    const LONG_NAME: &[ParamDef] = &[ParamDef::read_only(
+        "parameter_name_far_too_long",
+        ParamType::U32,
+        1,
+    )];
+
+    #[test]
+    #[should_panic(expected = "parameter name is non-ASCII or too long")]
+    fn validation_rejects_definition_that_cannot_be_discovered() {
+        let mut store = empty_store();
+        store.push(Box::leak(Box::new(TargetGroup {
+            target: CommandTarget::Core0,
+            defs: LONG_NAME,
+        })));
+        store.validate(&[]);
+    }
+
+    const OVERSIZED_BLOB: &[ParamDef] = &[ParamDef::blob(
+        "blob",
+        ParamType::F32,
+        1,
+        u16::MAX as u32 + 1,
+    )];
+
+    #[test]
+    #[should_panic(expected = "blob maximum cannot be represented by discovery")]
+    fn validation_rejects_blob_maximum_outside_wire_range() {
+        let mut store = empty_store();
+        store.push(Box::leak(Box::new(TargetGroup {
+            target: CommandTarget::Core0,
+            defs: OVERSIZED_BLOB,
+        })));
+        store.validate(&[]);
     }
 }

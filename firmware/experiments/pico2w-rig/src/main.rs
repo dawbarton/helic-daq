@@ -23,8 +23,11 @@ use helic_fw_rt::rt_loop as shared_rt;
 use helic_fw_support::comms;
 use helic_fw_support::net;
 use helic_fw_support::net::cyw43::WifiParts;
-use helic_rt::params::ParamStore;
-use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
+use helic_rt::params::{
+    ControllerGroup, GeneratorGroup, ParamStore, PlatformGroup, RigGroup, TableGroup,
+    TelemetryGroup, PROGRAM_DOMAINS,
+};
+use helic_rt::{source_count, RecordConsumer, Rig, RtShared, MAX_SOURCES};
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -36,7 +39,7 @@ mod telemetry;
 use board::LaserParts;
 use rig::PicoDacRig;
 
-type Store = ParamStore<config::ActiveController, PicoDacRig>;
+type Store = ParamStore;
 // Reject an over-large discovered source table during compilation.
 const _: () = assert!(source_count::<PicoDacRig>() <= MAX_SOURCES);
 
@@ -58,6 +61,12 @@ static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static RT_SHARED: RtShared = RtShared::new();
 static TABLE: ConstStaticCell<TableBuffer> = ConstStaticCell::new(TableBuffer::new());
+static PLATFORM_GROUP: StaticCell<PlatformGroup> = StaticCell::new();
+static GENERATOR_GROUP: StaticCell<GeneratorGroup> = StaticCell::new();
+static TABLE_GROUP: StaticCell<TableGroup> = StaticCell::new();
+static CONTROLLER_GROUP: StaticCell<ControllerGroup<config::ActiveController>> = StaticCell::new();
+static RIG_GROUP: StaticCell<RigGroup<PicoDacRig>> = StaticCell::new();
+static TELEMETRY_GROUP: StaticCell<TelemetryGroup> = StaticCell::new();
 static LASER_RX_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
 
 #[cortex_m_rt::entry]
@@ -79,18 +88,28 @@ fn main() -> ! {
     let channels = shared_rt::init_channels();
     let (table_staging, active_table) = TABLE.take().split();
     let controller = config::make_controller();
-    let store = Store::new(
-        channels.command_tx,
+    let mut store = Store::new(channels.command_tx, &RT_SHARED, config::SAMPLE_RATE);
+    store.push(PLATFORM_GROUP.init(PlatformGroup::new(
         &RT_SHARED,
-        table_staging,
-        channels.target_staging,
-        channels.forcing_staging,
         config::SAMPLE_RATE,
         helic_fw_support::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
-        telemetry::EXTRA_PARAMS,
-        &controller,
-    );
+    )));
+    store.push(GENERATOR_GROUP.init(GeneratorGroup::new(
+        channels.target_staging,
+        channels.forcing_staging,
+        config::SAMPLE_RATE,
+    )));
+    store.push(TABLE_GROUP.init(TableGroup::new(
+        &RT_SHARED,
+        table_staging,
+        config::SAMPLE_RATE,
+    )));
+    store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, PicoDacRig::INPUTS.len())));
+    store.push(RIG_GROUP.init(RigGroup::<PicoDacRig>::new()));
+    store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));
+    store.validate(PROGRAM_DOMAINS);
+    helic_rt::validate_sources::<PicoDacRig>();
 
     // `move` gives the RT core exclusive ownership of its hardware and state.
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
@@ -155,7 +174,7 @@ async fn core0_main(spawner: Spawner, wifi: WifiParts, store: Store, records: Re
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
     // `!` is the never type used for a task intended to run indefinitely.
-    comms::tcp::control_run(stack, store).await
+    comms::tcp::control_run::<PicoDacRig>(stack, store).await
 }
 
 #[embassy_executor::task]

@@ -6,7 +6,6 @@ use embassy_net::tcp::TcpSocket;
 use embassy_net::{IpAddress, Stack};
 use embassy_time::{Duration, Instant, Timer};
 use embedded_io_async::{Read, Write};
-use helic_core::controller::Controller;
 use helic_proto::frame::{self, MsgType, HEADER_LEN, MAX_PAYLOAD, TRAILER_LEN};
 use helic_proto::payload;
 use helic_proto::{ErrorCode, MAGIC, VERSION};
@@ -15,10 +14,7 @@ use helic_rt::{source, source_count, Rig, MAX_SOURCES};
 
 use super::STREAM;
 
-pub async fn control_run<C: Controller, R: Rig>(
-    stack: Stack<'static>,
-    mut store: ParamStore<C, R>,
-) -> ! {
+pub async fn control_run<R: Rig>(stack: Stack<'static>, mut store: ParamStore) -> ! {
     let mut rx_buf = [0u8; 2048];
     let mut tx_buf = [0u8; 2048];
     loop {
@@ -28,7 +24,7 @@ pub async fn control_run<C: Controller, R: Rig>(
             continue;
         }
         info!("control: client connected");
-        serve(&mut socket, &mut store).await;
+        serve::<R>(&mut socket, &mut store).await;
         // Stop streaming when the controlling connection goes away.
         STREAM.lock(|s| s.borrow_mut().enabled = false);
         // Comms-loss quieting: a dropped control connection disarms the output
@@ -42,7 +38,7 @@ pub async fn control_run<C: Controller, R: Rig>(
 /// Handle framed requests until the connection drops or a framing error
 /// makes resynchronisation impossible (TCP guarantees ordering, so any
 /// framing error means a broken peer).
-async fn serve<C: Controller, R: Rig>(socket: &mut TcpSocket<'_>, store: &mut ParamStore<C, R>) {
+async fn serve<R: Rig>(socket: &mut TcpSocket<'_>, store: &mut ParamStore) {
     let mut frame_buf = [0u8; HEADER_LEN + MAX_PAYLOAD + TRAILER_LEN];
     let mut resp_payload = [0u8; MAX_PAYLOAD];
     let mut resp_frame = [0u8; HEADER_LEN + MAX_PAYLOAD + TRAILER_LEN];
@@ -84,7 +80,7 @@ async fn serve<C: Controller, R: Rig>(socket: &mut TcpSocket<'_>, store: &mut Pa
         // Dispatch. `handle` returns either a response payload length or an
         // error code to report.
         let mut action = ParamAction::None;
-        let mut result = handle(ty, payload, store, socket, &mut resp_payload, &mut action);
+        let mut result = handle::<R>(ty, payload, store, socket, &mut resp_payload, &mut action);
         let mut reboot_scheduled = false;
         if result.is_ok() && action == ParamAction::Reboot {
             STREAM.lock(|s| s.borrow_mut().enabled = false);
@@ -138,10 +134,10 @@ async fn serve<C: Controller, R: Rig>(socket: &mut TcpSocket<'_>, store: &mut Pa
     }
 }
 
-fn handle<C: Controller, R: Rig>(
+fn handle<R: Rig>(
     ty: u8,
     payload: &[u8],
-    store: &mut ParamStore<C, R>,
+    store: &mut ParamStore,
     socket: &TcpSocket<'_>,
     resp: &mut [u8; MAX_PAYLOAD],
     action: &mut ParamAction,

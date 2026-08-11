@@ -21,8 +21,11 @@ use helic_fw_rt::rt_loop as shared_rt;
 use helic_fw_support::comms;
 use helic_fw_support::net;
 use helic_fw_support::net::wiznet::EthernetParts;
-use helic_rt::params::ParamStore;
-use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
+use helic_rt::params::{
+    ControllerGroup, GeneratorGroup, ParamStore, PlatformGroup, RigGroup, TableGroup,
+    TelemetryGroup, PROGRAM_DOMAINS,
+};
+use helic_rt::{source_count, RecordConsumer, Rig, RtShared, MAX_SOURCES};
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -33,7 +36,7 @@ mod telemetry;
 
 use rig::WhirlRig;
 
-type Store = ParamStore<config::ActiveController, WhirlRig>;
+type Store = ParamStore;
 const _: () = assert!(source_count::<WhirlRig>() <= MAX_SOURCES);
 
 #[unsafe(link_section = ".start_block")]
@@ -51,6 +54,12 @@ static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static RT_SHARED: RtShared = RtShared::new();
 static TABLE: ConstStaticCell<TableBuffer> = ConstStaticCell::new(TableBuffer::new());
+static PLATFORM_GROUP: StaticCell<PlatformGroup> = StaticCell::new();
+static GENERATOR_GROUP: StaticCell<GeneratorGroup> = StaticCell::new();
+static TABLE_GROUP: StaticCell<TableGroup> = StaticCell::new();
+static CONTROLLER_GROUP: StaticCell<ControllerGroup<config::ActiveController>> = StaticCell::new();
+static RIG_GROUP: StaticCell<RigGroup<WhirlRig>> = StaticCell::new();
+static TELEMETRY_GROUP: StaticCell<TelemetryGroup> = StaticCell::new();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -64,18 +73,28 @@ fn main() -> ! {
     let channels = shared_rt::init_channels();
     let (table_staging, active_table) = TABLE.take().split();
     let controller = config::make_controller();
-    let store = Store::new(
-        channels.command_tx,
+    let mut store = Store::new(channels.command_tx, &RT_SHARED, config::SAMPLE_RATE);
+    store.push(PLATFORM_GROUP.init(PlatformGroup::new(
         &RT_SHARED,
-        table_staging,
-        channels.target_staging,
-        channels.forcing_staging,
         config::SAMPLE_RATE,
         helic_fw_support::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
-        telemetry::EXTRA_PARAMS,
-        &controller,
-    );
+    )));
+    store.push(GENERATOR_GROUP.init(GeneratorGroup::new(
+        channels.target_staging,
+        channels.forcing_staging,
+        config::SAMPLE_RATE,
+    )));
+    store.push(TABLE_GROUP.init(TableGroup::new(
+        &RT_SHARED,
+        table_staging,
+        config::SAMPLE_RATE,
+    )));
+    store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, WhirlRig::INPUTS.len())));
+    store.push(RIG_GROUP.init(RigGroup::<WhirlRig>::new()));
+    store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));
+    store.validate(PROGRAM_DOMAINS);
+    helic_rt::validate_sources::<WhirlRig>();
 
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let (rig, tick) = b.rt.build(config::SAMPLE_RATE);
@@ -122,7 +141,7 @@ async fn core0_main(spawner: Spawner, eth: EthernetParts, store: Store, records:
 
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
-    comms::tcp::control_run(stack, store).await
+    comms::tcp::control_run::<WhirlRig>(stack, store).await
 }
 
 #[embassy_executor::task]
