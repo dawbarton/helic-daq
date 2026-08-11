@@ -122,6 +122,11 @@ fn program_fault(program: &impl Program) -> bool {
 #[unsafe(link_section = ".data.ram_func")]
 #[inline(never)]
 fn set_rig_param(rig: &mut impl Rig, id: u16, value: f32) {
+    // Black-box the arguments, not the (unit) result: this forces the id/value
+    // pair to materialise before the call so its WCET stays representative even
+    // for a rig whose set_param the optimiser could otherwise prove trivial.
+    // `black_box(())` after the call would not do this - a `()` carries no
+    // data, so it cannot pin anything that preceded it.
     core::hint::black_box((id, value));
     rig.set_param(id, value);
 }
@@ -135,6 +140,7 @@ fn measure_rig(rig: &mut impl Rig, values: &mut [f32]) {
 #[unsafe(link_section = ".data.ram_func")]
 #[inline(never)]
 fn actuate_rig(rig: &mut impl Rig, outputs: &[f32]) {
+    // Black-box the argument, not the (unit) result; see set_rig_param above.
     core::hint::black_box(outputs);
     rig.actuate(outputs);
 }
