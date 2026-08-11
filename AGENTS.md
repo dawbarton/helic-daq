@@ -212,12 +212,16 @@ experiment in which it was first needed:
 - Every production experiment owns `firmware/experiments/<rig>/rig-profile.toml`
   as its static and hardware verification contract: identity, package and ELF,
   required/optional hot symbols, exact EABI helpers, sample rate, transport,
-  capture sources, acceptance limit and ordered quieting writes. Update that
-  profile when the rig or hot-path boundary changes; do not add a rig by
-  hard-coding it into the shared tools.
+  `default_board`, capture sources, acceptance limit and ordered quieting
+  writes. Update that profile when the rig or hot-path boundary changes; do not
+  add a rig by hard-coding it into the shared tools. `default_board` is which
+  Ethernet controller the rig's *default* build targets, `w5500` unless stated;
+  the regression runner adds explicit board features only when asked for a
+  different one, so a rig that defaults to W6100 is flashed correctly without
+  the runner knowing anything about that rig.
 - `helic-rt-layout` (`helic_daq.verify.layout`) is the static hot-path gate. Build the
-  complete release workspace immediately before running it; it checks all
-  three production ELFs and must continue to require `run_hot_loop`, the ARM
+  complete release workspace immediately before running it; it checks every
+  discovered production ELF and must continue to require `run_hot_loop`, the ARM
   EABI generic/aligned copy and clear helpers and each applicable analogue
   transfer symbol in SRAM. Treat it as a minimum named-symbol guard, not a
   complete call-graph proof. Inspect new compiler-generated calls after

@@ -9,6 +9,8 @@ from typing import TypeAlias
 import tomllib
 
 PROFILE_SCHEMA_VERSION = 1
+#: Ethernet controllers a wired rig may select through its board features.
+BOARDS = frozenset({"w5500", "w6100"})
 Scalar: TypeAlias = bool | int | float | str
 
 
@@ -43,6 +45,11 @@ class RegressionProfile:
     default_host: str | None
     capture_sources: tuple[str, ...]
     wired: bool
+    #: Ethernet controller the rig's *default* build targets. The runner adds
+    #: explicit board features only when asked for a different one, so a rig
+    #: that defaults to W6100 is flashed correctly without the tool knowing
+    #: anything about that rig.
+    default_board: str
     max_loop_us: int | None
     quiet: tuple[QuietWrite, ...]
 
@@ -148,6 +155,12 @@ def load_profile(path: str | Path) -> RigProfile:
     wired = regression_raw.get("wired")
     if not isinstance(wired, bool):
         raise ProfileError("regression.wired must be a boolean")
+    default_board = regression_raw.get("default_board", "w5500")
+    if default_board not in BOARDS:
+        raise ProfileError(
+            f"regression.default_board must be one of {sorted(BOARDS)}; "
+            f"found {default_board!r}"
+        )
 
     return RigProfile(
         path=profile_path,
@@ -177,6 +190,7 @@ def load_profile(path: str | Path) -> RigProfile:
                 regression_raw.get("capture_sources"), "regression.capture_sources"
             ),
             wired=wired,
+            default_board=default_board,
             max_loop_us=_optional_integer(
                 regression_raw.get("max_loop_us"), "regression.max_loop_us"
             ),

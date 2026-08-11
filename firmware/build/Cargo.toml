@@ -5,6 +5,6 @@ description = "Build-script helpers shared by every HELIC-DAQ firmware applicati
 # not cross-compile it for the ARM target, so it cannot inherit workspace
 # package metadata and states it directly. Keep the version in step with the
 # other firmware crates.
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"

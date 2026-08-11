@@ -61,8 +61,11 @@ def run(
 
 def flash(profile: RigProfile, board: str, timeout: float, firmware_dir: Path) -> str:
     cmd = ["cargo", "run", "--release", "-p", profile.package]
-    if profile.regression.wired and board == "w6100":
-        cmd.extend(["--no-default-features", "--features", "board-w6100"])
+    # Only override when the requested controller differs from the one the
+    # rig's default build already targets. Assuming a default here would flash
+    # the wrong Ethernet image at a rig that defaults to the other controller.
+    if profile.regression.wired and board != profile.regression.default_board:
+        cmd.extend(["--no-default-features", "--features", f"board-{board}"])
     try:
         return run(cmd, firmware_dir, timeout=timeout).stdout
     except subprocess.TimeoutExpired as error:
@@ -198,7 +201,12 @@ def main() -> int:
     )
     selection.add_argument("--profile", type=Path, help="path to a rig-owned profile")
     parser.add_argument("--host", default=os.environ.get("HELIC_DAQ_HOST"))
-    parser.add_argument("--board", choices=("w5500", "w6100"), default="w5500")
+    parser.add_argument(
+        "--board",
+        choices=("w5500", "w6100"),
+        help="Ethernet controller to flash (default: the profile's "
+        "regression.default_board)",
+    )
     parser.add_argument(
         "--firmware-dir",
         type=Path,
@@ -245,7 +253,8 @@ def main() -> int:
         parser.error(
             "--host or HELIC_DAQ_HOST is required when the profile has no host"
         )
-    if not regression.wired and args.board != "w5500":
+    board = args.board or regression.default_board
+    if not regression.wired and args.board is not None:
         parser.error("--board applies only to wired rigs")
 
     result: dict[str, object] = {
@@ -254,8 +263,9 @@ def main() -> int:
         "host": host,
     }
     if not args.no_flash:
+        result["board"] = board
         result["flash_tail"] = flash(
-            profile, args.board, args.flash_timeout, args.firmware_dir
+            profile, board, args.flash_timeout, args.firmware_dir
         ).splitlines()[-12:]
 
     with connect(host, args.connect_timeout) as device:

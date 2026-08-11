@@ -110,6 +110,52 @@ class LayoutProfileTests(unittest.TestCase):
         self.assertTrue(any("run_rt_tick" in error for error in errors))
 
 
+class BoardSelectionTests(unittest.TestCase):
+    """A rig's default build, not the tool, decides which controller is flashed."""
+
+    def profile_with_board(self, default_board: str | None) -> object:
+        source = load_profile(
+            FIRMWARE / "experiments" / "cbc-rig" / "rig-profile.toml"
+        ).path.read_text()
+        if default_board is not None:
+            source = source.replace(
+                "wired = true", f'wired = true\ndefault_board = "{default_board}"'
+            )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "board.toml"
+            path.write_text(source)
+            return load_profile(path)
+
+    def flash_command(self, profile: object, board: str) -> list[str]:
+        recorded: list[list[str]] = []
+
+        def fake_run(cmd, firmware_dir, timeout=None):  # type: ignore[no-untyped-def]
+            recorded.append(cmd)
+            return SimpleNamespace(stdout="")
+
+        with mock.patch.object(regression, "run", fake_run):
+            regression.flash(profile, board, 1.0, Path("."))  # type: ignore[arg-type]
+        return recorded[0]
+
+    def test_default_board_defaults_to_w5500(self) -> None:
+        profile = self.profile_with_board(None)
+        self.assertEqual(profile.regression.default_board, "w5500")  # type: ignore[attr-defined]
+
+    def test_matching_board_uses_the_default_build(self) -> None:
+        profile = self.profile_with_board("w6100")
+        self.assertNotIn("--no-default-features", self.flash_command(profile, "w6100"))
+
+    def test_other_board_is_selected_explicitly(self) -> None:
+        profile = self.profile_with_board("w6100")
+        command = self.flash_command(profile, "w5500")
+        self.assertIn("--no-default-features", command)
+        self.assertIn("board-w5500", command)
+
+    def test_unknown_board_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ProfileError, "default_board"):
+            self.profile_with_board("w5100")
+
+
 class RegressionProfileTests(unittest.TestCase):
     def test_quiet_sequence_is_driven_by_profile(self) -> None:
         profile = load_profile(

@@ -363,10 +363,16 @@ contains the rig name, package and wire-visible experiment identity, then:
 - `regression.sample_rate_hz`, transport class, optional default host and loop
   limit, default capture sources, and an ordered quieting sequence. A quiet
   write contains either a scalar `value` or `zeros = true`, which sizes a zero
-  vector from the discovered parameter rather than hard-coding its capacity.
+  vector from the discovered parameter rather than hard-coding its capacity;
+- `regression.default_board`, which Ethernet controller the rig's **default**
+  build targets (`w5500` when omitted). The runner passes explicit board
+  features only when `--board` names a different one. A rig whose fitted
+  hardware is W6100 sets both its default Cargo feature and this field, and is
+  then flashed correctly by default rather than relying on every operator
+  remembering a flag.
 
-The tools discover the three production manifests for the existing `--rig`
-interface. A rig in another repository supplies its own profile and build
+The tools discover the production manifests below the working directory for
+the `--rig` interface. A rig in another repository supplies its own profile and build
 directory without editing these tools:
 
 ```sh

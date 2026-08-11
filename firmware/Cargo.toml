@@ -8,13 +8,13 @@ members = ["integrations/*", "rt", "support", "experiments/*"]
 exclude = ["build"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
 helic-core = { path = "../helic-core" }
-helic-drivers = { version = "0.1.1", path = "../helic-drivers" }
+helic-drivers = { version = "0.1.2", path = "../helic-drivers" }
 helic-proto = { path = "../helic-proto" }
 helic-rt = { path = "../helic-rt" }
 helic-fw-build = { path = "build" }
