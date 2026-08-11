@@ -812,3 +812,28 @@ evidence:
   cross-built but were not flashed. Only the attached W5500 was tested; the
   laser and actuator supplies remained down, so no powered-path evidence was
   obtained.
+
+## 2026-08-11T15:49+00:00 Rig-decoupling implementation stage 12
+
+- The hard-coded layout and regression registries moved into schema-versioned
+  `rig-profile.toml` files owned by CBC, whirl and Pico 2W. Each profile carries
+  identity, ELF and hot-symbol requirements, sample rate, transport and host
+  settings, capture defaults, timing limit, and an ordered quieting sequence.
+  The shared Python loader validates the contract; external rigs can supply
+  `--profile`, `--elf-dir`, and `--firmware-dir` without editing HELIC-DAQ.
+- The layout checker still rejects optional hot helpers outside SRAM whenever
+  they are emitted, as well as requiring every mandatory pattern and exact EABI
+  symbol. Seven new tests cover production loading, duplicate and malformed
+  profiles, mandatory and optional SRAM failures, and profile-driven quieting;
+  all 65 host-Python tests also pass. CI now runs the profile tests.
+- A fresh all-production release build passed the default three-profile layout
+  check and an explicit CBC-profile check. Exact device firmware remained
+  `0.1.0 a21d762`: loading the CBC profile by explicit path passed an
+  8000-record all-15-source W5500 regression at idle, TCP-poll and capture
+  maxima of 36, 37 and 37 us, with fixed 36/36 us wake phase and zero jitter,
+  overruns, timeouts, drops, loss or index gaps. Name-based `--rig cbc`
+  discovery also passed a focused 256-record run at a 37 us maximum.
+- Both hardware runs were no-flash and left the W5500 quiet through the
+  manifest-defined sequence. W6100 was not flashed, and no whirl or Pico 2W
+  hardware evidence was obtained. The laser and actuator supplies remained
+  down.

@@ -349,6 +349,32 @@ double-buffer access. It permits one-time flash-to-SRAM linker veneers.
 Review newly emitted helper symbols as well: the script is a guardrail, not a
 complete call-graph proof.
 
+Each experiment owns this contract in `rig-profile.toml`. Schema version 1
+contains the rig name, package and wire-visible experiment identity, then:
+
+- `layout.elf`, mandatory substring-pattern arrays, optional hot patterns which
+  are checked when emitted, and exact EABI symbols;
+- `regression.sample_rate_hz`, transport class, optional default host and loop
+  limit, default capture sources, and an ordered quieting sequence. A quiet
+  write contains either a scalar `value` or `zeros = true`, which sizes a zero
+  vector from the discovered parameter rather than hard-coding its capacity.
+
+The tools discover the three production manifests for the existing `--rig`
+interface. A rig in another repository supplies its own profile and build
+directory without editing these tools:
+
+```sh
+python3 tools/check_rt_layout.py --profile /rig/rig-profile.toml \
+  --elf-dir /rig/target/thumbv8m.main-none-eabihf/release
+PYTHONPATH=host-python uv run --with numpy --python 3.12 \
+  python firmware/tools/rt_regression.py --profile /rig/rig-profile.toml \
+  --firmware-dir /rig/firmware
+```
+
+`--profile` is repeatable for the layout checker. The regression runner accepts
+one profile because the control service is single-client and hardware runs must
+remain sequential.
+
 **2. Hardware check — production regression** (device + probe attached, one
 sequential client):
 
@@ -365,8 +391,7 @@ profiles. Acceptance, in **every** CBC phase at 8 kHz:
 - `clock_jitter == 0`;
 - `wake_phase_min == wake_phase_max` (a spread of more than ~2 µs means
   wake-up determinism regressed);
-- `loop_time_max` ≤ ~60 µs (current reference build: 32–34 µs, or 38 µs
-  while repeatedly replacing complete coefficient arrays);
+- `loop_time_max` ≤ ~60 µs (current reference build: 35–37 µs);
 - capture `lost_packets == 0` and `capture_dropped == 0`.
 
 `cmd_backlog_max` records host-command bursts. Two commands are applied per

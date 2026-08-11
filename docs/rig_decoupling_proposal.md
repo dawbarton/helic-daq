@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–11 completed 2026-08-11. Revision
-16. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–12 completed 2026-08-11. Revision
+17. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1646,14 +1646,23 @@ production rigs here and treats the crate boundary as the contract that
     capture drops, UDP loss, and index gaps were all zero. The final rig state
     was disarmed and quiet. All production release ELFs passed the strengthened
     gate, and both W6100 variants cross-built but were not flashed.
-12. **Decouple the safety and regression tooling.** `check_rt_layout.py` keys
-    `REQUIRED_SYMBOLS` on the three package names (`check_rt_layout.py:31`) and
-    `rt_regression.py` hard-codes three `RigProfile` entries with
-    `--rig choices=RIGS`. Neither can serve a rig in another repository without
-    editing this one. Both should take a rig-local profile — a small manifest
-    file, or CLI-supplied ELF path and symbol list — with the current three
-    profiles becoming data rather than code. Keep the mechanism proportionate: a
-    profile file and arguments, not a plugin system.
+12. **Completed 2026-08-11: rig-owned verification profiles.** Each production
+    experiment owns a schema-versioned `rig-profile.toml` containing identity,
+    ELF name, required and optional hot-symbol patterns, exact EABI symbols,
+    sample rate, transport class, default host, capture sources, loop-time
+    limit, and an ordered quieting sequence. The shared loader validates the
+    complete contract. Both tools discover the three production profiles as
+    data; `check_rt_layout.py --profile ... --elf-dir ...` accepts repeatable
+    external profiles, while `rt_regression.py --profile ... --firmware-dir
+    ...` drives one external rig. The layout checker retains the stronger old
+    behaviour of rejecting optional hot helpers outside SRAM whenever the
+    compiler emits them. Seven host tests cover production loading, duplicate
+    and malformed profiles, required and optional SRAM failures, and
+    data-driven quieting. The fresh production ELFs pass both default and
+    explicit-profile layout checks. The explicit CBC profile passed an
+    8000-record all-source W5500 run at 36/37/37 us with no timing faults, loss,
+    drops, or gaps; name-based profile discovery also passed a focused hardware
+    run. No firmware change or W6100 flash was involved.
 13. **Out-of-workspace test rig** as the final architectural acceptance test. It
     must demonstrate all four of:
     - building against released or pinned shared crates;
@@ -1809,6 +1818,15 @@ wake phase is the baseline.
    Stage-10 implementation produces contrary compiler evidence.
 
 ## Revision history
+
+**Revision 17** records the tooling boundary. Static-layout and hardware-test
+contracts now live in schema-versioned TOML beside each experiment rather than
+in Python registries. The generic tools accept a profile and external build
+directory, while default production invocations discover the same manifests.
+Required-symbol absence, required or optional hot symbols outside SRAM,
+identity, timing, continuity, and ordered quieting retain their previous
+semantics. Both selection routes were exercised against the CBC W5500; W6100
+was not flashed.
 
 **Revision 16** records the enforceable SRAM boundary contract. Named,
 non-inlined adapters make each programme and rig operation in the mandatory
