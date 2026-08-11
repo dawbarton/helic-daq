@@ -4,7 +4,7 @@ use core::cell::{Cell, UnsafeCell};
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use crate::WaveTable;
+use crate::{WaveTable, MAX_TABLE_LEN};
 
 // Zero must mean idle so zero-valued buffers remain in `.bss` when held by a
 // `ConstStaticCell`. Pending bank ids are therefore encoded as bank + 1.
@@ -39,11 +39,11 @@ pub struct DoubleBuffer<T> {
 }
 
 /// Waveform-table buffer retained as the convenient default specialisation.
-pub type TableBuffer = DoubleBuffer<WaveTable>;
+pub type TableBuffer<const N: usize = MAX_TABLE_LEN> = DoubleBuffer<WaveTable<N>>;
 /// Buffer for an atomic fixed-width force or parameter vector.
 pub type ValueBuffer<const N: usize> = DoubleBuffer<[f32; N]>;
 /// Core-1 endpoint for waveform tables.
-pub type ActiveTable = Active<WaveTable>;
+pub type ActiveTable<const N: usize = MAX_TABLE_LEN> = Active<WaveTable<N>>;
 /// Core-1 endpoint for fixed-width value vectors.
 pub type ActiveValues<const N: usize> = Active<[f32; N]>;
 /// Core-0 endpoint for fixed-width value vectors.
@@ -104,7 +104,7 @@ impl<T: 'static> DoubleBuffer<T> {
     }
 }
 
-impl DoubleBuffer<WaveTable> {
+impl<const N: usize> DoubleBuffer<WaveTable<N>> {
     pub const fn new() -> Self {
         Self::from_banks(WaveTable::empty(), WaveTable::empty())
     }
@@ -117,7 +117,7 @@ impl<const N: usize> DoubleBuffer<[f32; N]> {
     }
 }
 
-impl Default for DoubleBuffer<WaveTable> {
+impl<const N: usize> Default for DoubleBuffer<WaveTable<N>> {
     fn default() -> Self {
         Self::new()
     }

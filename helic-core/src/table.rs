@@ -4,21 +4,22 @@ use crate::PhaseAccumulator;
 
 pub const MAX_TABLE_LEN: usize = 4096;
 
-pub struct WaveTable {
-    values: [f32; MAX_TABLE_LEN],
+pub struct WaveTable<const N: usize = MAX_TABLE_LEN> {
+    values: [f32; N],
     len: u16,
 }
 
-impl WaveTable {
+impl<const N: usize> WaveTable<N> {
     pub const fn empty() -> Self {
+        assert!(N >= 2 && N <= u16::MAX as usize);
         Self {
-            values: [0.0; MAX_TABLE_LEN],
+            values: [0.0; N],
             len: 0,
         }
     }
 
     pub fn from_slice(values: &[f32]) -> Option<Self> {
-        if !(2..=MAX_TABLE_LEN).contains(&values.len()) {
+        if !(2..=N).contains(&values.len()) {
             return None;
         }
         let mut table = Self::empty();
@@ -47,7 +48,7 @@ impl WaveTable {
         let Some(end) = offset.checked_add(values.len()) else {
             return false;
         };
-        if end > MAX_TABLE_LEN {
+        if end > N {
             return false;
         }
         self.values[offset..end].copy_from_slice(values);
@@ -55,7 +56,7 @@ impl WaveTable {
     }
 
     pub fn set_len(&mut self, len: usize) -> bool {
-        if !(2..=MAX_TABLE_LEN).contains(&len) {
+        if !(2..=N).contains(&len) {
             return false;
         }
         self.len = len as u16;
@@ -91,7 +92,7 @@ impl WaveTable {
     }
 }
 
-impl Default for WaveTable {
+impl<const N: usize> Default for WaveTable<N> {
     fn default() -> Self {
         Self::empty()
     }
@@ -212,7 +213,12 @@ impl TablePlayer {
 
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
-    pub fn step(&mut self, table: &WaveTable, master_phase: u32, master_start: bool) -> f32 {
+    pub fn step<const N: usize>(
+        &mut self,
+        table: &WaveTable<N>,
+        master_phase: u32,
+        master_start: bool,
+    ) -> f32 {
         if table.len() < 2 {
             return 0.0;
         }
@@ -273,9 +279,11 @@ impl Default for TablePlayer {
 mod tests {
     use super::*;
 
+    type TestTable = WaveTable<8>;
+
     #[test]
     fn ramp_is_exact_between_knots() {
-        let table = WaveTable::from_slice(&[0.0, 1.0, 2.0, 3.0]).unwrap();
+        let table = TestTable::from_slice(&[0.0, 1.0, 2.0, 3.0]).unwrap();
         assert_eq!(table.evaluate(0), 0.0);
         assert_eq!(table.evaluate(1 << 30), 1.0);
         assert_eq!(table.evaluate(3 << 29), 1.5);
@@ -283,16 +291,16 @@ mod tests {
 
     #[test]
     fn final_segment_wraps_to_first() {
-        let table = WaveTable::from_slice(&[0.0, 1.0, 2.0, 3.0]).unwrap();
+        let table = TestTable::from_slice(&[0.0, 1.0, 2.0, 3.0]).unwrap();
         assert_eq!(table.evaluate(7 << 29), 1.5);
         assert!(table.evaluate(u32::MAX).abs() < 1e-5);
     }
 
     #[test]
     fn two_point_and_non_power_of_two_tables_stay_in_bounds() {
-        let two = WaveTable::from_slice(&[2.0, 4.0]).unwrap();
+        let two = TestTable::from_slice(&[2.0, 4.0]).unwrap();
         assert_eq!(two.evaluate(1 << 30), 3.0);
-        let three = WaveTable::from_slice(&[0.0, 3.0, 6.0]).unwrap();
+        let three = TestTable::from_slice(&[0.0, 3.0, 6.0]).unwrap();
         for theta in (0..=u16::MAX).map(|value| (value as u32) << 16) {
             assert!(three.evaluate(theta).is_finite());
         }
@@ -300,7 +308,7 @@ mod tests {
 
     #[test]
     fn zero_order_hold_keeps_each_value_until_the_next_knot() {
-        let table = WaveTable::from_slice(&[0.0, 1.0, 2.0, 3.0]).unwrap();
+        let table = TestTable::from_slice(&[0.0, 1.0, 2.0, 3.0]).unwrap();
         assert_eq!(
             table.evaluate_with(0, TableInterpolation::ZeroOrderHold),
             0.0
@@ -334,7 +342,7 @@ mod tests {
 
     #[test]
     fn interpolation_change_does_not_reset_playback_phase() {
-        let table = WaveTable::from_slice(&[0.0, 1.0]).unwrap();
+        let table = TestTable::from_slice(&[0.0, 1.0]).unwrap();
         let mut player = TablePlayer::new();
         player.set_mode(TableMode::Loop);
         player.set_increment(1 << 30);
@@ -345,7 +353,7 @@ mod tests {
 
     #[test]
     fn free_one_shot_returns_to_zero_after_one_pass() {
-        let table = WaveTable::from_slice(&[1.0, 2.0]).unwrap();
+        let table = TestTable::from_slice(&[1.0, 2.0]).unwrap();
         let mut player = TablePlayer::new();
         player.set_mode(TableMode::OneShot);
         player.set_increment(1 << 30);
@@ -359,7 +367,7 @@ mod tests {
 
     #[test]
     fn locked_loop_is_an_exact_phase_multiple() {
-        let table = WaveTable::from_slice(&[0.0, 1.0, 0.0, -1.0]).unwrap();
+        let table = TestTable::from_slice(&[0.0, 1.0, 0.0, -1.0]).unwrap();
         let mut player = TablePlayer::new();
         player.set_mode(TableMode::LockedLoop);
         player.set_multiplier(3);
@@ -373,7 +381,7 @@ mod tests {
 
     #[test]
     fn locked_one_shot_waits_for_master_start() {
-        let table = WaveTable::from_slice(&[1.0, 2.0]).unwrap();
+        let table = TestTable::from_slice(&[1.0, 2.0]).unwrap();
         let mut player = TablePlayer::new();
         player.set_mode(TableMode::LockedOneShot);
         player.trigger();
@@ -383,5 +391,16 @@ mod tests {
         assert_ne!(player.step(&table, 200 + (2 << 30), false), 0.0);
         assert_ne!(player.step(&table, 200 + (3 << 30), false), 0.0);
         assert_eq!(player.step(&table, 200, false), 0.0);
+    }
+
+    #[test]
+    fn const_generic_capacity_is_enforced() {
+        assert!(TestTable::from_slice(&[0.0; 8]).is_some());
+        assert!(TestTable::from_slice(&[0.0; 9]).is_none());
+        let mut table = TestTable::empty();
+        assert!(table.write_block(6, &[1.0, 2.0]));
+        assert!(!table.write_block(7, &[1.0, 2.0]));
+        assert!(table.set_len(8));
+        assert!(!table.set_len(9));
     }
 }
