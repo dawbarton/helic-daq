@@ -191,13 +191,19 @@ experiment in which it was first needed:
   a bound merely to make one rig compile. Prefer a const generic with a
   documented maximum when each rig should pay only for what it uses.
 - Treat signature changes, non-defaulted trait additions, wire-visible name or
-  semantic changes and capacity changes as major-version changes. Additive
-  types and defaulted trait methods may be minor changes. External rigs pin a
-  major version and upgrade deliberately.
+  semantic changes and capacity changes as breaking. Additive types and
+  defaulted trait methods are compatible.
+- The platform is at `0.x`, where Cargo treats the minor position as the
+  breaking one. A breaking change raises the minor version (`0.1.x` to
+  `0.2.0`); a compatible change or a fix raises the patch version. Do not move
+  to `1.0.0` to signal confidence: reserve it for when the `Rig`, `Program` and
+  capacity contracts have survived hardware evidence from more than one rig and
+  are not expected to move.
 - Releases are annotated git tags `vMAJOR.MINOR.PATCH` on `main`, taken only
-  when the complete check set passes. An out-of-tree rig pins that tag for both
-  its crate dependencies and its `helic-daq` tool installation; a gate from a
-  different platform version checks the wrong contract. Do not retag, and do
+  when the complete check set passes. An out-of-tree rig pins an exact tag
+  rather than a range, because a git dependency cannot express one. The same
+  tag pins both its crate dependencies and its `helic-daq` tool installation; a
+  gate from a different platform version checks the wrong contract. Do not retag, and do
   not move a tag: a rig that has pinned it has no way to notice. Record what
   changed for consumers in the tag message, and raise the crate versions in the
   same commit as the tag so a pinned checkout reports the version it claims.

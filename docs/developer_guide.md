@@ -657,11 +657,22 @@ are the mandatory real-time set, `helic-fw-support` adds the core-0 services,
 dependency. `helic-proto` is pulled in transitively and is only needed
 directly by a rig that touches the wire format.
 
-Pin a **tag**, not a branch. Upgrading is then a deliberate edit, which is the
-main reason to keep a rig in its own repository at all. Treat signature
-changes, non-defaulted trait additions, wire-visible name or semantic changes
-and capacity changes as major-version changes; additive types and defaulted
-trait methods are minor.
+Pin a **tag**, not a branch, and an exact one: a git dependency cannot express
+a version range. Upgrading is then a deliberate edit, which is the main reason
+to keep a rig in its own repository at all.
+
+Signature changes, non-defaulted trait additions, wire-visible name or semantic
+changes and capacity changes are breaking; additive types and defaulted trait
+methods are compatible. The platform is at `0.x`, where the minor position is
+the breaking one, so a rig should read an upgrade as:
+
+| Bump | What to expect |
+|---|---|
+| Patch, `0.1.1` to `0.1.2` | No crate API change. Repin and re-run the gates. |
+| Minor, `0.1.x` to `0.2.0` | Breaking. Expect to change rig code; the tag message lists what changed for consumers. |
+
+Read the tag message before every upgrade regardless, and re-check the Embassy
+versions at the new tag.
 
 `tests/external-rig` instead declares exact `=0.1.0` versions with a
 `[patch.crates-io]` table pointing at this checkout. That is a pre-publication
