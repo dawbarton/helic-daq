@@ -156,6 +156,18 @@ fn run_rt_tick<R: Rig>(
                     *forcing_coeffs = coeffs;
                 }
             }
+            #[cfg(feature = "diag-max-command-burst")]
+            (
+                DOMAIN_GENERATOR,
+                command_id::generator::DIAGNOSTIC_VALUES,
+                Payload::Values { len, data },
+            ) => {
+                debug_assert_eq!(len as usize, 1 + 2 * HARMONICS);
+                // Force every byte of the inline payload to materialise. This
+                // models installing a complete copied force vector without
+                // adding arithmetic that would inflate the copy WCET.
+                core::hint::black_box(data);
+            }
             (DOMAIN_TABLE, command_id::table::SET_INCREMENT, Payload::U32(increment)) => {
                 table_player.set_increment(increment)
             }

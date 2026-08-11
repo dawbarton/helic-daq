@@ -793,13 +793,10 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         if self.commands.capacity() - self.commands.len() < crate::COMMANDS_PER_TICK {
             return Err(ErrorCode::Busy);
         }
-        for id in [
-            command_id::generator::SET_TARGET,
-            command_id::generator::SET_FORCING,
-        ] {
+        for _ in 0..crate::COMMANDS_PER_TICK {
             let result = self.commands.enqueue(RtCommand {
                 domain: DOMAIN_GENERATOR,
-                id,
+                id: command_id::generator::DIAGNOSTIC_VALUES,
                 payload: Payload::Values {
                     len: COEFF_COUNT as u8,
                     data: [0.0; MAX_RT_VALUES],
@@ -1094,8 +1091,8 @@ mod tests {
         let (mut store, mut rx) = store();
         store.set(IDX_DIAG_RESET, &1_u32.to_le_bytes()).unwrap();
         for expected_id in [
-            command_id::generator::SET_TARGET,
-            command_id::generator::SET_FORCING,
+            command_id::generator::DIAGNOSTIC_VALUES,
+            command_id::generator::DIAGNOSTIC_VALUES,
         ] {
             assert!(matches!(
                 rx.dequeue(),

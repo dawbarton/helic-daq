@@ -33,6 +33,8 @@ pub mod command_id {
         pub const SET_INCREMENT: u16 = 0;
         pub const SET_TARGET: u16 = 1;
         pub const SET_FORCING: u16 = 2;
+        /// Feature-gated WCET probe which materialises every copied value.
+        pub const DIAGNOSTIC_VALUES: u16 = u16::MAX;
     }
 
     pub mod table {
