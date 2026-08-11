@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: proposed, not implemented. Revision 6. Supersedes parts of
+Status: proposed, not implemented. Revision 7. Supersedes parts of
 `docs/rt_program_proposal.md`. Revision history and review responses are at the
 end.
 
@@ -32,16 +32,28 @@ This is what makes the multi-repository arrangement safe, and it implies a
 compatibility discipline the shared crates must actually keep:
 
 - **Minor version** — new types, new trait methods *with defaults*, new
-  capacity constants, new optional parameters. Additive; no consumer changes.
+  optional parameters, and a *newly introduced* capacity constant. Additive; no
+  consumer changes.
 - **Major version** — any change to an existing signature, any trait method
-  without a default, any capacity *reduction*, any change to a wire-visible
-  name or to the meaning of an existing parameter or source.
+  without a default, any change to a wire-visible name or to the meaning of an
+  existing parameter or source, and **any change to an existing capacity, in
+  either direction**.
 - Rigs pin a major version and upgrade deliberately.
 
-Note that adding a trait method without a default is a breaking change for
-every rig implementing that trait, which is why the `Rig` and `Program`
-contracts in this document give defaults wherever a rig could reasonably not
-care.
+Two of these deserve their reasons stated, because both are easy to get wrong.
+
+Adding a trait method without a default breaks every rig implementing that
+trait, which is why the `Rig` and `Program` contracts here give defaults
+wherever a rig could reasonably not care.
+
+**Capacity *increases* are breaking, not additive**, which is the
+counter-intuitive one. Raising `MAX_RT_VALUES` changes
+`size_of::<RtCommand>()` and therefore every command queue's SRAM footprint;
+raising `MAX_ACTUATORS` changes the record and gate buffers; both change the
+WCET. A rig that fitted its memory and timing budget can stop fitting after a
+change it did not ask for. Where such a bound plausibly needs to vary per rig,
+prefer a const generic with a default over a shared constant, so each rig pays
+only for what it uses.
 
 ### Documented platform capacities
 
@@ -389,19 +401,62 @@ pub struct Diagnostics {
 
 /// Latched safety state, which survives `diag_reset`.
 ///
-/// **Ownership is asymmetric and load-bearing.** `armed` is written *only* by
-/// core 0; core 1 reads it and must never write it. `tripped` is latched 0→1
-/// by core 1 and cleared only by core 0 on a deliberate re-arm.
+/// **Ownership is asymmetric and load-bearing**, so the atomics are private and
+/// reached only through role-named operations. `armed` is written *only* by
+/// core 0; `tripped` is latched 0→1 by core 1 and cleared only by core 0 on a
+/// deliberate re-arm.
+///
+/// This is **encapsulation, not enforcement**: nothing stops a determined
+/// caller invoking `disarm` from the wrong core. What it removes is the casual
+/// path — a bare `pub` atomic that any code can simply store into, which is
+/// precisely what admitted the stale write-back defect in revision 5.1. A
+/// stronger scheme with separate per-core capability handles was considered and
+/// rejected: it threads two more types through construction to guard against a
+/// mistake that four role-named methods already make unmissable.
 pub struct Safety {
-    pub armed: AtomicU32,
-    pub tripped: AtomicU32,
+    armed: AtomicU32,
+    tripped: AtomicU32,
+}
+
+impl Safety {
+    /// Core 1, once per tick.
+    pub fn load_inputs(&self) -> SafetyInputs;
+    /// Core 1 only. Monotonic 0→1; cannot clear an existing trip.
+    pub fn latch_trip(&self);
+    /// Core 0 only. Clears the trip first, so a still-present fault re-latches
+    /// on the next tick rather than being masked.
+    pub fn arm(&self);
+    /// Core 0 only. Called on `arm = 0` and on control-connection loss.
+    pub fn disarm(&self);
+    /// Core 0, for the `safety` bitfield.
+    pub fn flags(&self, diagnostics: &Diagnostics) -> u32;
 }
 
 /// `IDLE → REQUESTED → QUIESCED`, preserving the existing Release/Acquire
 /// protocol from `reboot.rs`. Core 0 requests and awaits; core 1 observes and
 /// acknowledges. The crate split separates those two sides, so this state has
 /// to be injected like the rest.
+///
+/// **The operational sequence is normative**, because a literal reading of
+/// "`ParamStore` returns `ParamAction::Reboot`" would otherwise have core 0
+/// waiting on state nobody requested. On accepting the confirmation token, the
+/// control server must, in order:
+///
+/// 1. `safety.disarm()`, so the actuator is quiet before anything else moves;
+/// 2. `reboot.request()`;
+/// 3. await `reboot.is_quiesced()`, bounded by a timeout;
+/// 4. schedule the ROM reset.
+///
+/// Step 1 precedes step 2 because quiescence is a hardware-sequencing step, not
+/// an output-safety one; the output must already be safe when it begins.
 pub struct RebootShared { state: AtomicU32 }
+
+impl RebootShared {
+    pub fn request(&self);              // core 0, idempotent
+    pub fn is_requested(&self) -> bool;  // core 1, in `.data.ram_func`
+    pub fn mark_quiesced(&self);         // core 1, in `.data.ram_func`
+    pub fn is_quiesced(&self) -> bool;   // core 0
+}
 
 pub struct RtShared {
     pub live: Live,
@@ -516,11 +571,25 @@ pub enum Staged {
 
 pub enum ParamAction { None, Reboot, ResetDiagnostics }
 
+/// Where a group's real-time commands go. An earlier revision used
+/// `Option<u8>` plus a rule forbidding any group from claiming `DOMAIN_RIG`,
+/// which rejected exactly the rig parameter group that has to claim it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CommandTarget {
+    /// Every parameter is handled on core 0; this group never stages an
+    /// `Rt` command.
+    Core0,
+    /// Rig hardware state, dispatched to `Rig::apply`.
+    Rig,
+    /// Programme sub-component, dispatched to `Program::apply`.
+    Program(u8),
+}
+
 pub trait ParamGroup {
-    /// The single command domain this group addresses, or `None` if every one
-    /// of its parameters is handled on core 0. Validated at setup against
-    /// `Program::DOMAINS` and `DOMAIN_RIG`.
-    fn domain(&self) -> Option<u8> { None }
+    /// Read **once** at registration and stored by `ParamStore`, so validation
+    /// is authoritative rather than advisory: a later change to this method
+    /// cannot alter routing behind `validate()`'s back.
+    fn target(&self) -> CommandTarget { CommandTarget::Core0 }
 
     fn params(&self) -> &'static [ParamDef];
     fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode>;
@@ -533,9 +602,10 @@ pub trait ParamGroup {
 
     fn accept(&mut self, id: u16);
 
-    /// The command could not be enqueued. `returned` is the command the queue
-    /// gave back, so a group holding a linear `CommitToken` can cancel it.
-    fn reject(&mut self, id: u16, returned: Option<RtCommand>);
+    /// The staged command did not reach core 1, for any reason. `returned` is
+    /// the payload, so a group holding a linear `CommitToken` can cancel it.
+    /// Called on **every** post-`stage` failure path, not only a full queue.
+    fn reject(&mut self, id: u16, returned: Option<Payload>);
 
     /// Broadcast target for `ParamAction::ResetDiagnostics`.
     fn reset_diagnostics(&mut self) {}
@@ -569,17 +639,28 @@ impl ParamStore {
             }
             Staged::Local(action) => { self.groups[g].accept(id); Ok(action) }
             Staged::Rt(payload) => {
-                // The address is built here, from the group's declared domain
-                // and the id already resolved by `locate`. `validate()`
-                // guarantees the domain is present and correct, so this branch
-                // is unreachable; it degrades rather than panicking.
-                let domain = self.groups[g].domain().ok_or(ErrorCode::BadIndex)?;
+                // The address is built here, from the target captured at
+                // registration and the id already resolved by `locate`.
+                let domain = match self.targets[g] {
+                    CommandTarget::Rig => DOMAIN_RIG,
+                    CommandTarget::Program(d) => d,
+                    // A `Core0` group staging an RT command is a programming
+                    // error `validate()` cannot catch, because it is dynamic.
+                    // It must still unwind: returning early here without
+                    // `reject` would strand a `CommitToken` and leave the
+                    // buffer permanently unwritable. **Every** post-`stage`
+                    // failure path returns the payload to its owner.
+                    CommandTarget::Core0 => {
+                        self.groups[g].reject(id, Some(payload));
+                        return Err(ErrorCode::BadIndex);
+                    }
+                };
                 match self.commands.enqueue(RtCommand { domain, id, payload }) {
                     Ok(()) => { self.groups[g].accept(id); Ok(ParamAction::None) }
                     // heapless returns the value on failure, so the linear
                     // token travels back to its owner instead of being dropped.
                     Err(cmd) => {
-                        self.groups[g].reject(id, Some(cmd));
+                        self.groups[g].reject(id, Some(cmd.payload));
                         Err(ErrorCode::Busy)
                     }
                 }
@@ -622,65 +703,96 @@ pub enum ParamKind { Scalar, Array(u16), Blob(u32) }
 
 ### 3. Sound generic double buffering
 
-The existing `table.rs` is correct because its accessors are private and its two
-call sites are controlled. Exposing that discipline as a safe API has now failed
-twice; this version fixes the three remaining defects.
+Exposing `table.rs`'s discipline as a safe API has now failed three times, and
+every failure came from generalising *away* from the concrete implementation
+rather than toward it. This revision reverts to `table.rs`'s actual atomic
+layout and adds only what genericity requires: a generation, and an owner
+identity checked on **both** consuming operations.
+
+**Why two atomics rather than one packed state word.** An earlier revision
+invented a single packed `AtomicU32` holding active id, pending flag, pending
+id, and generation. Because both cores write it, every transition became a
+load-then-store read-modify-write, and correctness then rested on an argument
+about which interleavings are reachable. `table.rs` avoids that entirely:
+
+- `ACTIVE` is written **only** by core 1;
+- `PENDING` is written by both cores, but always as a **whole-word store**,
+  never a read-modify-write.
+
+No cross-core read-modify-write exists, so there is nothing for a
+`compare_exchange` to defend, and none is used. This is both simpler than the
+packed word and the layout already proven on hardware.
 
 ```rust
 // helic-core/src/double_buffer.rs
 use core::cell::{Cell, UnsafeCell};
 use core::marker::PhantomData;
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU8, AtomicU32};
 
 pub enum BufferError { Busy }
 
+const NO_PENDING: u32 = u32::MAX;
+
 pub struct DoubleBuffer<T> {
     buffers: [UnsafeCell<T>; 2],
-    /// Active id, pending flag and id, and a generation incremented on every
-    /// commit. The generation is what makes a superseded token detectable; a
-    /// bare buffer id has only one bit and collides with the next commit.
-    state: AtomicU32,
+    /// Written only by core 1, at activation.
+    active: AtomicU8,
+    /// `NO_PENDING`, or `(generation << 1) | bank_id`. Written by core 0 on
+    /// commit and cancel, and by core 1 on activation; always a whole-word
+    /// store, so the two cores cannot clobber each other's fields.
+    pending: AtomicU32,
 }
 
 unsafe impl<T: Send> Sync for DoubleBuffer<T> {}
 
 /// Linear proof that exactly one commit is outstanding. Neither `Copy` nor
-/// `Clone`: it is created by `Staging::commit`, moved into the command, and
-/// consumed by exactly one of `Active::activate` or `Staging::cancel`.
-/// `Send` (it crosses cores inside `RtCommand`) but not duplicable.
+/// `Clone`: created by `Staging::commit`, moved into the command, and consumed
+/// by exactly one of `Active::activate` or `Staging::cancel`. `Send`, because
+/// it crosses cores inside `RtCommand`, but not duplicable.
 #[derive(Debug)]
 pub struct CommitToken {
-    owner: usize,      // buffer identity, so a token cannot address another
-    generation: u32,   // supersession detection, including the target id
+    /// Address-derived identity of the owning buffer. Checked by **both**
+    /// `activate` and `cancel`: checking it in only one of them lets a
+    /// same-generation token from another buffer clear this buffer's pending
+    /// flag, after which core 0 can obtain `&mut` to a bank core 1 is about
+    /// to read.
+    owner: usize,
+    generation: u32,
 }
 
 impl<T: Send> DoubleBuffer<T> {
     pub const fn new(a: T, b: T) -> Self;
 
-    /// Split **once** into two uniquely owned endpoints. Taking `&'static mut`
-    /// makes a second split impossible, exactly as `heapless::Queue::split`
-    /// does. Obtain it from a `ConstStaticCell`, which is const-initialised
-    /// (no stack copy of a 16 KB table) and panics on a second `take`.
+    /// Split **once** into two uniquely owned endpoints. `&'static mut` makes a
+    /// second split impossible, as `heapless::Queue::split` does. Obtain it
+    /// from a `ConstStaticCell`: const-initialised, so no stack copy of a
+    /// 16 KB table, and it panics on a second `take`.
     pub fn split(&'static mut self) -> (Staging<T>, Active<T>);
 }
 
-/// `Send` so it can be moved to the owning core; `!Sync` via `Cell` so two
+/// `Send`, so it can be moved to its owning core; `!Sync` via `Cell`, so two
 /// threads cannot share one endpoint and obtain `&T` for a `!Sync` `T`.
 pub struct Staging<T: 'static> {
     buf: &'static DoubleBuffer<T>,
+    /// Core-0-local; never read by core 1.
+    next_generation: u32,
     _not_sync: PhantomData<Cell<()>>,
 }
 
 pub struct Active<T: 'static> {
     buf: &'static DoubleBuffer<T>,
+    /// Cached bank id, updated only in `activate`, so `get()` performs no
+    /// atomic operation on the tick path.
+    current: u8,
     _not_sync: PhantomData<Cell<()>>,
 }
 
 impl<T: Send> Staging<T> {
-    /// Exclusive access to the inactive buffer; the borrow is tied to
+    /// Exclusive access to the inactive bank; the borrow is tied to
     /// `&mut self`, so a second call cannot alias the first.
     pub fn buffer(&mut self) -> Result<&mut T, BufferError>;
     pub fn commit(&mut self) -> Result<CommitToken, BufferError>;
+    /// Ignores a token belonging to another buffer or to a superseded commit.
     pub fn cancel(&mut self, token: CommitToken);
 }
 
@@ -689,71 +801,68 @@ impl<T: Send> Active<T> {
     /// survive an activation.
     #[inline]
     pub fn get(&self) -> &T;
-    /// Consumes the token. A token from another buffer, or one whose
-    /// generation has been superseded, is ignored rather than misapplied.
+    /// Ignores a token belonging to another buffer or to a superseded commit.
     pub fn activate(&mut self, token: CommitToken);
 }
 ```
 
 **The transition protocol and its memory ordering are normative.** The borrow
-API above prevents local aliasing; it does nothing about cross-core visibility.
+API prevents local aliasing and says nothing about cross-core visibility.
 Without Release/Acquire pairing, core 1 may not observe the staged writes and
-core 0 may select a bank from a stale active id. `table.rs:13` already states
-this requirement precisely for the concrete case, and the generic version must
-match it.
-
-State word (`AtomicU32`): active bank id, pending flag, pending bank id, and a
-generation incremented at each commit.
+core 0 may select a bank from a stale active id. `table.rs:13` states this for
+the concrete case; the generic version matches it.
 
 ```text
+identity()                            // no storage: the buffer's own address
+    self.buf as *const _ as usize
+
 Staging::buffer()
-    s = state.load(Acquire)      // pairs with activate's Release: sees which
-    if s.pending { Busy }        // bank core 1 released, and its writes
-    &mut buffers[s.active ^ 1]
+    if pending.load(Acquire) != NO_PENDING { Busy }   // pairs with activate
+    &mut buffers[active.load(Acquire) ^ 1]
 
 Staging::commit()
-    s = state.load(Relaxed)      // core 0 is the sole writer of `pending`
-    if s.pending { Busy }
-    state.store(s.pending(s.active ^ 1).gen(s.gen + 1), Release)
-                                 // Release: staged writes happen-before the
-                                 // publication core 1 will Acquire
-    CommitToken { owner, generation: s.gen + 1 }
+    if pending.load(Relaxed) != NO_PENDING { Busy }
+    g = self.next_generation; self.next_generation += 1
+    bank = active.load(Relaxed) ^ 1
+    pending.store((g << 1) | bank, Release)    // Release: staged writes
+                                               // happen-before publication
+    CommitToken { owner: identity(), generation: g }
 
 Staging::cancel(token)
-    s = state.load(Relaxed)
-    if s.pending && s.gen == token.generation { state.store(s.clear_pending(), Release) }
+    if token.owner != identity() { return }    // <-- the missing check
+    p = pending.load(Relaxed)
+    if p != NO_PENDING && (p >> 1) == token.generation {
+        pending.store(NO_PENDING, Release)
+    }
 
 Active::activate(token)
-    s = state.load(Acquire)      // pairs with commit's Release: staged writes
-                                 // become visible before the bank is read
-    if !s.pending || s.gen != token.generation || token.owner != self.id { return }
-    self.current = s.pending_id  // cached, so `get()` needs no atomic
-    state.store(s.active(s.pending_id).clear_pending(), Release)
+    if token.owner != identity() { return }
+    p = pending.load(Acquire)                  // pairs with commit's Release
+    if p == NO_PENDING || (p >> 1) != token.generation { return }
+    self.current = (p & 1) as u8               // cached for get()
+    active.store(self.current, Release)
+    pending.store(NO_PENDING, Release)
 
 Active::get()
-    &buffers[self.current]       // plain indexed read: no atomic on the tick path
+    &buffers[self.current]                     // plain read, no atomic
 ```
 
-The synchronisation cost is paid once per activation, not once per tick, which
-is why `Active` caches `current` rather than re-reading the state word in
-`get()`. Core 0 cannot write while `pending` is set, and by the time `pending`
-clears it has Acquire-loaded the new active id, so the two cores never target
-the same bank.
+The synchronisation cost is paid once per activation, not once per tick. Core 0
+cannot write while `pending` is set, and by the time it clears, core 0's next
+Acquire load observes both the cleared flag and the new active id, so the two
+cores never target the same bank.
 
-Soundness properties, each enforced rather than documented:
+Soundness properties and how each is obtained:
 
-- **one endpoint pair only**, because `split` needs `&'static mut self`;
-- **no two `&mut T`**, because the borrow is tied to `&mut Staging<T>`;
-- **no borrow across activation**, because `get` takes `&self` and `activate`
-  takes `&mut self`;
-- **no concurrent `get` on a `!Sync` `T`**, because the endpoints are `!Sync`;
-- **no token replay**, because `CommitToken` is linear and carries owner
-  identity plus a generation, and at most one is outstanding;
-- **no lost token on a full queue**, because `enqueue` returns the command and
-  the store hands it to `reject`.
-
-The generation counter is defence-in-depth once the token is linear; it is kept
-because it is a few bits and closes the in-crate `Copy`-leak path.
+| Property | Mechanism |
+|---|---|
+| one endpoint pair only | `split` takes `&'static mut self` |
+| no two `&mut T` | borrow tied to `&mut Staging<T>` |
+| no borrow across activation | `get(&self)` versus `activate(&mut self)` |
+| no concurrent `get` on a `!Sync` `T` | endpoints are `!Sync` |
+| no token replay or cross-buffer use | linear token, owner **and** generation checked in both `activate` and `cancel` |
+| no lost token on a full queue | `enqueue` returns the command; the store hands it to `reject` |
+| no cross-core clobbering | single-writer `active`; whole-word stores to `pending` |
 
 `BufferError` is local to `helic-core`, which depends only on `libm`; returning
 `helic_proto::ErrorCode` would create a `helic-core → helic-proto` edge that
@@ -852,24 +961,22 @@ pub fn safety_decide<R: Rig>(
 `helic-fw-rt` wraps it:
 
 ```rust
-let inputs = SafetyInputs {
-    armed:   shared.safety.armed.load(Ordering::Relaxed) != 0,
-    tripped: shared.safety.tripped.load(Ordering::Relaxed) != 0,
-};
+let inputs = shared.safety.load_inputs();
 let outcome = safety_decide(rig, inputs, fault, commanded, &mut applied);
 if outcome.newly_tripped {
-    // Monotonic latch. Never a plain store, so a concurrent core-0 re-arm
-    // cannot be silently reverted, and a stale read cannot clear the trip.
-    shared.safety.tripped.fetch_or(1, Ordering::Relaxed);
+    // Monotonic 0→1 latch, never a plain store, so a concurrent core-0 re-arm
+    // cannot be silently reverted and a stale read cannot clear the trip.
+    shared.safety.latch_trip();
 }
 if outcome.quieted { shared.diagnostics.safety_quiet_ticks.fetch_add(1, Ordering::Relaxed); }
 if outcome.clamped { shared.diagnostics.safety_clamp_ticks.fetch_add(1, Ordering::Relaxed); }
-// `shared.safety.armed` is not written here, and cannot be: see SafetyOutcome.
+// There is no `armed` in `SafetyOutcome` to write back, and no public atomic
+// to write it to. `arm`/`disarm` are core-0 operations.
 ```
 
-The existing clear-then-arm order in `safety_arm` is preserved and remains
-correct against this latch: a still-present fault re-latches on the next tick
-rather than being masked.
+The clear-then-arm order inside `Safety::arm` is preserved and remains correct
+against this latch: a still-present fault re-latches on the next tick rather
+than being masked.
 
 Contract:
 
@@ -916,13 +1023,21 @@ Fixed ──enable──▶ Acquiring ──|error| < lock_tol for lock_dwell─
   acquired. `Acquiring` never trips, so the excitation that lock depends on is
   never removed by the attempt to lock.
 - **Acquisition failure reverts to `Fixed`** at the setpoint frequency rather
-  than tripping, so a failed attempt leaves a usable rig.
+  than tripping, so a failed attempt leaves a usable rig. Re-entering
+  `Acquiring` needs a fresh `set_enabled(true)`; `update` cannot enable itself,
+  or the timeout would be meaningless.
+- **`Fixed → Acquiring` happens only on the `set_enabled` edge**, which the
+  programme calls when the excitation-mode command lands, never implicitly from
+  `update`.
 - Separate `lock_tol`/`unlock_tol` and `lock_dwell`/`unlock_dwell` give
-  hysteresis in both amplitude and time.
+  hysteresis in **phase-error tolerance and in time**. Neither is an amplitude
+  threshold; `min_amplitude` is the separate validity gate below.
 - `min_amplitude` on the demodulated force and response suppresses lock claims
   on noise; see the invalid-sample table above for its effect in each state.
 - Sustained increment saturation against the configured bounds for
-  `saturation_dwell` is treated as loss of lock.
+  `saturation_dwell` is a loss-of-lock condition **only while `Locked`**. While
+  `Acquiring`, saturation is expected as the loop slews toward the resonance and
+  must not end the state; only `acquire_timeout` does.
 - `reset` returns to `Fixed` and clears the loop filter.
 
 ```rust
@@ -942,9 +1057,32 @@ impl<const H: usize> Pll<H> {
         dt: f32,
     ) -> u32;   // commanded increment, already clamped to configured bounds
 
+    /// **Edge-triggered**, called when the excitation-mode command lands. It
+    /// is the only way into `Acquiring`, so `update` never enables itself.
+    ///
+    /// This matters after an acquisition timeout: if calling `update` could
+    /// re-enter `Acquiring` from `Fixed`, the timeout would achieve nothing,
+    /// because the next tick would restart acquisition and the "reverts to a
+    /// usable rig" property would be lost. A new explicit `set_enabled(true)`
+    /// is required to try again.
+    pub fn set_enabled(&mut self, enabled: bool);
+
     pub fn state(&self) -> PllState;
     pub fn phase_error(&self) -> f32;
+    /// Returns to `Fixed` and clears the loop filter.
     pub fn reset(&mut self);
+
+    // Configuration, all validated on core 0 before the command is queued.
+    pub fn set_gain(&mut self, gain: f32);
+    pub fn set_target_phase(&mut self, degrees: f32);
+    pub fn set_min_increment(&mut self, increment: u32);
+    pub fn set_max_increment(&mut self, increment: u32);
+    pub fn set_lock_tolerance(&mut self, degrees: f32);
+    pub fn set_unlock_tolerance(&mut self, degrees: f32);
+    pub fn set_lock_dwell(&mut self, seconds: f32);
+    pub fn set_unlock_dwell(&mut self, seconds: f32);
+    pub fn set_acquire_timeout(&mut self, seconds: f32);
+    pub fn set_min_amplitude(&mut self, amplitude: f32);
 }
 ```
 
@@ -989,12 +1127,21 @@ check, with a test for each malformed case:
 - `P::OUTPUTS == R::ACTUATORS.len() <= MAX_ACTUATORS`;
 - `P::INPUTS_REQUIRED <= R::INPUTS.len()`;
 - source count `<= MAX_SOURCES`;
-- **domain binding**: every registered group's `domain()` is unique, does not
-  collide with `DOMAIN_RIG`, and the set of non-`None` group domains is exactly
-  `Program::DOMAINS`. Because the store now builds the command address from
-  `domain()`, this check governs actual routing rather than a declaration
-  nothing is bound to; a duplicate or stray domain would otherwise misroute
-  silently.
+- **command target binding**, over the targets captured at registration. Because
+  the store builds every command address from them, these checks govern actual
+  routing rather than a declaration nothing is bound to:
+  - `Program::DOMAINS` are unique and all non-zero, since zero is `DOMAIN_RIG`;
+  - the set of `CommandTarget::Program(d)` group targets is exactly
+    `Program::DOMAINS`, so no group addresses a sub-component the programme
+    does not claim, and no claimed sub-component is unreachable;
+  - at most one group targets `CommandTarget::Rig`;
+  - `CommandTarget::Core0` groups are unconstrained here, since they never
+    stage an `Rt` command; one that does anyway is rejected transactionally at
+    run time, with its payload returned to `reject`.
+
+  Note that a rig parameter group **must** be able to target `Rig`: `CbcShadow`
+  and its equivalents change hardware state on core 1 and their commands have to
+  reach `Rig::apply`.
 
 ## Examples
 
@@ -1085,7 +1232,13 @@ impl Program for Appropriation {
             (ids::TARGET_PHASE, Payload::F32(v)) => self.pll.set_target_phase(v),
             (ids::FREQ_MIN, Payload::U32(inc)) => self.pll.set_min_increment(inc),
             (ids::FREQ_MAX, Payload::U32(inc)) => self.pll.set_max_increment(inc),
-            (ids::EXCITATION_MODE, Payload::U32(m)) => self.mode = ExcitationMode::from_u32(m),
+            // The mode command is the `set_enabled` edge. Acquisition never
+            // starts implicitly from `step`, so an acquisition timeout leaves
+            // the rig at its setpoint frequency until the host asks again.
+            (ids::EXCITATION_MODE, Payload::U32(m)) => {
+                self.mode = ExcitationMode::from_u32(m);
+                self.pll.set_enabled(self.mode == ExcitationMode::PhaseLocked);
+            }
             (ids::RESET, _) => self.reset(),
             _ => {}
         }
@@ -1152,7 +1305,7 @@ pub struct AppropriationShadow { /* shadows + `pending` */ }
 impl ParamGroup for AppropriationShadow {
     /// Declared once, and the only place this group says where its commands
     /// go. `ParamStore` builds every address from it.
-    fn domain(&self) -> Option<u8> { Some(DOMAIN) }
+    fn target(&self) -> CommandTarget { CommandTarget::Program(DOMAIN) }
 
     fn params(&self) -> &'static [ParamDef] {
         &[
@@ -1185,7 +1338,7 @@ impl ParamGroup for AppropriationShadow {
     }
 
     fn accept(&mut self, _id: u16) { /* publish `self.pending` into the shadow */ }
-    fn reject(&mut self, _id: u16, _returned: Option<RtCommand>) { self.pending = None; }
+    fn reject(&mut self, _id: u16, _returned: Option<Payload>) { self.pending = None; }
     fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode> { /* ... */ }
 }
 ```
@@ -1205,7 +1358,7 @@ resulting force vector as one atomic `Values` command.
 ```rust
 impl ParamGroup for TableShadow {
     /// Declared once. The group never constructs a command address itself.
-    fn domain(&self) -> Option<u8> { Some(DOMAIN) }
+    fn target(&self) -> CommandTarget { CommandTarget::Program(DOMAIN) }
 
     fn set_block(&mut self, id: u16, offset: u32, data: &[u8]) -> Result<(), ErrorCode> {
         if id != ids::TABLE { return Err(ErrorCode::BadIndex); }
@@ -1221,9 +1374,9 @@ impl ParamGroup for TableShadow {
         Ok(Staged::Rt(Payload::Buffer(token)))
     }
 
-    /// The queue gave the command back, so the linear token comes home.
-    fn reject(&mut self, _id: u16, returned: Option<RtCommand>) {
-        if let Some(RtCommand { payload: Payload::Buffer(token), .. }) = returned {
+    /// The payload came back, so the linear token comes home.
+    fn reject(&mut self, _id: u16, returned: Option<Payload>) {
+        if let Some(Payload::Buffer(token)) = returned {
             self.staging.cancel(token);
         }
     }
@@ -1268,7 +1421,9 @@ Core 1, on consuming the token, activates and publishes the length:
 
 A rig repository contains `<rig>-program` and `fw-<rig>`, and needs the shared
 crates published or referenced as git dependencies, its own
-`.cargo/config.toml`, its own `Cargo.lock`, and access to the layout gate. The
+`.cargo/config.toml`, its own `Cargo.lock`, and a layout gate and regression
+runner it can drive from a rig-local profile rather than by editing this
+repository's tooling (stage 12). The
 Embassy pinning question remains open. A reasonable path keeps the three
 production rigs here and treats the crate boundary as the contract that
 *permits* an external rig, verified by one out-of-workspace test rig.
@@ -1308,7 +1463,25 @@ production rigs here and treats the crate boundary as the contract that
 9. **`RpmEstimator` moves** to `whirl-rig-program`.
 10. **`Pll` into `helic-core`** with its state machine and bounds.
 11. **Layout gate and `rt-sram` features** extended to the new hot-path symbols.
-12. **Out-of-workspace test rig** as the final architectural acceptance test.
+12. **Decouple the safety and regression tooling.** `check_rt_layout.py` keys
+    `REQUIRED_SYMBOLS` on the three package names (`check_rt_layout.py:31`) and
+    `rt_regression.py` hard-codes three `RigProfile` entries with
+    `--rig choices=RIGS`. Neither can serve a rig in another repository without
+    editing this one. Both should take a rig-local profile — a small manifest
+    file, or CLI-supplied ELF path and symbol list — with the current three
+    profiles becoming data rather than code. Keep the mechanism proportionate: a
+    profile file and arguments, not a plugin system.
+13. **Out-of-workspace test rig** as the final architectural acceptance test. It
+    must demonstrate all four of:
+    - building against released or pinned shared crates;
+    - running the layout checker from a rig-local profile;
+    - defining and running its hardware-regression profile locally;
+    - running the dependency-rule CI check,
+
+    each **without editing or copying anything in this repository**. Until that
+    holds, the Rust composition is decoupled but a fully supported rig still
+    requires shared-repository changes, and the repository-separation claim is
+    only partly realised.
 
 Stages 1 to 5 are worth doing regardless of MIMO: they remove the offset
 arithmetic and the bespoke unsafe module without changing externally visible
@@ -1316,14 +1489,21 @@ behaviour.
 
 ## Tests
 
-**`DoubleBuffer`** — `Busy` while pending; a superseded or foreign token is
-ignored; `cancel` restores writability; a rejected commit leaves the active
-buffer untouched; compile-fail tests for two `buffer()` borrows, a `get()`
-borrow held across `activate()`, a second `split()`, and any attempt to copy a
+**`DoubleBuffer`** — `Busy` while pending; a superseded token is ignored;
+`cancel` restores writability; a rejected commit leaves the active buffer
+untouched; compile-fail tests for two `buffer()` borrows, a `get()` borrow held
+across `activate()`, a second `split()`, and any attempt to copy a
 `CommitToken`. **Ordering**: a host-side test that the values written before
 `commit` are exactly the values observed after `activate`, exercised under
-`loom` if it can be made to run on the state machine, and at minimum asserted
-by inspection of the emitted orderings against the protocol in §3.
+`loom` if it can be made to run on the state machine, and at minimum asserted by
+inspection of the emitted orderings against the protocol in §3.
+
+**Cross-buffer token rejection** — two `DoubleBuffer`s driven to the *same
+generation*, then each other's tokens passed to `cancel` **and** to `activate`.
+Both must be ignored. This is its own test because checking the owner in only
+one of the two consuming operations was a real unsoundness: a foreign
+same-generation token could clear a buffer's pending flag, after which core 0
+could obtain `&mut` to a bank core 1 was about to read.
 
 **Reboot handshake** — `request` → `is_requested` → `mark_quiesced` →
 `is_quiesced` across the `helic-rt` boundary, with the idempotent repeat-request
@@ -1354,18 +1534,23 @@ discovery page, and `INPUTS_REQUIRED` exceeding `R::INPUTS.len()`.
 fault, and non-finite output each latch the trip and quiet all actuators;
 per-actuator clamping; counters per tick; non-gated rig verbatim.
 
-**Safety ownership** — the primary guarantee is structural, since
-`SafetyOutcome` has no `armed` field, so the test is a compile-fail check that
-the wrapper cannot write `shared.safety.armed`. Add a concurrency test that a
-core-0 disarm occurring between the wrapper's load and its publication leaves
-`armed` clear, and that `newly_tripped` never clears an existing trip.
+**Safety ownership** — `SafetyOutcome` carries no `armed`, and `Safety`'s
+atomics are private, so there is no expression the wrapper could write. The
+compile-fail test is that `shared.safety.armed` does not name a field. Add a
+concurrency test that a core-0 disarm occurring between the wrapper's
+`load_inputs` and its `latch_trip` leaves the output disarmed, and that
+`latch_trip` never clears an existing trip.
 
 **`Pll`** — acquisition from `Fixed` never reports a fault; lock is claimed only
 after `lock_dwell` within `lock_tol`; hysteresis prevents chatter at the
 boundary; acquisition timeout reverts to `Fixed` without tripping; only
 `LockLost` faults; the commanded increment never leaves its bounds under any
 input including divergent and non-finite ones; sub-`min_amplitude` input stalls
-acquisition rather than driving the loop.
+acquisition rather than driving the loop. **Entry**: after an acquisition
+timeout, repeated `update` calls leave the state at `Fixed`, and only a fresh
+`set_enabled(true)` re-enters `Acquiring`. **Saturation**: sustained saturation
+while `Acquiring` does not end the state, while the same saturation once
+`Locked` produces `LockLost`.
 
 **Phase fidelity** — the `f32` `phase` source is within `2⁻²⁵` turn of the `u32`
 accumulator, with the propagated estimator-error bound asserted.
@@ -1415,6 +1600,65 @@ wake phase is the baseline.
    and 128 at `H = 16`. Decide with stage 6 ELF evidence.
 
 ## Revision history
+
+**Revision 7** responds to a fourth review. All five must-fix findings accepted;
+two of the reviewer's suggested *mechanisms* were declined in favour of simpler
+ones, with the reasoning recorded so they are not re-proposed.
+
+- **[P0] A foreign token could cancel another buffer.** `activate` checked
+  `token.owner` and `cancel` did not, so a same-generation token from another
+  buffer could clear this buffer's pending flag, after which core 0 could take
+  `&mut` to a bank core 1 was about to read. A safe API must be sound under
+  misuse, so this was genuine unsoundness. The owner check is now made in both
+  consuming operations, with a dedicated cross-buffer test.
+  **The `compare_exchange` suggested alongside it is declined**, and the layout
+  reverted instead: the read-modify-write hazard it would defend against was
+  introduced by a packed single state word of my own invention. `table.rs` uses
+  a core-1-only `active` plus a `pending` written only by whole-word stores, so
+  no cross-core read-modify-write exists and no CAS is needed. That is both
+  simpler and the layout already proven on hardware. `Active` also gains the
+  `current` field its own pseudocode used; `id` derives from the buffer address
+  and needs no storage.
+- **[P1] Domain validation rejected the rig group it had to support.** Requiring
+  every group domain to differ from `DOMAIN_RIG` excluded `CbcShadow`, which
+  must reach `Rig::apply`. `Option<u8>` becomes
+  `CommandTarget { Core0, Rig, Program(u8) }`, captured at registration so
+  `validate()` is authoritative. The failure-path leak is closed by returning
+  the payload to `reject` on **every** post-`stage` failure, not only a full
+  queue; the `Core0`-group-stages-`Rt` case now unwinds instead of stranding a
+  token.
+- **[P1] Safety ownership was not structural, and the claim was wrong.** With
+  `pub` atomics the proposed compile-fail test could not fail to compile. The
+  atomics are now private behind `load_inputs`, `latch_trip`, `arm`, and
+  `disarm`. **Separate per-core capability handles are declined**: they thread
+  two more types through construction to guard a mistake four role-named
+  methods already make unmissable. The guarantee is now described honestly as
+  encapsulation rather than enforcement.
+- **[P1] PLL entry was unspecified.** The diagram's `enable` edge existed
+  nowhere in the API, and an `update` that enabled itself would make the
+  acquisition timeout meaningless. `set_enabled(bool)` is edge-triggered and
+  called when the mode command lands; the configuration methods the example
+  already used are added to the definitive API.
+- **[P1] The tooling is not decoupled.** `check_rt_layout.py:31` keys required
+  symbols on the three package names and `rt_regression.py` hard-codes three rig
+  profiles, so no external rig can use either without editing this repository.
+  Stage 12 now decouples both onto rig-local profiles, and stage 13's acceptance
+  criteria are explicit about running them unmodified.
+
+Smaller corrections: capacity *increases* are breaking, not additive, since they
+change `size_of::<RtCommand>()`, buffer sizes, and WCET for rigs that did not
+ask; the reboot sequence is normative as disarm, request, await quiescence,
+reset; and PLL hysteresis is in phase-error tolerance and time, with saturation
+a loss-of-lock condition only while `Locked`.
+
+**A pattern worth recording.** Three revisions running, a property was described
+as guaranteed by construction when it was guaranteed by convention: the safety
+write-back, the domain declaration nothing was bound to, and `pub` atomics
+behind an impossible compile-fail test. The related tendency shows in the buffer:
+four attempts, each moving further from a design already working on hardware,
+with the correct fix being to revert to it. Prefer the proven concrete
+implementation over a generalisation of it, and do not claim enforcement where
+there is only encapsulation.
 
 **Revision 6** responds to a third review. All five must-fix findings were
 verified against the code and accepted; three of them were defects introduced by
