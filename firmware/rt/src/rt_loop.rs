@@ -127,6 +127,13 @@ fn run_rt_tick<R: Rig>(
     #[cfg(feature = "diag-skip-record-enqueue")]
     let _ = n_sources;
 
+    // Timestamp immediately after the hardware wake. Keeping the spacing
+    // observation ahead of diagnostic atomics avoids making clock jitter
+    // depend on their execution time or on where the PWM-to-TIMER phase lands
+    // after an otherwise unrelated core-0 layout change.
+    let t0 = now_us();
+    rig.tick_start();
+
     if let Some(phase) = rig.tick_phase_us() {
         shared
             .diagnostics
@@ -137,8 +144,6 @@ fn run_rt_tick<R: Rig>(
             .wake_phase_min_us
             .fetch_min(phase, Ordering::Relaxed);
     }
-    let t0 = now_us();
-    rig.tick_start();
 
     if let Some(last) = *last_tick {
         let spacing = t0.wrapping_sub(last);
