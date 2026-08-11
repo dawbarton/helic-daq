@@ -40,7 +40,7 @@ jobs:
       - name: Test rig verification profiles
         run: PYTHONPATH=.:../firmware/tools python -m unittest discover -s ../firmware/tools/tests -v
       - name: Dry-run external regression profile against mock transport
-        run: PYTHONPATH=.:../firmware/tools python -m unittest ../tests/external-rig/test_regression_profile.py -v
+        run: PYTHONPATH=.:../firmware/tools python -m unittest discover -s ../tests/external-rig -p 'test_*.py' -v
 
   julia:
     name: Host package (HelicDAQ.jl)
