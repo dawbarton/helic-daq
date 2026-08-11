@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: proposed, not implemented. Revision 5. Supersedes parts of
+Status: proposed, not implemented. Revision 5.1. Supersedes parts of
 `docs/rt_program_proposal.md`. Revision history and review responses are at the
 end.
 
@@ -257,7 +257,7 @@ reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 | `helic-core` | DSP: generators, controllers, estimators, filters, tables, `Pll`, `DoubleBuffer` | host |
 | **`helic-rt`** (new) | `Rig`, `TickSource`, `Program`, `ParamGroup`, `ParamDef`, `Payload`, `RtCommand`, `ParamStore`, safety decision, source assembly | host |
 | **`helic-fw-rt`** (new) | core 1: tick sources, `rt_mem`, `analog_spi`, PIO, loop driver, safety atomics | cross-build |
-| **`helic-fw-net`** (new) | core 0: `net/`, `comms/`, `time_watchdog`, `status_run` | cross-build |
+| **`helic-fw-support`** (new) | core 0: `net/`, `comms/`, `time_watchdog`, `status_run` | cross-build |
 | `helic-drivers` | chip and sensor logic, pure and host-testable | host |
 | `<rig>-program` | that rig's programme, controllers, shadows, rig-specific DSP | host |
 | `fw-<rig>` | that rig's `board.rs`, `config.rs`, `rig.rs`, `main.rs` | cross-build |
@@ -268,7 +268,104 @@ reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 - `helic-rt` depends on `helic-core`, `helic-proto`, `heapless`; no Embassy.
 - `helic-fw-rt` depends on `embassy-rp` (for `pac`) but **not** `embassy-net`,
   `embassy-time`, or `embassy-executor`.
-- `helic-fw-net` may not depend on `helic-fw-rt` except through queue endpoints.
+- `helic-fw-support` may not depend on `helic-fw-rt` except through the queue
+  endpoints and `&'static RtShared`.
+
+### Naming: why `helic-fw-support`, not `helic-fw-net`
+
+Of the modules on the core-0 side, only `net/` and `comms/` are networking;
+`time_watchdog`, `status_run`, and `laser.rs` are not. Naming the crate for two
+of its five members would be wrong on the day it was created and worse
+afterwards.
+
+The property that actually unites them is that they run on core 0 and must
+never be reachable from the tick. `helic-fw-rt` and `helic-fw-support` name that
+contrast directly.
+
+**A vague name invites accretion, which is how `helic-fw-common` became the
+problem this split exists to fix.** The name is therefore backed by a written
+membership rule in the crate's own documentation:
+
+> A module belongs in `helic-fw-support` if it runs on core 0 **and** every rig
+> uses it. A module used by *some* rigs belongs in a device-integration crate or
+> that rig's repository.
+
+That rule is a test, not a sentiment, and `laser.rs` fails its second clause
+today: one rig uses it. The rule does not decide open question 6 by itself, but
+it does mean the question must be answered when the module is moved rather than
+deferred indefinitely by filing it somewhere plausible-sounding.
+
+### Cross-core shared state: injected, not static
+
+**This must be settled before stage 1, which cannot otherwise be executed.**
+
+`ParamStore` reads twenty distinct items from `rt_loop`: seventeen atomics
+(`TICKS`, `LOOP_TIME_*`, `CLOCK_JITTER_US`, `OVERRUNS`, `TICK_TIMEOUTS`,
+`RECORDS_DROPPED`, `COMMAND_BACKLOG_MAX`, `WAKE_PHASE_*`, `T_*_MAX_US`,
+`SAFETY_*`) plus `reset_diagnostics`, `safety_arm`, and `safety_disarm`.
+
+Stage 1 moves `ParamStore` into `helic-rt`; stage 2 moves `rt_loop` into
+`helic-fw-rt`. Leaving the atomics where they are would make `helic-rt` depend
+on `helic-fw-rt`, inverting the layering. The shared observation surface must
+therefore live in a crate both sides depend on, which is `helic-rt`.
+
+Two ways to do that. Statics in `helic-rt` are simplest and closest to today,
+but put mutable global state in a library crate and make host tests share it.
+**Injection is chosen**, because `ParamStore` being host-testable without static
+state is most of why `helic-rt` exists:
+
+```rust
+// helic-rt
+
+/// Everything `diag_reset` clears. Written by the real-time core, read by the
+/// control server.
+pub struct Diagnostics {
+    pub ticks: AtomicU32,               // total; deliberately not reset
+    pub loop_time_last_us: AtomicU32,
+    pub loop_time_max_us: AtomicU32,
+    pub clock_jitter_us: AtomicU32,
+    pub overruns: AtomicU32,
+    pub tick_timeouts: AtomicU32,
+    pub records_dropped: AtomicU32,
+    pub command_backlog_max: AtomicU32,
+    pub wake_phase_min_us: AtomicU32,
+    pub wake_phase_max_us: AtomicU32,
+    pub t_measure_max_us: AtomicU32,
+    pub t_actuate_max_us: AtomicU32,
+    pub t_rest_max_us: AtomicU32,
+    pub safety_clamp_ticks: AtomicU32,
+    pub safety_quiet_ticks: AtomicU32,
+}
+
+/// Latched safety state, which deliberately survives `diag_reset`.
+pub struct Safety {
+    pub armed: AtomicU32,
+    pub tripped: AtomicU32,
+}
+
+pub struct RtShared {
+    pub diagnostics: Diagnostics,
+    pub safety: Safety,
+}
+```
+
+The split between the two structs is the `diag_reset` lifecycle boundary, which
+today is a comment in `rt_loop::reset_diagnostics` warning that armed and
+tripped are deliberately left alone. Making it a type boundary means
+`diagnostics.reset()` can clear its whole struct with no way to clear `armed` by
+accident. Note that `safety_clamp_ticks` and `safety_quiet_ticks` sit in
+`Diagnostics` despite their names, because `diag_reset` does clear them.
+
+`fw-<rig>` owns one const-initialised `static SHARED: RtShared` and passes
+`&SHARED` to both `ParamStore::new` and the real-time loop. Every field is an
+atomic, so `RtShared` is `Sync` automatically and the shared `&'static` is sound
+across cores without an `unsafe impl`.
+
+**Hot-path note.** The loop performs roughly ten atomic writes per tick, which
+become base-pointer-plus-constant-offset rather than absolute addresses. The
+base should stay in a register for the whole tick and cost nothing, but this
+lands on the tick path, so it is verified by ELF inspection and a loop-maximum
+measurement at stage 2 rather than assumed.
 
 ### `helic-core::rpm` moves to `whirl-rig-program`
 
@@ -613,9 +710,10 @@ pub fn safety_decide<R: Rig>(
 ) -> (SafetyState, SafetyEvents);
 ```
 
-`helic-fw-rt` wraps it: read the atomics, evaluate `rig.output_fault(inputs)`,
+`helic-fw-rt` wraps it: read `shared.safety`, evaluate `rig.output_fault(inputs)`,
 `program.fault()`, and a non-finite check over `commanded`, call
-`safety_decide`, write the successor state and event counters back.
+`safety_decide`, then write the successor state back to `shared.safety` and the
+event counters to `shared.diagnostics`.
 
 Contract:
 
@@ -956,10 +1054,18 @@ production rigs here and treats the crate boundary as the contract that
 
 ## Migration plan
 
-1. **`helic-rt` created** by moving `Rig`, `TickSource`, and the parameter types
-   out of `helic-fw-common` unchanged.
-2. **`helic-fw-common` split** into `helic-fw-rt` and `helic-fw-net`, dependency
-   rules added to CI.
+0. **`RtShared` defined in `helic-rt`** and the diagnostic and safety atomics
+   moved into it, with `ParamStore` and the loop taking `&'static RtShared`.
+   This is a **prerequisite for stage 1**, not an optional tidy-up: without it
+   `ParamStore` cannot leave `helic-fw-common` without inverting the crate
+   layering (see "Cross-core shared state").
+1. **`helic-rt` created** by moving `Rig`, `TickSource`, `SampleRate`, and the
+   parameter types out of `helic-fw-common` unchanged.
+2. **`helic-fw-common` split** into `helic-fw-rt` and `helic-fw-support`,
+   dependency rules added to CI, and the membership rule written into
+   `helic-fw-support`'s crate documentation. Verify by ELF inspection and a
+   loop-maximum measurement that injected `&'static RtShared` costs nothing on
+   the tick path.
 3. **`DoubleBuffer<T>` into `helic-core`** with the endpoint split, linear
    token, and `ConstStaticCell` construction. Reimplement `table.rs` on it.
    Includes the compile-fail tests.
@@ -1072,6 +1178,28 @@ wake phase is the baseline.
 
 ## Revision history
 
+**Revision 5.1** closes the one genuine implementation blocker and renames a
+crate:
+
+- **`RtShared` injected, and stage 0 added.** `ParamStore` reads twenty distinct
+  items from `rt_loop`, so moving it to `helic-rt` while `rt_loop` goes to
+  `helic-fw-rt` would have inverted the crate layering. Stage 1 was therefore
+  not executable as written. The shared observation surface moves to `helic-rt`
+  and is **injected** as `&'static RtShared` rather than kept as statics, so
+  `helic-rt` holds no mutable global state and `ParamStore` is host-testable
+  without one. `Diagnostics` and `Safety` are separate structs, with the
+  boundary drawn at the `diag_reset` lifecycle, which turns a warning comment in
+  `reset_diagnostics` into a type boundary.
+- **`helic-fw-net` renamed `helic-fw-support`.** Only two of its five modules
+  are networking; `time_watchdog`, `status_run`, and `laser.rs` are not. The
+  property that unites them is running on core 0 and never being reachable from
+  the tick. Because a vague name invites the accretion that made
+  `helic-fw-common` the problem this split exists to fix, the name is backed by
+  a written membership rule in the crate documentation: core 0 **and** used by
+  every rig. `laser.rs` fails the second clause today, which forces open
+  question 6 to be answered when the module moves rather than deferred by
+  filing it somewhere plausible-sounding.
+
 **Revision 5** responds to a second review. All seven blocking findings were
 verified against the code and accepted:
 
@@ -1131,7 +1259,8 @@ compositions was added, including domain uniqueness.
 core 1, `phase` as a stream source, telemetry coherence resolved by construction,
 `RpmEstimator` moved out, and parameter index order relaxed to a set.
 
-**Revision 3** folded in the crate split into `helic-fw-rt`/`helic-fw-net`,
+**Revision 3** folded in the crate split into `helic-fw-rt`/`helic-fw-support`
+(then named `helic-fw-net`),
 raised `MAX_RT_VALUES` from 33 to 132 from the appropriation sizing, added the
 autonomous-state rule, and justified the vector `actuate` from ~LDAC skew.
 
