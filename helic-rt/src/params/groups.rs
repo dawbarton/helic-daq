@@ -522,7 +522,8 @@ impl ParamGroup for TableGroup {
         let staging = self.staging.buffer().map_err(map_buffer_error)?;
         for (index, raw) in data.chunks_exact(4).enumerate() {
             let value = f32::from_le_bytes(raw.try_into().unwrap());
-            debug_assert!(staging.write_block(offset + index, &[value]));
+            let written = staging.write_block(offset + index, &[value]);
+            debug_assert!(written);
         }
         Ok(())
     }
@@ -545,7 +546,8 @@ impl ParamGroup for TableGroup {
             {
                 return Err(ErrorCode::BadValue);
             }
-            debug_assert!(staging.set_len(len));
+            let length_set = staging.set_len(len);
+            debug_assert!(length_set);
         }
         let token = self.staging.commit().map_err(map_buffer_error)?;
         Ok(Staged::Rt(Payload::Buffer(token)))
