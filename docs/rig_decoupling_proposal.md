@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–4 completed 2026-08-11. Revision
-9. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–5 completed 2026-08-11. Revision
+10. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1545,11 +1545,25 @@ production rigs here and treats the crate boundary as the contract that
    0x118c bytes (4.5 KB), all realised EABI helpers remain in SRAM, and the
    final default image passed 8000-record all-source and 60000-record sustained
    regressions at 34–36 us with no timing faults, loss, drops, or gaps.
-5. **`ParamGroup` stage/accept/reject, the `ParamStore` walk, the
-   `ResetDiagnostics` broadcast, and `validate()`.** Largest single commit; must
-   change no discovered parameter name and no source order.
+5. **Completed 2026-08-11: `ParamGroup` stage/accept/reject, the `ParamStore`
+   walk, the `ResetDiagnostics` broadcast, and `validate()`.** Six component
+   groups now own definitions, shadows, and staging. `ParamStore` resolves a
+   global index once and constructs every real-time address directly from the
+   captured target and group-local ID; groups cannot remap an accepted address.
+   Host tests cover queue-full scalar and buffered rejection, active-only table
+   length publication, diagnostic broadcast, registry preservation, direct
+   table/controller/rig routing, and each malformed composition required by
+   the design. The discovered parameter-name set and source order are
+   unchanged. W5500 CBC regressions for all 14 sources and for 60000 sustained
+   `adc0,out` records reached 35 us and 34 us respectively, with fixed 36 us
+   wake phase and no timing faults, loss, drops, or gaps. A release-only table
+   staging regression introduced during the group move was caught on hardware:
+   mutations inside `debug_assert!` had again been optimised away. The calls are
+   unconditional, and the table transaction test now also passes under
+   `cargo test --release -p helic-rt`.
 6. **`Program` trait and `StandardProgram`**, the `phase` signal, and retention
-   of core-1 `table_len` publication. Split the table into its own group.
+   of core-1 `table_len` publication. The table group already landed in stage
+   5; this stage moves its core-1 execution behind `StandardProgram`.
 7. **Bounded output vector**, `Rig::ACTUATORS`, slice `actuate`, `safety_decide`
    plus its atomic wrapper, `Program::fault`, the non-finite trip, and generic
    source assembly. Migrate all three rigs together.
@@ -1713,6 +1727,17 @@ wake phase is the baseline.
    and 128 at `H = 16`. Decide with stage 6 ELF evidence.
 
 ## Revision history
+
+**Revision 10** records the completed component-owned parameter composition.
+`ParamStore` now walks six statically allocated groups and binds commands to
+the located target and local ID, with no post-validation remapping hook.
+`table_len` is platform live telemetry, leaving the table group's eight local
+IDs identical to its eight core-1 commands; controller reset is local ID zero,
+and controller-specific parameters follow from one. The W5500 hardware gate
+also caught a migration regression in which table writes and length publication
+were placed inside `debug_assert!` and therefore removed from release firmware.
+The mutations are unconditional, the optimised host test passes, and the final
+hardware image activates and streams the complete table while disarmed.
 
 **Revision 9** records the Stage-4 measurement result and the consequent design
 change. Two fully materialised 132-value copied commands measured 95–96 us, and

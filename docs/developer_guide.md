@@ -471,14 +471,23 @@ Firmware identity remains application-owned and is injected when the store is
 constructed. A separately versioned rig must report its own build, not the
 version of the shared `helic-rt` crate.
 
-The fixed schema and parameter-count assertions live in
-`helic-rt/src/params/schema.rs`; mutable shadow state and command translation
-remain in `helic-rt/src/params.rs`. To add a platform parameter, use the typed
-read-only/writable constructors in `BASE_PARAMS`, add its index constant, and
-handle it in `get` (and `set` if writable). Experiment
-telemetry uses `ExtraParam::f32`/`u32`, which always describes a read-only scalar
-whose definition matches its atomic storage. Controller parameters need no
-registry work at all; see below.
+The registry is composed from fixed-capacity, statically allocated
+`ParamGroup`s. Each group owns its definitions, writable shadows, validation,
+and staging; `ParamStore` alone maps a discovered global index to a group-local
+identifier and constructs the corresponding core-1 address. A write is
+accepted into its shadow only after queueing succeeds, and a rejected buffered
+write receives its linear token back. The standard composition has platform,
+generator, table, controller, rig, and experiment-telemetry groups.
+
+At start-up, `ParamStore::validate()` rejects duplicate names, definitions that
+cannot fit discovery, malformed blob bounds, duplicate or unclaimed programme
+domains, and multiple rig-target groups. `diag_reset` is a store-level broadcast
+so every group's event counters share one lifecycle. Add a platform or reusable
+programme parameter beside the component that owns it, using a group-local ID
+that is also its real-time command ID. Experiment telemetry uses the typed
+`ExtraParam::f32`/`u32` constructors, whose definition cannot disagree with its
+atomic storage. Controller and rig parameters continue to come from their trait
+hooks and need no central schema edit.
 
 ## Extending
 

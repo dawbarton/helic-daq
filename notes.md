@@ -575,3 +575,45 @@ evidence:
   and a 35 us loop maximum. Target, forcing, table mode, and arm were returned
   to zero. The laser and actuator supplies remained down, so this is timing,
   ownership, and safety-quiet evidence, not powered actuator evidence.
+
+## 2026-08-11T14:20+00:00 Rig-decoupling implementation stage 5
+
+- `ParamStore` now composes six statically allocated `ParamGroup`s for the
+  platform, generator, table, controller, rig, and experiment telemetry. Each
+  group owns its definitions, shadows, validation, and transactional staging;
+  the store resolves global indices, builds every real-time address from the
+  captured target and local ID, accepts only after enqueue, returns rejected
+  buffer tokens, broadcasts diagnostic reset, and validates the complete
+  composition before serving requests. The 42-name CBC registry set and the
+  14-source order are unchanged.
+- Host tests cover scalar, coefficient, and table queue-full rejection,
+  active-only `table_len`, diagnostic broadcast, direct table/controller/rig
+  command IDs, core-0 payload rejection, and malformed group compositions.
+  Both normal and release `helic-rt` tests pass. The hardware table test exposed
+  a migration regression of the release-only hazard already found at stage 3:
+  `write_block` and `set_len` had again been put inside `debug_assert!`, so an
+  acknowledged release upload activated an untouched zero-length bank. A
+  core-1 probe established that the activation command and owner-checked token
+  were valid; making both mutations unconditional restored a three-sample
+  activation and streamed range 0.3000001 to 0.4994999 V.
+- An initial W5500 image at `1bf761b` reported 1 us `clock_jitter`, while an
+  immediate A/B flash of accepted `a3bf233` on the same board reported zero.
+  The timestamp was after wake-phase diagnostic atomics, so its integer TIMER0
+  phase depended on unrelated linked layout. Commit `f43ca61` moved the spacing
+  timestamp directly after the hardware wake and before diagnostic bookkeeping;
+  wake-to-wake jitter returned to zero without changing the acceptance limit,
+  and loop time now conservatively includes that bookkeeping.
+- Final W5500 CBC firmware `0.1.0 e82f10a` reported protocol 3, 42 parameters,
+  14 sources, and 8 kHz sampling. The 8000-record all-source regression measured
+  34, 34, and 35 us maxima for idle, TCP polling, and capture; the 60000-record
+  `adc0,out` regression measured 34 us in all three phases. Both held wake phase
+  at 36/36 us and had zero jitter, overruns, timeouts, record or packet drops,
+  capture drops, and index gaps.
+- The final disarmed transaction test produced constant 0.25 V target and
+  forcing sources from the two coefficient buffers, rejected invalid
+  `rig_out_channel = 1` with `BadValue` while preserving its 0 V shadow, and
+  published `table_len = 3`. Applied `out` remained exactly 0 V throughout.
+  Cleanup left `arm = 0`, `table_mode = 0`, `freq = 0`, and zero target and
+  forcing coefficients. The attached board is W5500; no W6100 image was
+  flashed. The laser and actuator supplies remained down, so this is logic,
+  timing, network, and safety-quiet evidence, not powered-path evidence.
