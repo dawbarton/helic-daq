@@ -23,6 +23,7 @@ use helic_fw_common::net;
 use helic_fw_common::net::cyw43::WifiParts;
 use helic_fw_common::params::{self, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
+use helic_rt::RtShared;
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -56,6 +57,7 @@ bind_interrupts!(pub struct Irqs {
 // StaticCell supplies permanent task and queue storage without a heap.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
+static RT_SHARED: RtShared = RtShared::new();
 static LASER_RX_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
 
 #[cortex_m_rt::entry]
@@ -78,6 +80,7 @@ fn main() -> ! {
     let controller = config::make_controller();
     let store = Store::new(
         channels.command_tx,
+        &RT_SHARED,
         config::SAMPLE_RATE,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
@@ -92,6 +95,7 @@ fn main() -> ! {
             tick,
             controller,
             config::SAMPLE_RATE,
+            &RT_SHARED,
             channels.command_rx,
             channels.record_tx,
         )
@@ -137,7 +141,7 @@ async fn core0_main(
     .await;
     spawner.spawn(unwrap!(blink(control)));
     spawner.spawn(unwrap!(control_task(stack, store)));
-    spawner.spawn(unwrap!(comms::udp::stream_task(stack, records)));
+    spawner.spawn(unwrap!(comms::udp::stream_task(stack, records, &RT_SHARED)));
     spawner.spawn(unwrap!(comms::beacon::beacon_task(
         stack,
         mac,
@@ -191,5 +195,5 @@ async fn laser_task(parts: LaserParts) -> ! {
 
 #[embassy_executor::task]
 async fn status_task() -> ! {
-    shared_rt::status_run().await
+    shared_rt::status_run(&RT_SHARED).await
 }

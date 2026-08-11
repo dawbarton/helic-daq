@@ -1,8 +1,8 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: proposed, not implemented. Revision 8.1. Supersedes parts of
-`docs/rt_program_proposal.md`. Revision history and review responses are at the
-end.
+Status: implementation in progress; stage 0 completed 2026-08-11. Revision
+8.1. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+review responses are at the end.
 
 ## Goal
 
@@ -1480,12 +1480,18 @@ production rigs here and treats the crate boundary as the contract that
 
 ## Migration plan
 
-0. **Create the `helic-rt` skeleton crate and define `RtShared`** (`Live`,
+0. **Completed 2026-08-11: create the `helic-rt` skeleton crate and define
+   `RtShared`** (`Live`,
    `Diagnostics`, `Safety`, `RebootShared`), moving the diagnostic, safety, and
    reboot atomics into it, with `ParamStore` and the loop taking
    `&'static RtShared`. The crate must exist before anything can be defined in
    it, and this state must move before `ParamStore` can: otherwise stage 1
-   inverts the crate layering (see "Cross-core shared state").
+   inverts the crate layering (see "Cross-core shared state"). The three
+   production firmware crates now each own one `RtShared`; host tests cover
+   diagnostic lifecycle boundaries, safety ownership, flags, and the reboot
+   handshake. Release ELFs pass the real-time layout gate. Hardware timing is
+   deliberately deferred to the stage-2 measurement gate, where the complete
+   firmware crate split will have landed.
 1. **Move the remaining runtime types** — `Rig`, `TickSource`, `SampleRate`,
    `Program`, `ParamGroup`, `ParamStore`, and the parameter types — out of
    `helic-fw-common` into `helic-rt`, unchanged.

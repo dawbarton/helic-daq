@@ -25,6 +25,7 @@ diag-wiznet-10mhz = []
 helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
+helic-rt.workspace = true
 helic-fw-common = { workspace = true, features = ["net-wiznet"] }
 cortex-m.workspace = true
 cortex-m-rt.workspace = true

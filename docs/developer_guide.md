@@ -75,6 +75,7 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | Path | What | Builds for |
 |---|---|---|
 | `helic-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
+| `helic-rt/` | Portable real-time contracts and the injected atomic state shared between firmware cores | host + firmware (`no_std`, no Embassy) |
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `helic-broker/` | Loopback multi-client broker, recent history and optional HDF5 recording | host |
@@ -163,10 +164,11 @@ The CBC acquisition path is shown; ADC-free rigs replace CONVST/BUSY with a
 PWM-wrap tick and omit the ADC read.
 
 The current loop owns the standard target/forcing/controller/table graph
-directly. A proposed ownership refactor, not yet implemented, is specified in
-[rt_program_proposal.md](rt_program_proposal.md). It introduces a portable
-`StandardProgram` while preserving the existing host interface and exact
-free-running/locked waveform-table phase semantics.
+directly. The component-ownership refactor in
+[rig_decoupling_proposal.md](rig_decoupling_proposal.md) is being implemented
+in explicit regression-gated stages. Its first stage has moved the cross-core
+diagnostic, safety, and reboot state into the portable `helic-rt` crate; the
+`Program` and component-owned parameter contracts have not landed yet.
 
 ```
 core 1 (real-time)                       core 0 (everything else)
@@ -178,7 +180,7 @@ core 1 (real-time)                       core 0 (everything else)
 │  generators (target+forcing │          │ status task (1 Hz defmt)      │
 │  + waveform table)          │          │                               │
 │  controller → rig output    │ records  │ embassy-net + net backend     │
-│  diagnostics atomics        │─────────►│ heartbeat LED                 │
+│  injected RtShared atomics  │─────────►│ heartbeat LED                 │
 └─────────────────────────────┘  SPSC    └───────────────────────────────┘
 ```
 
@@ -249,9 +251,9 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   machines. Embassy retains ownership and performs one-time PIO setup, while
   per-tick FIFO reads and writes use PAC registers from SRAM.
 - The tick body and RP-specific helpers placed directly in `.data.ram_func`.
-  The firmware workspace enables the `rt-sram` feature for host-tested DSP and
-  driver crates, which cannot use the embedded linker section in desktop
-  builds. Timing diagnostics read raw `TIMER0` registers.
+  The firmware workspace enables the `rt-sram` feature for host-tested DSP,
+  runtime, and driver crates, which cannot use the embedded linker section in
+  desktop builds. Timing diagnostics read raw `TIMER0` registers.
 - `rt_mem`: SRAM implementations of the ARM EABI aligned copy and clear
   helpers. LLVM emits these calls for fixed-array initialisation and moves in
   otherwise SRAM-resident Rust; allowing the compiler-builtins versions in
@@ -262,6 +264,13 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   word per boundary to preserve device timing; whirl completes immediately.
   `check_rt_layout.py` requires the shared completion symbol in SRAM and checks
   any emitted experiment quiescence symbols there too.
+
+Each firmware crate owns one const-initialised `helic_rt::RtShared` and injects
+the same `&'static` reference into `ParamStore`, the UDP/status paths, and the
+core-1 loop. `Live`, resettable `Diagnostics`, latched `Safety`, and
+`RebootShared` are separate types because they have different lifecycles and
+writers. In particular, `diag_reset` cannot reach lifetime counters or safety
+state, core 1 can only latch a safety trip, and core 0 alone arms or disarms.
 
 `RawPioInstance` derives PAC FIFO registers from the typed Embassy PIO owner.
 The BUSY latch similarly derives its GPIO number before erasing the typed pin.
@@ -383,8 +392,10 @@ Core 0 never touches loop state. Four mechanisms keep communication bounded:
 - **Records** (core 1 → 0): 256-deep `heapless::spsc` ring. The RT loop
   never blocks on it; overflow drops the record and increments
   `records_dropped`.
-- **Scalars**: `AtomicU32` statics expose diagnostics and latest sensor values
-  without sharing live loop state between cores. The optoNCDT task also
+- **Scalars**: the rig-owned `RtShared` exposes platform diagnostics, safety,
+  and reboot state; experiment-owned `AtomicU32` statics expose latest sensor
+  values and device counters. Neither shares mutable loop state between cores.
+  The optoNCDT task also
   publishes monotonic frame, UART-error, parser-resynchronisation,
   invalid-frame, and unexpected-value counters so its independent 8 kHz input
   rate can be compared with RT ticks under core-0 load. Boundary faults while
@@ -496,13 +507,14 @@ than pin glue is the signal to move code out.
 
 `rt_loop::safety_gate` runs on core 1 after the controller/forcing/table sum and
 before `actuate`, but only for a rig with `SAFETY_GATED = true` (otherwise it is
-compiled out and the summed command is applied verbatim). It latches
-`SAFETY_TRIPPED` when `output_fault` fires; holds the actuator at `safe_output`
-while disarmed or tripped; and otherwise passes the command through
-`clamp_output`. `SAFETY_ARMED` starts 0 (disarmed after flash); the host writes
-the `arm` param to arm (clearing a stale trip) or disarm, and a dropped TCP
-control connection disarms (comms-loss quieting). Clamp/quiet tick counts are in
-the RT atomics and the status log; the `safety` param packs armed/tripped/
+compiled out and the summed command is applied verbatim). It calls the
+role-restricted `RtShared::safety` interface to latch a trip when `output_fault`
+fires; holds the actuator at `safe_output` while disarmed or tripped; and
+otherwise passes the command through `clamp_output`. Safety starts disarmed
+after flash; the host writes the `arm` param to arm (clearing a stale trip) or
+disarm, and a dropped TCP control connection disarms (comms-loss quieting).
+Clamp/quiet tick counts are in `RtShared::diagnostics` and the status log; the
+`safety` param packs armed/tripped/
 clamped/quieted into one word. The pure, host-tested pieces (the channel-window
 clamp and the stale-counter guard) live in `helic-core::safety`.
 

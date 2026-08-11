@@ -443,3 +443,19 @@ evidence:
    gaps, `loop_time_max`, `overruns` and `tick_timeouts`;
 4. W6100 link, static addressing, DHCP, discovery, control and all-source
    streaming, including core-0 load with broadcast traffic.
+
+## 2026-08-11T12:08+00:00 Rig-decoupling implementation stage 0
+
+- Stage 0 of `docs/rig_decoupling_proposal.md` is complete: the new portable
+  `helic-rt` crate owns injected `RtShared` diagnostic, safety, and reboot
+  state, and each production firmware crate owns one const-initialised
+  instance shared by both cores.
+- Reboot ordering now follows the reviewed safety contract: core 0 disarms,
+  requests core-1 quiescence, waits with the existing bound, and only then
+  schedules the ROM reset. Host tests cover the lifecycle and ownership
+  invariants, including disarm between a core-1 snapshot and trip latch.
+- All three release firmware ELFs cross-built and passed
+  `check_rt_layout.py`; the new core-1 methods are explicitly placed in SRAM
+  through the `rt-sram` feature. This is static software evidence only. The
+  attached CBC hardware has not yet been flashed, and timing remains at the
+  previously verified baseline until the stage-2 measurement gate.

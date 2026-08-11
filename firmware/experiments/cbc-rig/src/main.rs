@@ -32,6 +32,7 @@ use helic_fw_common::net;
 use helic_fw_common::net::wiznet::EthernetParts;
 use helic_fw_common::params::{self, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
+use helic_rt::RtShared;
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -68,6 +69,7 @@ bind_interrupts!(pub struct Irqs {
 // a heap allocator. Queue capacities are fixed for the same reason.
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
+static RT_SHARED: RtShared = RtShared::new();
 static LASER_TX_BUFFER: StaticCell<[u8; 64]> = StaticCell::new();
 static LASER_RX_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
 
@@ -91,6 +93,7 @@ fn main() -> ! {
     let controller = config::make_controller();
     let store = Store::new(
         channels.command_tx,
+        &RT_SHARED,
         config::SAMPLE_RATE,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
@@ -109,6 +112,7 @@ fn main() -> ! {
             tick,
             controller,
             config::SAMPLE_RATE,
+            &RT_SHARED,
             channels.command_rx,
             channels.record_tx,
         )
@@ -157,7 +161,7 @@ async fn core0_main(
     let stack = net::wiznet::init(spawner, eth, config::MAC_ADDR, config::NET_CONFIG).await;
     spawner.spawn(unwrap!(control_task(stack, store)));
     #[cfg(not(feature = "diag-no-udp"))]
-    spawner.spawn(unwrap!(comms::udp::stream_task(stack, records)));
+    spawner.spawn(unwrap!(comms::udp::stream_task(stack, records, &RT_SHARED)));
     #[cfg(feature = "diag-no-udp")]
     let _ = records;
     spawner.spawn(unwrap!(comms::beacon::beacon_task(
@@ -223,5 +227,5 @@ async fn status_task() -> ! {
         unreachable!()
     }
     #[cfg(not(feature = "diag-no-status-log"))]
-    shared_rt::status_run().await
+    shared_rt::status_run(&RT_SHARED).await
 }

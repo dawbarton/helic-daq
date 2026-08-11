@@ -925,6 +925,7 @@ dependencies = [
  "helic-drivers",
  "helic-fw-common",
  "helic-proto",
+ "helic-rt",
  "panic-probe",
  "rand_core 0.10.1",
  "static_cell",
@@ -949,6 +950,7 @@ dependencies = [
  "helic-drivers",
  "helic-fw-common",
  "helic-proto",
+ "helic-rt",
  "panic-probe",
  "static_cell",
 ]
@@ -970,6 +972,7 @@ dependencies = [
  "helic-drivers",
  "helic-fw-common",
  "helic-proto",
+ "helic-rt",
  "panic-probe",
  "static_cell",
 ]
@@ -1072,6 +1075,7 @@ dependencies = [
  "helic-core",
  "helic-drivers",
  "helic-proto",
+ "helic-rt",
  "pio",
  "rand_core 0.10.1",
  "static_cell",
@@ -1079,6 +1083,10 @@ dependencies = [
 
 [[package]]
 name = "helic-proto"
+version = "0.1.0"
+
+[[package]]
+name = "helic-rt"
 version = "0.1.0"
 
 [[package]]

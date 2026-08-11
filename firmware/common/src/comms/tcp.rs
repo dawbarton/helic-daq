@@ -33,7 +33,7 @@ pub async fn control_run<C: Controller, R: Rig>(
         STREAM.lock(|s| s.borrow_mut().enabled = false);
         // Comms-loss quieting: a dropped control connection disarms the output
         // immediately (inert for a rig that is not safety-gated).
-        crate::rt_loop::safety_disarm();
+        store.shared().safety.disarm();
         socket.close();
         info!("control: client disconnected");
     }
@@ -88,15 +88,18 @@ async fn serve<C: Controller, R: Rig>(socket: &mut TcpSocket<'_>, store: &mut Pa
         let mut reboot_scheduled = false;
         if result.is_ok() && action == ParamAction::Reboot {
             STREAM.lock(|s| s.borrow_mut().enabled = false);
-            crate::rt_loop::safety_disarm();
+            // The output must be quiet before core 1 starts its hardware
+            // quiescence sequence; quiescence is sequencing, not safety.
+            store.shared().safety.disarm();
+            store.shared().reboot.request();
 
             let started = Instant::now();
-            while !crate::reboot::is_quiesced()
+            while !store.shared().reboot.is_quiesced()
                 && Instant::now().duration_since(started) < Duration::from_millis(20)
             {
                 Timer::after_millis(1).await;
             }
-            if !crate::reboot::is_quiesced() {
+            if !store.shared().reboot.is_quiesced() {
                 // A stuck core 1 cannot be made safer by retaining control;
                 // the chip reset is the remaining recovery mechanism.
                 warn!("control: core 1 reboot quiescence timed out");

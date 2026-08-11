@@ -16,9 +16,10 @@ use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableInterpolation, TableMode};
 use helic_proto::{ErrorCode, ParamType};
+use helic_rt::RtShared;
 
 use crate::rig::Rig;
-use crate::rt_loop::{self, CommandProducer, RtCommand};
+use crate::rt_loop::{CommandProducer, RtCommand};
 use crate::table;
 use crate::{SampleRate, HARMONICS};
 
@@ -170,6 +171,7 @@ enum ShadowUpdate {
 /// command producer that forwards writes to the RT loop.
 pub struct ParamStore<C: Controller, R: Rig> {
     commands: CommandProducer,
+    shared: &'static RtShared,
     sample_rate: SampleRate,
     experiment: &'static str,
     extras: &'static [ExtraParam],
@@ -190,6 +192,7 @@ pub struct ParamStore<C: Controller, R: Rig> {
 impl<C: Controller, R: Rig> ParamStore<C, R> {
     pub fn new(
         commands: CommandProducer,
+        shared: &'static RtShared,
         sample_rate: SampleRate,
         experiment: &'static str,
         extras: &'static [ExtraParam],
@@ -225,6 +228,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         }
         let store = Self {
             commands,
+            shared,
             sample_rate,
             experiment,
             extras,
@@ -244,6 +248,12 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         store.validate_registry();
         crate::rig::validate_sources::<R>();
         store
+    }
+
+    /// Shared state used by the control server for connection-loss quieting
+    /// and the ordered reboot handshake.
+    pub(crate) fn shared(&self) -> &'static RtShared {
+        self.shared
     }
 
     fn ctrl_names() -> &'static [&'static str] {
@@ -327,26 +337,52 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             }
             1 => write_string(out, self.experiment),
             2 => out.copy_from_slice(&self.sample_rate.hz().to_le_bytes()),
-            3 => out.copy_from_slice(&rt_loop::TICKS.load(Ordering::Relaxed).to_le_bytes()),
+            3 => out.copy_from_slice(&self.shared.live.ticks.load(Ordering::Relaxed).to_le_bytes()),
             4 => out.copy_from_slice(
-                &rt_loop::LOOP_TIME_LAST_US
+                &self
+                    .shared
+                    .live
+                    .loop_time_last_us
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
             5 => out.copy_from_slice(
-                &rt_loop::LOOP_TIME_MAX_US
+                &self
+                    .shared
+                    .diagnostics
+                    .loop_time_max_us
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
             6 => out.copy_from_slice(
-                &rt_loop::CLOCK_JITTER_US
+                &self
+                    .shared
+                    .diagnostics
+                    .clock_jitter_us
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
-            7 => out.copy_from_slice(&rt_loop::OVERRUNS.load(Ordering::Relaxed).to_le_bytes()),
-            8 => out.copy_from_slice(&rt_loop::TICK_TIMEOUTS.load(Ordering::Relaxed).to_le_bytes()),
+            7 => out.copy_from_slice(
+                &self
+                    .shared
+                    .diagnostics
+                    .overruns
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes(),
+            ),
+            8 => out.copy_from_slice(
+                &self
+                    .shared
+                    .diagnostics
+                    .tick_timeouts
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes(),
+            ),
             9 => out.copy_from_slice(
-                &rt_loop::RECORDS_DROPPED
+                &self
+                    .shared
+                    .diagnostics
+                    .records_dropped
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
@@ -364,49 +400,65 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             IDX_TABLE_PHASE => out.copy_from_slice(&self.table_phase.to_le_bytes()),
             IDX_TABLE_TRIGGER => out.copy_from_slice(&0u32.to_le_bytes()),
             IDX_WAKE_PHASE_MIN => out.copy_from_slice(
-                &rt_loop::WAKE_PHASE_MIN_US
+                &self
+                    .shared
+                    .diagnostics
+                    .wake_phase_min_us
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
             IDX_WAKE_PHASE_MAX => out.copy_from_slice(
-                &rt_loop::WAKE_PHASE_MAX_US
+                &self
+                    .shared
+                    .diagnostics
+                    .wake_phase_max_us
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
             IDX_T_MEASURE_MAX => out.copy_from_slice(
-                &rt_loop::T_MEASURE_MAX_US
+                &self
+                    .shared
+                    .diagnostics
+                    .t_measure_max_us
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
             IDX_T_ACTUATE_MAX => out.copy_from_slice(
-                &rt_loop::T_ACTUATE_MAX_US
+                &self
+                    .shared
+                    .diagnostics
+                    .t_actuate_max_us
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
-            IDX_T_REST_MAX => {
-                out.copy_from_slice(&rt_loop::T_REST_MAX_US.load(Ordering::Relaxed).to_le_bytes())
-            }
+            IDX_T_REST_MAX => out.copy_from_slice(
+                &self
+                    .shared
+                    .diagnostics
+                    .t_rest_max_us
+                    .load(Ordering::Relaxed)
+                    .to_le_bytes(),
+            ),
             IDX_DIAG_RESET => out.copy_from_slice(&0u32.to_le_bytes()),
             IDX_COMMAND_BACKLOG_MAX => out.copy_from_slice(
-                &rt_loop::COMMAND_BACKLOG_MAX
+                &self
+                    .shared
+                    .diagnostics
+                    .command_backlog_max
                     .load(Ordering::Relaxed)
                     .to_le_bytes(),
             ),
-            // `arm` reads back the current armed state (there is no separate
-            // shadow: the RT loop owns the authoritative flag).
+            // `arm` reads back the current shared state; there is no separate
+            // core-0 shadow that could disagree with the safety gate.
             IDX_ARM => {
-                out.copy_from_slice(&rt_loop::SAFETY_ARMED.load(Ordering::Relaxed).to_le_bytes())
+                out.copy_from_slice(&(self.shared.safety.load_inputs().armed as u32).to_le_bytes())
             }
             // `safety` packs the whole gate state into one pollable word:
             // bit0 armed, bit1 latched trip, bit2 clamped since last reset,
             // bit3 quieted since last reset. The exact clamp/quiet tick counts
             // remain in the RT atomics and the status log.
             IDX_SAFETY => {
-                let armed = (rt_loop::SAFETY_ARMED.load(Ordering::Relaxed) != 0) as u32;
-                let tripped = (rt_loop::SAFETY_TRIPPED.load(Ordering::Relaxed) != 0) as u32;
-                let clamped = (rt_loop::SAFETY_CLAMP_TICKS.load(Ordering::Relaxed) != 0) as u32;
-                let quieted = (rt_loop::SAFETY_QUIET_TICKS.load(Ordering::Relaxed) != 0) as u32;
-                let flags = armed | (tripped << 1) | (clamped << 2) | (quieted << 3);
+                let flags = self.shared.safety.flags(&self.shared.diagnostics);
                 out.copy_from_slice(&flags.to_le_bytes());
             }
             IDX_MCU_REBOOT => out.copy_from_slice(&0u32.to_le_bytes()),
@@ -539,7 +591,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 // Resets are applied directly: the diagnostics are atomics
                 // maintained by core 1 but safely writable from here.
                 if u32::from_le_bytes(data.try_into().unwrap()) != 0 {
-                    rt_loop::reset_diagnostics();
+                    self.shared.diagnostics.reset();
                     for extra in self.extras {
                         extra.reset_diagnostic();
                     }
@@ -550,9 +602,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 // Applied directly on core 0 (like `diag_reset`) so the
                 // safety-critical disarm path has no command-queue latency.
                 if u32::from_le_bytes(data.try_into().unwrap()) != 0 {
-                    rt_loop::safety_arm();
+                    self.shared.safety.arm();
                 } else {
-                    rt_loop::safety_disarm();
+                    self.shared.safety.disarm();
                 }
                 return Ok(ParamAction::None);
             }
@@ -562,7 +614,6 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 {
                     return Err(ErrorCode::BadValue);
                 }
-                crate::reboot::request();
                 return Ok(ParamAction::Reboot);
             }
             i if (BASE_PARAMS.len() + self.extras.len()

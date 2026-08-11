@@ -15,12 +15,13 @@ diag-skip-record-enqueue = []
 # Every experiment enables this centrally through the firmware workspace. It is
 # a named feature only because the host-tested crates must not use an embedded
 # linker section during ordinary desktop builds.
-rt-sram = ["helic-core/rt-sram", "helic-drivers/rt-sram"]
+rt-sram = ["helic-core/rt-sram", "helic-drivers/rt-sram", "helic-rt/rt-sram"]
 
 [dependencies]
 helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
+helic-rt.workspace = true
 cyw43 = { workspace = true, optional = true }
 cyw43-firmware = { workspace = true, optional = true }
 cyw43-pio = { workspace = true, optional = true }

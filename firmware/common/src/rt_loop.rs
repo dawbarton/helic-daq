@@ -1,6 +1,6 @@
 //! Generic real-time loop, cross-core mailboxes, records and diagnostics.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::Ordering;
 
 use defmt::info;
 use embassy_rp::pac;
@@ -11,10 +11,11 @@ use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
 use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableInterpolation, TableMode, TablePlayer, WaveTable};
+use helic_rt::RtShared;
 use static_cell::StaticCell;
 
 use crate::rig::{source_count, Rig, TickSource, MAX_SOURCES};
-use crate::{reboot, table};
+use crate::table;
 use crate::{SampleRate, HARMONICS};
 
 #[derive(Clone, Copy, Debug)]
@@ -85,49 +86,6 @@ pub fn init_channels() -> RtChannels {
     }
 }
 
-pub static LOOP_TIME_LAST_US: AtomicU32 = AtomicU32::new(0);
-pub static LOOP_TIME_MAX_US: AtomicU32 = AtomicU32::new(0);
-pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
-pub static CLOCK_JITTER_US: AtomicU32 = AtomicU32::new(0);
-pub static TICK_TIMEOUTS: AtomicU32 = AtomicU32::new(0);
-pub static RECORDS_DROPPED: AtomicU32 = AtomicU32::new(0);
-pub static TICKS: AtomicU32 = AtomicU32::new(0);
-pub static COMMAND_BACKLOG_MAX: AtomicU32 = AtomicU32::new(0);
-
-// Phase-resolved timing diagnostics. The wake phase is measured against the
-// hardware sample clock (CONVST PWM counter), so it separates "the tick body
-// started late" from "the tick body ran long"; the sub-phase maxima separate
-// the two SPI transactions from the arithmetic between them.
-pub static WAKE_PHASE_MIN_US: AtomicU32 = AtomicU32::new(u32::MAX);
-pub static WAKE_PHASE_MAX_US: AtomicU32 = AtomicU32::new(0);
-pub static T_MEASURE_MAX_US: AtomicU32 = AtomicU32::new(0);
-pub static T_ACTUATE_MAX_US: AtomicU32 = AtomicU32::new(0);
-pub static T_REST_MAX_US: AtomicU32 = AtomicU32::new(0);
-
-// Output safety state (see `safety_gate`). Only consulted for a rig whose
-// `Rig::SAFETY_GATED` is set; on other experiments these stay at their defaults
-// and the gate is compiled out. `SAFETY_ARMED` starts 0 so the output is quiet
-// after every flash/reset until the host explicitly arms it.
-pub static SAFETY_ARMED: AtomicU32 = AtomicU32::new(0);
-pub static SAFETY_TRIPPED: AtomicU32 = AtomicU32::new(0);
-pub static SAFETY_CLAMP_TICKS: AtomicU32 = AtomicU32::new(0);
-pub static SAFETY_QUIET_TICKS: AtomicU32 = AtomicU32::new(0);
-
-/// Arm the output and clear any latched fault trip. Called from core 0 when
-/// the host writes the `arm` parameter. The trip is cleared first so that a
-/// still-present fault re-latches on the next tick rather than being masked.
-pub fn safety_arm() {
-    SAFETY_TRIPPED.store(0, Ordering::Relaxed);
-    SAFETY_ARMED.store(1, Ordering::Relaxed);
-}
-
-/// Disarm the output immediately (quiet the actuator). Called from core 0 on
-/// an explicit `arm = 0` and on control-connection loss. The latched trip, if
-/// any, is left set so it remains visible until a deliberate re-arm.
-pub fn safety_disarm() {
-    SAFETY_ARMED.store(0, Ordering::Relaxed);
-}
-
 /// Per-tick output safety gate: decide what is actually driven from the
 /// summed actuator command. Runs on core 1 inside the tick, before `actuate`,
 /// only for a rig with `Rig::SAFETY_GATED` set.
@@ -137,43 +95,27 @@ pub fn safety_disarm() {
 /// - otherwise the command is passed through the rig's hard clamp.
 #[unsafe(link_section = ".data.ram_func")]
 #[inline]
-fn safety_gate<R: Rig>(rig: &mut R, inputs: &[f32], out_cmd: f32) -> f32 {
+fn safety_gate<R: Rig>(rig: &mut R, shared: &RtShared, inputs: &[f32], out_cmd: f32) -> f32 {
     if rig.output_fault(inputs) {
-        SAFETY_TRIPPED.store(1, Ordering::Relaxed);
+        shared.safety.latch_trip();
     }
-    let tripped = SAFETY_TRIPPED.load(Ordering::Relaxed) != 0;
-    let armed = SAFETY_ARMED.load(Ordering::Relaxed) != 0;
-    if tripped || !armed {
-        SAFETY_QUIET_TICKS.fetch_add(1, Ordering::Relaxed);
+    let safety = shared.safety.load_inputs();
+    if safety.tripped || !safety.armed {
+        shared
+            .diagnostics
+            .safety_quiet_ticks
+            .fetch_add(1, Ordering::Relaxed);
         rig.safe_output()
     } else {
         let applied = rig.clamp_output(out_cmd);
         if applied != out_cmd {
-            SAFETY_CLAMP_TICKS.fetch_add(1, Ordering::Relaxed);
+            shared
+                .diagnostics
+                .safety_clamp_ticks
+                .fetch_add(1, Ordering::Relaxed);
         }
         applied
     }
-}
-
-/// Reset the resettable timing diagnostics (maxima and event counters) so a
-/// test condition can be measured from a clean slate. Total counters such as
-/// `TICKS` are deliberately left running. Safe to call from core 0.
-pub fn reset_diagnostics() {
-    LOOP_TIME_MAX_US.store(0, Ordering::Relaxed);
-    CLOCK_JITTER_US.store(0, Ordering::Relaxed);
-    OVERRUNS.store(0, Ordering::Relaxed);
-    TICK_TIMEOUTS.store(0, Ordering::Relaxed);
-    RECORDS_DROPPED.store(0, Ordering::Relaxed);
-    WAKE_PHASE_MIN_US.store(u32::MAX, Ordering::Relaxed);
-    WAKE_PHASE_MAX_US.store(0, Ordering::Relaxed);
-    T_MEASURE_MAX_US.store(0, Ordering::Relaxed);
-    T_ACTUATE_MAX_US.store(0, Ordering::Relaxed);
-    T_REST_MAX_US.store(0, Ordering::Relaxed);
-    COMMAND_BACKLOG_MAX.store(0, Ordering::Relaxed);
-    // Safety-event tick counters are resettable diagnostics; the armed and
-    // latched-trip states are deliberately left untouched by a diag reset.
-    SAFETY_CLAMP_TICKS.store(0, Ordering::Relaxed);
-    SAFETY_QUIET_TICKS.store(0, Ordering::Relaxed);
 }
 
 static SIN_LUT: StaticCell<SinLut> = StaticCell::new();
@@ -190,6 +132,7 @@ fn now_us() -> u32 {
 #[allow(clippy::too_many_arguments)]
 fn run_rt_tick<R: Rig>(
     rig: &mut R,
+    shared: &RtShared,
     controller: &mut R::Ctrl,
     sample_rate: SampleRate,
     dt: f32,
@@ -214,8 +157,14 @@ fn run_rt_tick<R: Rig>(
     let _ = n_sources;
 
     if let Some(phase) = rig.tick_phase_us() {
-        WAKE_PHASE_MAX_US.fetch_max(phase, Ordering::Relaxed);
-        WAKE_PHASE_MIN_US.fetch_min(phase, Ordering::Relaxed);
+        shared
+            .diagnostics
+            .wake_phase_max_us
+            .fetch_max(phase, Ordering::Relaxed);
+        shared
+            .diagnostics
+            .wake_phase_min_us
+            .fetch_min(phase, Ordering::Relaxed);
     }
     let t0 = now_us();
     rig.tick_start();
@@ -224,7 +173,10 @@ fn run_rt_tick<R: Rig>(
         let spacing = t0.wrapping_sub(last);
         let nominal = sample_rate.period_us() as u32;
         if spacing > nominal {
-            CLOCK_JITTER_US.fetch_max(spacing - nominal, Ordering::Relaxed);
+            shared
+                .diagnostics
+                .clock_jitter_us
+                .fetch_max(spacing - nominal, Ordering::Relaxed);
         }
     }
     *last_tick = Some(t0);
@@ -259,7 +211,10 @@ fn run_rt_tick<R: Rig>(
         // command tick, applied + remaining reconstructs the queue depth at
         // the boundary while the fixed loop above still bounds the work.
         let backlog = commands_applied + commands.len();
-        COMMAND_BACKLOG_MAX.fetch_max(backlog as u32, Ordering::Relaxed);
+        shared
+            .diagnostics
+            .command_backlog_max
+            .fetch_max(backlog as u32, Ordering::Relaxed);
         // Every value through 2^24 - 1 is exactly representable in the f32
         // stream. Wrapping there preserves exact modular deltas indefinitely.
         *command_epoch =
@@ -279,7 +234,7 @@ fn run_rt_tick<R: Rig>(
     // Hard output safety stage. For a non-gated rig this is a compile-time
     // no-op (the const is false), so the summed command is applied verbatim.
     let out = if R::SAFETY_GATED {
-        safety_gate::<R>(rig, &values[..n_inputs], out_cmd)
+        safety_gate::<R>(rig, shared, &values[..n_inputs], out_cmd)
     } else {
         out_cmd
     };
@@ -307,27 +262,42 @@ fn run_rt_tick<R: Rig>(
             })
             .is_err()
         {
-            RECORDS_DROPPED.fetch_add(1, Ordering::Relaxed);
+            shared
+                .diagnostics
+                .records_dropped
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
     *index = (*index).wrapping_add(1);
     rig.tick_end();
 
     let elapsed = now_us().wrapping_sub(t0);
-    T_MEASURE_MAX_US.fetch_max(measure_us, Ordering::Relaxed);
-    T_ACTUATE_MAX_US.fetch_max(actuate_us, Ordering::Relaxed);
-    T_REST_MAX_US.fetch_max(
+    shared
+        .diagnostics
+        .t_measure_max_us
+        .fetch_max(measure_us, Ordering::Relaxed);
+    shared
+        .diagnostics
+        .t_actuate_max_us
+        .fetch_max(actuate_us, Ordering::Relaxed);
+    shared.diagnostics.t_rest_max_us.fetch_max(
         elapsed
             .saturating_sub(measure_us)
             .saturating_sub(actuate_us),
         Ordering::Relaxed,
     );
-    LOOP_TIME_LAST_US.store(elapsed, Ordering::Relaxed);
-    LOOP_TIME_MAX_US.fetch_max(elapsed, Ordering::Relaxed);
+    shared
+        .live
+        .loop_time_last_us
+        .store(elapsed, Ordering::Relaxed);
+    shared
+        .diagnostics
+        .loop_time_max_us
+        .fetch_max(elapsed, Ordering::Relaxed);
     if elapsed > sample_rate.period_us() as u32 {
-        OVERRUNS.fetch_add(1, Ordering::Relaxed);
+        shared.diagnostics.overruns.fetch_add(1, Ordering::Relaxed);
     }
-    TICKS.fetch_add(1, Ordering::Relaxed);
+    shared.live.ticks.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Run one bounded, experiment-specific output-quiescence step.
@@ -344,8 +314,8 @@ fn reboot_quiesce_step<R: Rig>(rig: &mut R, step: u8) -> bool {
 #[unsafe(link_section = ".data.ram_func")]
 #[unsafe(export_name = "helic_run_reboot_quiesce")]
 #[inline(never)]
-fn run_reboot_quiesce() -> ! {
-    reboot::mark_quiesced();
+fn run_reboot_quiesce(shared: &RtShared) -> ! {
+    shared.reboot.mark_quiesced();
     loop {
         core::hint::spin_loop();
     }
@@ -353,6 +323,7 @@ fn run_reboot_quiesce() -> ! {
 
 struct RtLoopState<R: Rig, T: TickSource> {
     rig: R,
+    shared: &'static RtShared,
     tick: T,
     controller: R::Ctrl,
     sample_rate: SampleRate,
@@ -381,6 +352,7 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
     tick: T,
     controller: R::Ctrl,
     sample_rate: SampleRate,
+    shared: &'static RtShared,
     commands: CommandConsumer,
     records: RecordProducer,
 ) -> ! {
@@ -400,6 +372,7 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
 
     run_hot_loop(RtLoopState {
         rig,
+        shared,
         tick,
         controller,
         sample_rate,
@@ -429,17 +402,22 @@ fn run_hot_loop<R: Rig, T: TickSource>(mut state: RtLoopState<R, T>) -> ! {
     let mut reboot_step = 0;
     loop {
         if !state.tick.wait() {
-            TICK_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+            state
+                .shared
+                .diagnostics
+                .tick_timeouts
+                .fetch_add(1, Ordering::Relaxed);
         }
-        if reboot::is_requested() {
+        if state.shared.reboot.is_requested() {
             if reboot_quiesce_step(&mut state.rig, reboot_step) {
-                run_reboot_quiesce();
+                run_reboot_quiesce(state.shared);
             }
             reboot_step = reboot_step.saturating_add(1);
             continue;
         }
         run_rt_tick::<R>(
             &mut state.rig,
+            state.shared,
             &mut state.controller,
             state.sample_rate,
             state.dt,
@@ -461,24 +439,24 @@ fn run_hot_loop<R: Rig, T: TickSource>(mut state: RtLoopState<R, T>) -> ! {
     }
 }
 
-pub async fn status_run() -> ! {
+pub async fn status_run(shared: &'static RtShared) -> ! {
     let mut ticker = Ticker::every(Duration::from_secs(1));
     loop {
         ticker.next().await;
         info!(
             "ticks {} | loop {}/{} us | jitter {} us | overruns {} | tick timeouts {} | dropped {} | cmd backlog {} | armed {} tripped {} clamp {} quiet {}",
-            TICKS.load(Ordering::Relaxed),
-            LOOP_TIME_LAST_US.load(Ordering::Relaxed),
-            LOOP_TIME_MAX_US.load(Ordering::Relaxed),
-            CLOCK_JITTER_US.load(Ordering::Relaxed),
-            OVERRUNS.load(Ordering::Relaxed),
-            TICK_TIMEOUTS.load(Ordering::Relaxed),
-            RECORDS_DROPPED.load(Ordering::Relaxed),
-            COMMAND_BACKLOG_MAX.load(Ordering::Relaxed),
-            SAFETY_ARMED.load(Ordering::Relaxed),
-            SAFETY_TRIPPED.load(Ordering::Relaxed),
-            SAFETY_CLAMP_TICKS.load(Ordering::Relaxed),
-            SAFETY_QUIET_TICKS.load(Ordering::Relaxed),
+            shared.live.ticks.load(Ordering::Relaxed),
+            shared.live.loop_time_last_us.load(Ordering::Relaxed),
+            shared.diagnostics.loop_time_max_us.load(Ordering::Relaxed),
+            shared.diagnostics.clock_jitter_us.load(Ordering::Relaxed),
+            shared.diagnostics.overruns.load(Ordering::Relaxed),
+            shared.diagnostics.tick_timeouts.load(Ordering::Relaxed),
+            shared.diagnostics.records_dropped.load(Ordering::Relaxed),
+            shared.diagnostics.command_backlog_max.load(Ordering::Relaxed),
+            shared.safety.load_inputs().armed as u32,
+            shared.safety.load_inputs().tripped as u32,
+            shared.diagnostics.safety_clamp_ticks.load(Ordering::Relaxed),
+            shared.diagnostics.safety_quiet_ticks.load(Ordering::Relaxed),
         );
     }
 }

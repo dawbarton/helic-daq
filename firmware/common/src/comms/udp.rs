@@ -9,9 +9,10 @@ use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{Duration, Ticker};
 use helic_proto::stream::{StreamHeader, STREAM_HEADER_LEN};
+use helic_rt::RtShared;
 
 use super::STREAM;
-use crate::rt_loop::{Record, RecordConsumer, RECORDS_DROPPED};
+use crate::rt_loop::{Record, RecordConsumer};
 
 /// Payload budget: fits an unfragmented packet in a standard 1500 MTU.
 const MAX_PACKET: usize = 1472;
@@ -29,7 +30,11 @@ fn record_value(r: &Record, src: u8) -> f32 {
 }
 
 #[embassy_executor::task]
-pub async fn stream_task(stack: Stack<'static>, mut records: RecordConsumer) -> ! {
+pub async fn stream_task(
+    stack: Stack<'static>,
+    mut records: RecordConsumer,
+    shared: &'static RtShared,
+) -> ! {
     let mut rx_meta = [PacketMetadata::EMPTY; 2];
     let mut rx_buf = [0u8; 64];
     let mut tx_meta = [PacketMetadata::EMPTY; 8];
@@ -112,7 +117,7 @@ pub async fn stream_task(stack: Stack<'static>, mut records: RecordConsumer) -> 
                 n_sources: sources.len() as u8,
                 seq,
                 first_index,
-                dropped: RECORDS_DROPPED.load(Ordering::Relaxed),
+                dropped: shared.diagnostics.records_dropped.load(Ordering::Relaxed),
                 decimation: decimation as u16,
                 n_records: n as u16,
             }

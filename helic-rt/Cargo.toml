@@ -1,0 +1,13 @@
+[package]
+name = "helic-rt"
+description = "Portable real-time contracts and cross-core state for HELIC-DAQ"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Firmware enables this for methods reachable from the mandatory core-1 path;
+# host tests leave ordinary linker placement in force.
+rt-sram = []
+
+[dependencies]
