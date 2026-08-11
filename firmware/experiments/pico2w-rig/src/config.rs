@@ -9,6 +9,9 @@ pub use helic_rt::SampleRate;
 
 /// Name advertised to discovery clients.
 pub const EXPERIMENT: &str = "pico2w-rig";
+
+/// Maximum uploaded waveform length; storage is paid for by this rig.
+pub const TABLE_CAPACITY: usize = 4096;
 /// AD5064 channel which receives the generated output.
 pub const OUTPUT_CHANNEL: usize = 0;
 /// Full measuring range used to scale optoNCDT UART samples.
@@ -33,7 +36,7 @@ pub fn wifi_credentials() -> (&'static str, &'static str) {
 
 /// Statically selected controller for the bounded real-time path.
 pub type ActiveController = PassThrough;
-pub type ActiveProgram = helic_rt::StandardProgram<ActiveController>;
+pub type ActiveProgram = helic_rt::StandardProgram<ActiveController, TABLE_CAPACITY>;
 
 /// Construct the controller which will be moved to core 1.
 pub fn make_controller() -> ActiveController {

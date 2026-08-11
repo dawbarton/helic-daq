@@ -52,10 +52,11 @@ bind_interrupts!(pub struct Irqs {
 static CORE1_STACK: StaticCell<CoreStack<16384>> = StaticCell::new();
 static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static RT_SHARED: RtShared = RtShared::new();
-static TABLE: ConstStaticCell<TableBuffer> = ConstStaticCell::new(TableBuffer::new());
+static TABLE: ConstStaticCell<TableBuffer<{ config::TABLE_CAPACITY }>> =
+    ConstStaticCell::new(TableBuffer::new());
 static PLATFORM_GROUP: StaticCell<PlatformGroup> = StaticCell::new();
 static GENERATOR_GROUP: StaticCell<GeneratorGroup> = StaticCell::new();
-static TABLE_GROUP: StaticCell<TableGroup> = StaticCell::new();
+static TABLE_GROUP: StaticCell<TableGroup<{ config::TABLE_CAPACITY }>> = StaticCell::new();
 static CONTROLLER_GROUP: StaticCell<ControllerGroup<config::ActiveController>> = StaticCell::new();
 static RIG_GROUP: StaticCell<RigGroup<WhirlRig>> = StaticCell::new();
 static TELEMETRY_GROUP: StaticCell<TelemetryGroup> = StaticCell::new();

@@ -14,6 +14,9 @@ pub use helic_rt::SampleRate;
 /// Name advertised during discovery. Protocol names are short ASCII strings.
 pub const EXPERIMENT: &str = "cbc-rig";
 
+/// Maximum uploaded waveform length; storage is paid for by this rig.
+pub const TABLE_CAPACITY: usize = 4096;
+
 /// DAC channel driven by the control output. Its polarity is defined in
 /// `board.rs` for the fitted analogue output stage.
 pub const OUTPUT_CHANNEL: usize = 0;
@@ -85,7 +88,7 @@ pub const MAC_ADDR: [u8; 6] = [0x02, 0x48, 0x4C, 0x00, 0x00, 0x01];
 /// ```
 pub type ActiveController = PassThrough;
 /// Statically selected core-1 programme.
-pub type ActiveProgram = helic_rt::StandardProgram<ActiveController>;
+pub type ActiveProgram = helic_rt::StandardProgram<ActiveController, TABLE_CAPACITY>;
 
 /// Construct the one controller instance which is later moved to core 1.
 ///

@@ -509,8 +509,10 @@ closest. An experiment crate has a deliberately predictable anatomy:
 2. In `board.rs`, assign pins and construct unassembled peripheral parts only.
    Its short file should be sufficient to audit every pin and core owner.
 3. In `config.rs`, set `EXPERIMENT`, `SAMPLE_RATE`, `NET_CONFIG`, controller
-   alias/factory and rig-specific constants. Experiment names, parameter names
-   and source names must fit their protocol limits.
+   alias/factory, `TABLE_CAPACITY`, and rig-specific constants. The waveform
+   capacity is a const generic, so each rig pays only for its selected pair of
+   table banks. Experiment names, parameter names, and source names must fit
+   their protocol limits.
 4. In `rig.rs`, assemble core-1 parts and implement `Rig`. `INPUTS` and
    `measure` must use the same order; `ACTUATORS` and the output slice passed to
    `actuate` must use the same order. Choose a `TickSource`, and expose rig
