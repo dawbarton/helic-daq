@@ -1,9 +1,16 @@
 # Dependency boundaries owned by the independent fixture workspace.
+#
+# The two firmware members are held to deliberately different rules.
+# `fw-fixture-rig` must reach no core-0 support at all, which is what makes the
+# real-time platform's independence checkable. `fw-fixture-service-rig` is
+# expected to link it, and instead pins the exact set of platform crates a
+# production-shaped rig needs, so that a new transitive dependency appearing
+# across the boundary is caught rather than absorbed.
 schema_version = 1
 
 [[exact]]
 package = "fixture-rig-program"
-dependencies = ["helic-rt"]
+dependencies = ["helic-core", "helic-rt"]
 
 [[exact]]
 package = "fw-fixture-rig"
@@ -13,6 +20,25 @@ dependencies = [
   "fixture-rig-program",
   "helic-core",
   "helic-fw-rt",
+  "helic-rt",
+  "panic-probe",
+  "static_cell",
+]
+
+[[exact]]
+package = "fw-fixture-service-rig"
+dependencies = [
+  "cortex-m-rt",
+  "defmt",
+  "defmt-rtt",
+  "embassy-executor",
+  "embassy-net",
+  "embassy-rp",
+  "embassy-time",
+  "fixture-rig-program",
+  "helic-core",
+  "helic-fw-rt",
+  "helic-fw-support",
   "helic-rt",
   "panic-probe",
   "static_cell",

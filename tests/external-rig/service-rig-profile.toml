@@ -1,0 +1,57 @@
+# Verification contract owned by the core-0 composition fixture.
+#
+# This fixture is never flashed, so the regression section exists to prove the
+# runner loads and drives a locally owned contract, not to record hardware
+# evidence.
+schema_version = 1
+name = "fixture-service"
+package = "fw-fixture-service-rig"
+experiment = "fixture-service-rig"
+
+[layout]
+elf = "fw-fixture-service-rig"
+required_patterns = [
+  ["run_hot_loop"],
+  ["run_reboot_quiesce"],
+  ["apply_program"],
+  ["set_rig_param"],
+  ["measure_rig"],
+  ["step_program"],
+  ["actuate_rig"],
+  ["write_program_signals"],
+  ["table_buffer", "Active", "3get"],
+  ["table_buffer", "Active", "8activate"],
+]
+optional_patterns = [
+  ["run_rt_tick"],
+  ["reboot_quiesce_step"],
+  ["prepare_reboot"],
+  ["transfer_in_place"],
+  ["program_fault"],
+  ["safety_decide"],
+]
+exact_symbols = [
+  "__aeabi_memcpy",
+  "__aeabi_memcpy4",
+  "__aeabi_memcpy8",
+  "__aeabi_memclr",
+  "__aeabi_memclr4",
+  "__aeabi_memclr8",
+]
+
+[regression]
+sample_rate_hz = 1000
+capture_sources = ["sense", "fixture_error"]
+wired = true
+
+[[regression.quiet]]
+name = "forcing_coeffs"
+zeros = true
+
+[[regression.quiet]]
+name = "target_coeffs"
+zeros = true
+
+[[regression.quiet]]
+name = "table_mode"
+value = 0

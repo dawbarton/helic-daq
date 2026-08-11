@@ -1,0 +1,28 @@
+# RP2350 firmware which composes the core-0 services from outside the
+# repository, so that the half of the platform `fw-fixture-rig` excludes is
+# still covered by an out-of-workspace consumer.
+[package]
+name = "fw-fixture-service-rig"
+description = "Out-of-workspace HELIC-DAQ core-0 composition fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+helic-fw-build.workspace = true
+
+[dependencies]
+fixture-rig-program = { path = "../fixture-program", features = ["rt-sram"] }
+helic-core.workspace = true
+helic-rt = { workspace = true, features = ["rt-sram"] }
+helic-fw-rt.workspace = true
+helic-fw-support = { workspace = true, features = ["net-wiznet-w5500"] }
+cortex-m-rt.workspace = true
+defmt.workspace = true
+defmt-rtt.workspace = true
+embassy-executor.workspace = true
+embassy-net.workspace = true
+embassy-rp.workspace = true
+embassy-time.workspace = true
+panic-probe.workspace = true
+static_cell.workspace = true

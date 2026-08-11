@@ -228,10 +228,16 @@ experiment in which it was first needed:
   `helic-deps-check --policy ...`, `helic-rt-layout --profile ... --elf-dir ...`
   and `helic-rt-regression --profile ... --firmware-dir ...` without editing or
   copying those tools. Every tool resolves its defaults from the current
-  directory, so none of them assumes a checkout of this repository. Keep `tests/external-rig` passing as the repository-
-  separation acceptance fixture. Its local `[patch.crates-io]` is only a
-  pre-publication checkout substitution, not evidence that the shared crates
-  have been released.
+  directory, so none of them assumes a checkout of this repository.
+- Keep `tests/external-rig` passing as the repository-separation acceptance
+  fixture. It holds two firmware members on purpose: `fw-fixture-rig` links no
+  core-0 support, proving the real-time platform stands alone, and
+  `fw-fixture-service-rig` composes `helic-fw-support`, covering the generic
+  control, streaming, discovery, status, watchdog and identity paths every
+  production rig uses. Do not let either lapse; the second exists because the
+  first cannot see defects in the half it excludes. Its local
+  `[patch.crates-io]` is only a pre-publication checkout substitution, not
+  evidence that the shared crates have been released.
 
 ## Hardware constraints worth preserving
 
@@ -297,7 +303,7 @@ cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings
 cargo test -p fixture-rig-program --target x86_64-unknown-linux-gnu
 cargo build --release --workspace
-helic-rt-layout --profile rig-profile.toml \
+helic-rt-layout --profile rig-profile.toml --profile service-rig-profile.toml \
   --elf-dir target/thumbv8m.main-none-eabihf/release
 helic-deps-check --policy dependency-policy.toml
 cd ../../host-python
