@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: proposed, not implemented. Revision 5.1. Supersedes parts of
+Status: proposed, not implemented. Revision 6. Supersedes parts of
 `docs/rt_program_proposal.md`. Revision history and review responses are at the
 end.
 
@@ -15,6 +15,33 @@ deliberate platform change with its own timing and memory evidence. A genuinely
 new reusable DSP algorithm belongs in `helic-core` and a new peripheral driver
 in `helic-drivers`; putting either in a rig crate would be the failure mode, not
 the success case.
+
+### Shared crates evolve additively
+
+The goal prohibits a *new* rig forcing changes that *existing* rigs must absorb.
+It does not prohibit the shared crates from growing, and conflating the two
+leads to bad conclusions.
+
+Promoting a proven module from one rig's repository into `helic-core` is purely
+additive: no existing API changes, no existing rig compiles differently, and each
+rig upgrades its dependency when it chooses. Development on the shared crates
+therefore continues freely; a rig in another repository is affected only when it
+decides to be.
+
+This is what makes the multi-repository arrangement safe, and it implies a
+compatibility discipline the shared crates must actually keep:
+
+- **Minor version** — new types, new trait methods *with defaults*, new
+  capacity constants, new optional parameters. Additive; no consumer changes.
+- **Major version** — any change to an existing signature, any trait method
+  without a default, any capacity *reduction*, any change to a wire-visible
+  name or to the meaning of an existing parameter or source.
+- Rigs pin a major version and upgrade deliberately.
+
+Note that adding a trait method without a default is a breaking change for
+every rig implementing that trait, which is why the `Rig` and `Program`
+contracts in this document give defaults wherever a rig could reasonably not
+care.
 
 ### Documented platform capacities
 
@@ -32,10 +59,25 @@ the success case.
 > A type earns a place in a shared crate by having **two actual consumers**, not
 > by being conceptually general.
 
-This is deliberate: otherwise `helic-core` accumulates speculative API that
-constrains refactoring for hypothetical users. It is why `RpmEstimator` moves
-out (one consumer) while `Pll` moves in (expected across rigs). Both decisions
-are one commit to reverse.
+Otherwise `helic-core` accumulates speculative API that constrains refactoring
+for users who never arrive. `RpmEstimator` therefore moves out to
+`whirl-rig-program`, having one consumer (`whirl-rig/src/rig.rs:10`).
+
+**Why this rule is cheap, which is the part that makes it work.** A reviewer
+objected that moving `RpmEstimator` out means a second rotating rig would later
+force a shared-code move, which sounds like exactly what the goal forbids. It is
+not, because of the additive-evolution principle above: promoting the module
+back into `helic-core` when a second consumer appears changes no existing API,
+breaks no other rig, and requires no other repository to do anything. The rule
+costs one additive minor release at the moment it bites, and in exchange keeps
+speculative API out of the shared crates in every case where the second consumer
+never appears.
+
+`Pll` is the mirror image and is placed in `helic-core` **deliberately against
+the letter of the rule**, because it is being specified here as a shared
+primitive with the reuse intent stated up front rather than discovered. If that
+intent proves wrong it moves into the appropriation rig's crate, which is the
+same one-commit operation in the other direction.
 
 ## Target applications and what they constrain
 
@@ -140,8 +182,11 @@ revisions asserted rather than showed:
 | Data path | `FourierSignal` owns its bank | banks live in the buffer, read through `Active` |
 
 The copy costs roughly 2–4 µs worst case against a 125 µs budget with 34 µs
-used, and occurs at most once per excitation period, which is 400 ticks at
-20 Hz. Twelve kilobytes of roughly 390 KB free is not decisive either.
+used. Its *expected* rate is once per excitation period, 400 ticks at 20 Hz, but
+that is an operating expectation and not an enforced bound: nothing stops a host
+writing the force vector faster, so the **WCET case remains two maximum-width
+commands in one tick** and is what stage 4 must measure. Twelve kilobytes of
+roughly 390 KB free is not decisive either.
 
 The deciding argument is **correctness-risk concentration**. Making
 `DoubleBuffer` sound has taken three attempts (see "Revision history"), and the
@@ -256,7 +301,7 @@ reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 | `helic-proto` | wire protocol, `ErrorCode`; broker protocol feature-gated | host |
 | `helic-core` | DSP: generators, controllers, estimators, filters, tables, `Pll`, `DoubleBuffer` | host |
 | **`helic-rt`** (new) | `Rig`, `TickSource`, `Program`, `ParamGroup`, `ParamDef`, `Payload`, `RtCommand`, `ParamStore`, safety decision, source assembly | host |
-| **`helic-fw-rt`** (new) | core 1: tick sources, `rt_mem`, `analog_spi`, PIO, loop driver, safety atomics | cross-build |
+| **`helic-fw-rt`** (new) | core 1: tick sources, `rt_mem`, `analog_spi`, PIO, loop driver, safety wrapper | cross-build |
 | **`helic-fw-support`** (new) | core 0: `net/`, `comms/`, `time_watchdog`, `status_run` | cross-build |
 | `helic-drivers` | chip and sensor logic, pure and host-testable | host |
 | `<rig>-program` | that rig's programme, controllers, shadows, rig-specific DSP | host |
@@ -268,8 +313,9 @@ reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 - `helic-rt` depends on `helic-core`, `helic-proto`, `heapless`; no Embassy.
 - `helic-fw-rt` depends on `embassy-rp` (for `pac`) but **not** `embassy-net`,
   `embassy-time`, or `embassy-executor`.
-- `helic-fw-support` may not depend on `helic-fw-rt` except through the queue
-  endpoints and `&'static RtShared`.
+- `helic-fw-support` has **no** dependency on `helic-fw-rt`. Both consume the
+  queue endpoint types and `&'static RtShared` from `helic-rt`, so no exception
+  is needed.
 
 ### Naming: why `helic-fw-support`, not `helic-fw-net`
 
@@ -317,18 +363,22 @@ state is most of why `helic-rt` exists:
 ```rust
 // helic-rt
 
-/// Everything `diag_reset` clears. Written by the real-time core, read by the
-/// control server.
-pub struct Diagnostics {
-    pub ticks: AtomicU32,               // total; deliberately not reset
+/// Current and lifetime values. Never cleared by `diag_reset`.
+pub struct Live {
+    pub ticks: AtomicU32,
     pub loop_time_last_us: AtomicU32,
+}
+
+/// Exactly the thirteen values `diag_reset` clears, and nothing else, so
+/// `Diagnostics::reset()` owns the whole struct.
+pub struct Diagnostics {
     pub loop_time_max_us: AtomicU32,
     pub clock_jitter_us: AtomicU32,
     pub overruns: AtomicU32,
     pub tick_timeouts: AtomicU32,
     pub records_dropped: AtomicU32,
     pub command_backlog_max: AtomicU32,
-    pub wake_phase_min_us: AtomicU32,
+    pub wake_phase_min_us: AtomicU32,   // resets to u32::MAX, not 0
     pub wake_phase_max_us: AtomicU32,
     pub t_measure_max_us: AtomicU32,
     pub t_actuate_max_us: AtomicU32,
@@ -337,24 +387,38 @@ pub struct Diagnostics {
     pub safety_quiet_ticks: AtomicU32,
 }
 
-/// Latched safety state, which deliberately survives `diag_reset`.
+/// Latched safety state, which survives `diag_reset`.
+///
+/// **Ownership is asymmetric and load-bearing.** `armed` is written *only* by
+/// core 0; core 1 reads it and must never write it. `tripped` is latched 0→1
+/// by core 1 and cleared only by core 0 on a deliberate re-arm.
 pub struct Safety {
     pub armed: AtomicU32,
     pub tripped: AtomicU32,
 }
 
+/// `IDLE → REQUESTED → QUIESCED`, preserving the existing Release/Acquire
+/// protocol from `reboot.rs`. Core 0 requests and awaits; core 1 observes and
+/// acknowledges. The crate split separates those two sides, so this state has
+/// to be injected like the rest.
+pub struct RebootShared { state: AtomicU32 }
+
 pub struct RtShared {
+    pub live: Live,
     pub diagnostics: Diagnostics,
     pub safety: Safety,
+    pub reboot: RebootShared,
 }
 ```
 
-The split between the two structs is the `diag_reset` lifecycle boundary, which
-today is a comment in `rt_loop::reset_diagnostics` warning that armed and
-tripped are deliberately left alone. Making it a type boundary means
-`diagnostics.reset()` can clear its whole struct with no way to clear `armed` by
-accident. Note that `safety_clamp_ticks` and `safety_quiet_ticks` sit in
-`Diagnostics` despite their names, because `diag_reset` does clear them.
+The boundaries between the structs are lifecycle boundaries. `reset_diagnostics`
+today clears thirteen values and touches neither `TICKS` nor
+`LOOP_TIME_LAST_US`, so those live in `Live`; a struct claiming to be
+"everything `diag_reset` clears" must not contain them, or `reset()` cannot own
+it. `safety_clamp_ticks` and `safety_quiet_ticks` sit in `Diagnostics` despite
+their names, because `diag_reset` does clear them. What today is a warning
+comment in `reset_diagnostics` becomes a type boundary with no reachable path
+from `reset()` to `armed` or `ticks`.
 
 `fw-<rig>` owns one const-initialised `static SHARED: RtShared` and passes
 `&SHARED` to both `ParamStore::new` and the real-time loop. Every field is an
@@ -442,12 +506,22 @@ receiving `Busy` must not then read back the value it was denied.
 // helic-rt
 pub enum Staged {
     Local(ParamAction),
-    Rt(RtCommand),
+    /// Payload only. The store builds the address from the group's declared
+    /// domain and the local id it has already resolved, so a group **cannot**
+    /// misaddress a command: an earlier revision let each group construct a
+    /// complete `RtCommand`, which meant `validate()` was checking a
+    /// declaration that nothing bound to behaviour.
+    Rt(Payload),
 }
 
 pub enum ParamAction { None, Reboot, ResetDiagnostics }
 
 pub trait ParamGroup {
+    /// The single command domain this group addresses, or `None` if every one
+    /// of its parameters is handled on core 0. Validated at setup against
+    /// `Program::DOMAINS` and `DOMAIN_RIG`.
+    fn domain(&self) -> Option<u8> { None }
+
     fn params(&self) -> &'static [ParamDef];
     fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode>;
 
@@ -494,15 +568,22 @@ impl ParamStore {
                 Ok(ParamAction::None)
             }
             Staged::Local(action) => { self.groups[g].accept(id); Ok(action) }
-            Staged::Rt(cmd) => match self.commands.enqueue(cmd) {
-                Ok(()) => { self.groups[g].accept(id); Ok(ParamAction::None) }
-                // heapless returns the value on failure, so the linear token
-                // travels back to its owner instead of being dropped.
-                Err(cmd) => {
-                    self.groups[g].reject(id, Some(cmd));
-                    Err(ErrorCode::Busy)
+            Staged::Rt(payload) => {
+                // The address is built here, from the group's declared domain
+                // and the id already resolved by `locate`. `validate()`
+                // guarantees the domain is present and correct, so this branch
+                // is unreachable; it degrades rather than panicking.
+                let domain = self.groups[g].domain().ok_or(ErrorCode::BadIndex)?;
+                match self.commands.enqueue(RtCommand { domain, id, payload }) {
+                    Ok(()) => { self.groups[g].accept(id); Ok(ParamAction::None) }
+                    // heapless returns the value on failure, so the linear
+                    // token travels back to its owner instead of being dropped.
+                    Err(cmd) => {
+                        self.groups[g].reject(id, Some(cmd));
+                        Err(ErrorCode::Busy)
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -528,9 +609,9 @@ into an atomic when it consumes the activation token, and `TableShadow::get`
 reads that atomic. It is an independent scalar, so this respects the coherence
 rule.
 
-**Parameter index order need not be preserved.** Both host libraries build
-name-to-parameter maps at discovery and derive indices from it
-(`device.py:160`, `device.jl:191`). Platform parameters can be an ordinary
+**Parameter index order need not be preserved.** All three host libraries
+resolve parameters by discovered name (`device.py:160`, `device.jl:191`,
+`+helicdaq/Device.m:71`); none caches a fixed index. Platform parameters can be an ordinary
 group, and the golden registry test asserts the *set* of
 `(name, type, count, writable)`. Stream **source** order is preserved, since it
 defines the record layout.
@@ -614,6 +695,51 @@ impl<T: Send> Active<T> {
 }
 ```
 
+**The transition protocol and its memory ordering are normative.** The borrow
+API above prevents local aliasing; it does nothing about cross-core visibility.
+Without Release/Acquire pairing, core 1 may not observe the staged writes and
+core 0 may select a bank from a stale active id. `table.rs:13` already states
+this requirement precisely for the concrete case, and the generic version must
+match it.
+
+State word (`AtomicU32`): active bank id, pending flag, pending bank id, and a
+generation incremented at each commit.
+
+```text
+Staging::buffer()
+    s = state.load(Acquire)      // pairs with activate's Release: sees which
+    if s.pending { Busy }        // bank core 1 released, and its writes
+    &mut buffers[s.active ^ 1]
+
+Staging::commit()
+    s = state.load(Relaxed)      // core 0 is the sole writer of `pending`
+    if s.pending { Busy }
+    state.store(s.pending(s.active ^ 1).gen(s.gen + 1), Release)
+                                 // Release: staged writes happen-before the
+                                 // publication core 1 will Acquire
+    CommitToken { owner, generation: s.gen + 1 }
+
+Staging::cancel(token)
+    s = state.load(Relaxed)
+    if s.pending && s.gen == token.generation { state.store(s.clear_pending(), Release) }
+
+Active::activate(token)
+    s = state.load(Acquire)      // pairs with commit's Release: staged writes
+                                 // become visible before the bank is read
+    if !s.pending || s.gen != token.generation || token.owner != self.id { return }
+    self.current = s.pending_id  // cached, so `get()` needs no atomic
+    state.store(s.active(s.pending_id).clear_pending(), Release)
+
+Active::get()
+    &buffers[self.current]       // plain indexed read: no atomic on the tick path
+```
+
+The synchronisation cost is paid once per activation, not once per tick, which
+is why `Active` caches `current` rather than re-reading the state word in
+`get()`. Core 0 cannot write while `pending` is set, and by the time `pending`
+clears it has Acquire-loaded the new active id, so the two cores never target
+the same bank.
+
 Soundness properties, each enforced rather than documented:
 
 - **one endpoint pair only**, because `split` needs `&'static mut self`;
@@ -693,27 +819,57 @@ so a control-connection loss can quiet the output without command latency, which
 means armed state must live in an atomic shared between cores. The resolution is
 to make only the *decision* pure and host-testable:
 
+**Core 1 must never write `armed`.** An earlier revision had the decision
+function return a successor `SafetyState` containing `armed`, which the wrapper
+wrote back wholesale. That admits the interleaving: core 1 reads `armed = true`;
+core 0 handles connection loss and stores `armed = false`; core 1 writes its
+stale `armed = true`. The output is re-armed with no host action, during
+precisely the event that is supposed to quiet it. Today's code does not have
+this defect because `safety_gate` only ever reads `SAFETY_ARMED`.
+
+The guarantee is therefore made structural rather than tested: **the outcome
+type has no `armed` field**, so there is nothing core 1 could write back.
+
 ```rust
 // helic-rt: pure, no atomics, no statics
 #[derive(Clone, Copy)]
-pub struct SafetyState { pub armed: bool, pub tripped: bool }
+pub struct SafetyInputs { pub armed: bool, pub tripped: bool }
 
+/// Deliberately carries no `armed`: it is core-0-owned, and `newly_tripped` is
+/// a monotonic 0→1 latch rather than a value to publish.
 #[derive(Clone, Copy, Default)]
-pub struct SafetyEvents { pub quieted: bool, pub clamped: bool, pub newly_tripped: bool }
+pub struct SafetyOutcome { pub newly_tripped: bool, pub quieted: bool, pub clamped: bool }
 
 pub fn safety_decide<R: Rig>(
     rig: &R,
-    state: SafetyState,
+    inputs: SafetyInputs,
     fault: bool,
     commanded: &[f32],
     applied: &mut [f32],
-) -> (SafetyState, SafetyEvents);
+) -> SafetyOutcome;
 ```
 
-`helic-fw-rt` wraps it: read `shared.safety`, evaluate `rig.output_fault(inputs)`,
-`program.fault()`, and a non-finite check over `commanded`, call
-`safety_decide`, then write the successor state back to `shared.safety` and the
-event counters to `shared.diagnostics`.
+`helic-fw-rt` wraps it:
+
+```rust
+let inputs = SafetyInputs {
+    armed:   shared.safety.armed.load(Ordering::Relaxed) != 0,
+    tripped: shared.safety.tripped.load(Ordering::Relaxed) != 0,
+};
+let outcome = safety_decide(rig, inputs, fault, commanded, &mut applied);
+if outcome.newly_tripped {
+    // Monotonic latch. Never a plain store, so a concurrent core-0 re-arm
+    // cannot be silently reverted, and a stale read cannot clear the trip.
+    shared.safety.tripped.fetch_or(1, Ordering::Relaxed);
+}
+if outcome.quieted { shared.diagnostics.safety_quiet_ticks.fetch_add(1, Ordering::Relaxed); }
+if outcome.clamped { shared.diagnostics.safety_clamp_ticks.fetch_add(1, Ordering::Relaxed); }
+// `shared.safety.armed` is not written here, and cannot be: see SafetyOutcome.
+```
+
+The existing clear-then-arm order in `safety_arm` is preserved and remains
+correct against this latch: a still-present fault re-latches on the next tick
+rather than being masked.
 
 Contract:
 
@@ -740,10 +896,21 @@ acquire lock. The state machine makes acquisition a first-class state.
 Fixed ──enable──▶ Acquiring ──|error| < lock_tol for lock_dwell──▶ Locked
                       │                                              │
                       │ acquire_timeout exceeded                     │ |error| > unlock_tol
-                      │ or input below min_amplitude                 │ for unlock_dwell
+                      │ (invalid samples stall the state;            │ OR invalid samples,
+                      │  they do not themselves end it)              │ for unlock_dwell
                       ▼                                              ▼
                    Fixed (reverts, no trip) ◀────── reset ────── LockLost ──▶ fault()
 ```
+
+**Invalid samples**, meaning non-finite, or force or response demodulated below
+`min_amplitude`, are defined in every state:
+
+| State | Behaviour on an invalid sample |
+|---|---|
+| `Fixed` | ignored; the loop is not running |
+| `Acquiring` | does not drive the loop and does not count toward `lock_dwell`; acquisition stalls, and only `acquire_timeout` ends the state |
+| `Locked` | counts toward `unlock_dwell`, exactly as an out-of-tolerance error does, and then enters `LockLost` |
+| `LockLost` | ignored; the state is latched until `reset` |
 
 - **Only `LockLost` reports a fault**, and only after lock was previously
   acquired. `Acquiring` never trips, so the excitation that lock depends on is
@@ -753,8 +920,7 @@ Fixed ──enable──▶ Acquiring ──|error| < lock_tol for lock_dwell─
 - Separate `lock_tol`/`unlock_tol` and `lock_dwell`/`unlock_dwell` give
   hysteresis in both amplitude and time.
 - `min_amplitude` on the demodulated force and response suppresses lock claims
-  on noise; samples below it are counted invalid and stall acquisition rather
-  than driving the loop.
+  on noise; see the invalid-sample table above for its effect in each state.
 - Sustained increment saturation against the configured bounds for
   `saturation_dwell` is treated as loss of lock.
 - `reset` returns to `Fixed` and clears the loop filter.
@@ -813,16 +979,22 @@ check, with a test for each malformed case:
 
 - parameter name uniqueness across all groups, ASCII, and per-category length;
 - total parameter count within the `u16` index range;
-- each group's parameters fitting the paged discovery budget;
+- **each individual parameter definition fitting one discovery page.** Not each
+  group: paged discovery advances until `next == n_params` (`protocol.md:136`),
+  so registries and groups are expected to span pages. The real constraint is
+  that a single definition must fit, or `next` could never advance past it;
 - blob parameter maximum length fitting wire discovery;
 - source name uniqueness and total encoded size within `DISCOVERY_HEADROOM`;
 - `groups.len() <= MAX_GROUPS`;
 - `P::OUTPUTS == R::ACTUATORS.len() <= MAX_ACTUATORS`;
 - `P::INPUTS_REQUIRED <= R::INPUTS.len()`;
 - source count `<= MAX_SOURCES`;
-- **domain uniqueness** across the programme's claimed domains, and no
-  collision with `DOMAIN_RIG`, since a duplicate misroutes silently rather than
-  failing loudly.
+- **domain binding**: every registered group's `domain()` is unique, does not
+  collide with `DOMAIN_RIG`, and the set of non-`None` group domains is exactly
+  `Program::DOMAINS`. Because the store now builds the command address from
+  `domain()`, this check governs actual routing rather than a declaration
+  nothing is bound to; a duplicate or stray domain would otherwise misroute
+  silently.
 
 ## Examples
 
@@ -972,8 +1144,56 @@ impl Program for Appropriation {
 }
 ```
 
+Its core-0 half, in the same file, sharing `mod ids` and the domain constant:
+
+```rust
+pub struct AppropriationShadow { /* shadows + `pending` */ }
+
+impl ParamGroup for AppropriationShadow {
+    /// Declared once, and the only place this group says where its commands
+    /// go. `ParamStore` builds every address from it.
+    fn domain(&self) -> Option<u8> { Some(DOMAIN) }
+
+    fn params(&self) -> &'static [ParamDef] {
+        &[
+            ParamDef::writable("freq_setpoint", ParamType::F32, 1),
+            ParamDef::writable("force_vector", ParamType::F32, VECTOR_LEN as u16),
+            ParamDef::writable("pll_gain", ParamType::F32, 1),
+            ParamDef::writable("target_phase", ParamType::F32, 1),
+            ParamDef::writable("freq_min", ParamType::F32, 1),
+            ParamDef::writable("freq_max", ParamType::F32, 1),
+            ParamDef::writable("excitation_mode", ParamType::U32, 1),
+            ParamDef::writable("ctrl_reset", ParamType::U32, 1),
+        ]
+    }
+
+    fn stage(&mut self, id: u16, data: &[u8]) -> Result<Staged, ErrorCode> {
+        match id {
+            ids::FORCE_VECTOR => {
+                // Rejects non-finite values. Nothing host-observable changes
+                // until `accept`.
+                let values = deserialize_f32s::<VECTOR_LEN>(data)?;
+                self.pending = Some(Pending::Force(values));
+                Ok(Staged::Rt(Payload::Values {
+                    len: VECTOR_LEN as u8,
+                    data: pad(values),
+                }))
+            }
+            // ... remaining ids, each returning `Staged::Rt(payload)`
+            _ => Err(ErrorCode::BadIndex),
+        }
+    }
+
+    fn accept(&mut self, _id: u16) { /* publish `self.pending` into the shadow */ }
+    fn reject(&mut self, _id: u16, _returned: Option<RtCommand>) { self.pending = None; }
+    fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode> { /* ... */ }
+}
+```
+
 Source budget: 8 inputs (4 measured force, 4 response), 4 programme signals, 4
-actuators, `cmd_epoch` — **17 of 24**, at 4.352 Mbit/s.
+actuators, `cmd_epoch` — **17 of 24**, at 4.352 Mbit/s. That figure is an
+extrapolation from the 13-source configuration verified in `notes.md:50`, not
+itself verified.
 
 The device PLL keeps one drive point at the commanded force-to-response phase.
 The host computes the full multipoint, multiharmonic mode indicator from the
@@ -984,6 +1204,9 @@ resulting force vector as one atomic `Values` command.
 
 ```rust
 impl ParamGroup for TableShadow {
+    /// Declared once. The group never constructs a command address itself.
+    fn domain(&self) -> Option<u8> { Some(DOMAIN) }
+
     fn set_block(&mut self, id: u16, offset: u32, data: &[u8]) -> Result<(), ErrorCode> {
         if id != ids::TABLE { return Err(ErrorCode::BadIndex); }
         write_f32_block(self.staging.buffer().map_err(map_busy)?, offset, data)
@@ -995,9 +1218,7 @@ impl ParamGroup for TableShadow {
         // pending state for the store to have to unwind.
         self.validate_prefix(len)?;
         let token = self.staging.commit().map_err(map_busy)?;
-        Ok(Staged::Rt(RtCommand {
-            domain: DOMAIN, id, payload: Payload::Buffer(token),
-        }))
+        Ok(Staged::Rt(Payload::Buffer(token)))
     }
 
     /// The queue gave the command back, so the linear token comes home.
@@ -1054,13 +1275,15 @@ production rigs here and treats the crate boundary as the contract that
 
 ## Migration plan
 
-0. **`RtShared` defined in `helic-rt`** and the diagnostic and safety atomics
-   moved into it, with `ParamStore` and the loop taking `&'static RtShared`.
-   This is a **prerequisite for stage 1**, not an optional tidy-up: without it
-   `ParamStore` cannot leave `helic-fw-common` without inverting the crate
-   layering (see "Cross-core shared state").
-1. **`helic-rt` created** by moving `Rig`, `TickSource`, `SampleRate`, and the
-   parameter types out of `helic-fw-common` unchanged.
+0. **Create the `helic-rt` skeleton crate and define `RtShared`** (`Live`,
+   `Diagnostics`, `Safety`, `RebootShared`), moving the diagnostic, safety, and
+   reboot atomics into it, with `ParamStore` and the loop taking
+   `&'static RtShared`. The crate must exist before anything can be defined in
+   it, and this state must move before `ParamStore` can: otherwise stage 1
+   inverts the crate layering (see "Cross-core shared state").
+1. **Move the remaining runtime types** — `Rig`, `TickSource`, `SampleRate`,
+   `Program`, `ParamGroup`, `ParamStore`, and the parameter types — out of
+   `helic-fw-common` into `helic-rt`, unchanged.
 2. **`helic-fw-common` split** into `helic-fw-rt` and `helic-fw-support`,
    dependency rules added to CI, and the membership rule written into
    `helic-fw-support`'s crate documentation. Verify by ELF inspection and a
@@ -1097,7 +1320,14 @@ behaviour.
 ignored; `cancel` restores writability; a rejected commit leaves the active
 buffer untouched; compile-fail tests for two `buffer()` borrows, a `get()`
 borrow held across `activate()`, a second `split()`, and any attempt to copy a
-`CommitToken`.
+`CommitToken`. **Ordering**: a host-side test that the values written before
+`commit` are exactly the values observed after `activate`, exercised under
+`loom` if it can be made to run on the state machine, and at minimum asserted
+by inspection of the emitted orderings against the protocol in §3.
+
+**Reboot handshake** — `request` → `is_requested` → `mark_quiesced` →
+`is_quiesced` across the `helic-rt` boundary, with the idempotent repeat-request
+behaviour of `reboot.rs` preserved.
 
 **Transactionality** — a full queue leaves every shadow at its pre-write value
 for each parameter kind; a failed blob enqueue returns the token and leaves the
@@ -1115,12 +1345,20 @@ the same tick; a length mismatch updates none.
 **Golden registry** — the *set* of `(name, type, count, writable)` per rig.
 **Golden sources** — names *and order*, updated to include `phase`.
 
-**Validation** — one test per malformed composition in §8, including duplicate
-domains and `INPUTS_REQUIRED` exceeding `R::INPUTS.len()`.
+**Validation** — one test per malformed composition in §8, including a duplicate
+group domain, a group domain absent from `Program::DOMAINS`, a group domain
+colliding with `DOMAIN_RIG`, a single parameter definition too large for one
+discovery page, and `INPUTS_REQUIRED` exceeding `R::INPUTS.len()`.
 
 **Safety** — `safety_decide` is pure and host-tested: rig fault, programme
 fault, and non-finite output each latch the trip and quiet all actuators;
 per-actuator clamping; counters per tick; non-gated rig verbatim.
+
+**Safety ownership** — the primary guarantee is structural, since
+`SafetyOutcome` has no `armed` field, so the test is a compile-fail check that
+the wrapper cannot write `shared.safety.armed`. Add a concurrency test that a
+core-0 disarm occurring between the wrapper's load and its publication leaves
+`armed` clear, and that `newly_tripped` never clears an existing trip.
 
 **`Pll`** — acquisition from `Fixed` never reports a fault; lock is claimed only
 after `lock_dwell` within `lock_tol`; hysteresis prevents chatter at the
@@ -1177,6 +1415,56 @@ wake phase is the baseline.
    and 128 at `H = 16`. Decide with stage 6 ELF evidence.
 
 ## Revision history
+
+**Revision 6** responds to a third review. All five must-fix findings were
+verified against the code and accepted; three of them were defects introduced by
+revision 5.1's own tidying, which is itself the lesson.
+
+- **[P0] The safety wrapper could undo a concurrent disarm.** Returning a
+  successor `SafetyState` containing `armed` turned a read-only input into a
+  read-write round trip, admitting: core 1 reads `armed = true`; core 0 stores
+  `armed = false` on connection loss; core 1 writes back `true`. Today's
+  `safety_gate` has no such defect because it only ever *reads* `SAFETY_ARMED`.
+  Fixed structurally rather than by test: `SafetyOutcome` has no `armed` field,
+  and `tripped` is latched with `fetch_or`.
+- **[P0] `DoubleBuffer` had no memory-ordering specification.** The borrow API
+  prevents local aliasing and says nothing about cross-core visibility.
+  `table.rs:13` already states the requirement precisely for the concrete case;
+  §3 now gives the state word, the transition protocol, and the
+  Acquire/Release pairing normatively, including that `Active` caches `current`
+  so `get()` needs no atomic on the tick path.
+- **[P1] Reboot coordination was missing.** `reboot.rs` holds shared
+  `IDLE → REQUESTED → QUIESCED` state with core 0 requesting and core 1
+  acknowledging; the crate split separated those without providing for it.
+  `RebootShared` joins `RtShared`.
+- **[P1] Domain validation could not validate routing.** Groups constructed
+  their own complete `RtCommand`, so `validate()` checked a declaration nothing
+  was bound to. `Staged::Rt` now carries the payload only, groups declare
+  `domain()`, and `ParamStore` builds every address.
+- **[P1] The diagnostics lifecycle was self-contradictory.** A struct described
+  as "everything `diag_reset` clears" contained `ticks` and
+  `loop_time_last_us`, which it clears neither of. Split into `Live` and
+  `Diagnostics`, so `reset()` genuinely owns its whole struct.
+
+Refinements accepted: the PLL invalid-sample policy is now defined in every
+state, with a table, resolving a diagram/prose contradiction; validation
+requires each *parameter definition* to fit a page rather than each group, since
+`protocol.md:136` has registries spanning pages by design; stage 0 creates the
+crate before stage 1 populates it; `helic-fw-support` has no dependency on
+`helic-fw-rt` at all; the copied force payload's once-per-period rate is stated
+as an operating expectation with two maximum-width commands per tick retained as
+the WCET case; and the parameter-order evidence now covers all three host
+libraries, MATLAB included (`+helicdaq/Device.m:71`).
+
+**The two-consumer rule is retained, and its justification corrected.** A
+reviewer objected that moving `RpmEstimator` out means a second rotating rig
+would force a shared-code move. The objection dissolves under the
+additive-evolution principle now stated in the goal: promoting a module back
+into `helic-core` changes no existing API and requires no other repository to do
+anything. The goal forbids a *new* rig imposing changes on *existing* rigs, not
+the shared crates growing. `RpmEstimator` therefore stays in
+`whirl-rig-program`, and the rule keeps speculative API out of `helic-core` in
+every case where the second consumer never arrives.
 
 **Revision 5.1** closes the one genuine implementation blocker and renames a
 crate:
