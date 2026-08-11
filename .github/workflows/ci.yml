@@ -35,6 +35,8 @@ jobs:
           python-version: "3.12"
       - run: pip install numpy
       - run: PYTHONPATH=.:tests python -m unittest discover -s tests -v
+      - name: Test rig verification profiles
+        run: PYTHONPATH=.:../firmware/tools python -m unittest discover -s ../firmware/tools/tests -v
 
   julia:
     name: Host package (HelicDAQ.jl)

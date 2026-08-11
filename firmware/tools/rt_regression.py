@@ -8,20 +8,25 @@ fails if common real-time acceptance criteria regress.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
-from helic_daq import Device
-from helic_daq import protocol
-
+from helic_daq import Device, protocol
+from rig_profile import (
+    ProfileError,
+    RegressionProfile,
+    RigProfile,
+    load_profiles,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIRMWARE = ROOT / "firmware"
+DEFAULT_PROFILE_PATHS = sorted((FIRMWARE / "experiments").glob("*/rig-profile.toml"))
 COUNTERS = (
     "ticks",
     "loop_time_last",
@@ -41,52 +46,12 @@ PHASE_COUNTERS = (
 )
 
 
-@dataclass(frozen=True)
-class RigProfile:
-    package: str
-    experiment: str
-    sample_rate_hz: int
-    default_host: str | None
-    capture_sources: tuple[str, ...]
-    wired: bool
-    max_loop_us: int | None
-
-
-RIGS = {
-    "cbc": RigProfile(
-        "fw-cbc-rig",
-        "cbc-rig",
-        8_000,
-        "192.168.1.235",
-        ("adc0", "out"),
-        True,
-        60,
-    ),
-    "whirl": RigProfile(
-        "fw-whirl-rig",
-        "whirl-rig",
-        2_000,
-        "192.168.1.238",
-        ("pitch", "yaw", "rpm"),
-        True,
-        None,
-    ),
-    "pico2w": RigProfile(
-        "fw-pico2w-rig",
-        "pico2w-rig",
-        8_000,
-        None,
-        ("laser", "out"),
-        False,
-        None,
-    ),
-}
-
-
-def run(cmd: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str], firmware_dir: Path, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
-        cwd=FIRMWARE,
+        cwd=firmware_dir,
         check=True,
         timeout=timeout,
         text=True,
@@ -95,12 +60,12 @@ def run(cmd: list[str], timeout: float | None = None) -> subprocess.CompletedPro
     )
 
 
-def flash(profile: RigProfile, board: str, timeout: float) -> str:
+def flash(profile: RigProfile, board: str, timeout: float, firmware_dir: Path) -> str:
     cmd = ["cargo", "run", "--release", "-p", profile.package]
-    if profile.wired and board == "w6100":
+    if profile.regression.wired and board == "w6100":
         cmd.extend(["--no-default-features", "--features", "board-w6100"])
     try:
-        return run(cmd, timeout=timeout).stdout
+        return run(cmd, firmware_dir, timeout=timeout).stdout
     except subprocess.TimeoutExpired as error:
         # `cargo run` remains attached to defmt after flashing. A timeout is the
         # normal way to detach before opening the single host connection.
@@ -132,7 +97,9 @@ def phase_snapshot(device: Device) -> dict[str, int]:
     return dict(zip(PHASE_COUNTERS, device.get(*PHASE_COUNTERS)))
 
 
-def delta(before: dict[str, int], after: dict[str, int], elapsed_s: float) -> dict[str, float]:
+def delta(
+    before: dict[str, int], after: dict[str, int], elapsed_s: float
+) -> dict[str, float]:
     ticks = after["ticks"] - before["ticks"]
     return {
         "elapsed_s": elapsed_s,
@@ -148,14 +115,18 @@ def delta(before: dict[str, int], after: dict[str, int], elapsed_s: float) -> di
     }
 
 
-def quiet_outputs(device: Device) -> None:
-    zeros = [0.0] * device.param("forcing_coeffs").count
-    device.set("forcing_coeffs", zeros)
-    device.set("target_coeffs", zeros)
-    device.set("table_mode", 0)
+def quiet_outputs(device: Device, profile: RegressionProfile) -> None:
+    for write in profile.quiet:
+        if write.zeros:
+            value: object = [0.0] * device.param(write.name).count
+        else:
+            value = write.value
+        device.set(write.name, value)
 
 
-def measure_phase(device: Device, seconds: float, poll_interval: float | None) -> dict[str, object]:
+def measure_phase(
+    device: Device, seconds: float, poll_interval: float | None
+) -> dict[str, object]:
     reset_diagnostics(device)
     before = snapshot(device)
     started = time.monotonic()
@@ -167,14 +138,18 @@ def measure_phase(device: Device, seconds: float, poll_interval: float | None) -
             snapshot(device)
             polls += 1
             time.sleep(poll_interval)
-    result: dict[str, object] = delta(before, snapshot(device), time.monotonic() - started)
+    result: dict[str, object] = delta(
+        before, snapshot(device), time.monotonic() - started
+    )
     result["phase"] = phase_snapshot(device)
     if poll_interval is not None:
         result["polls"] = polls
     return result
 
 
-def acceptance_errors(result: dict[str, object], profile: RigProfile) -> list[str]:
+def acceptance_errors(
+    result: dict[str, object], profile: RegressionProfile
+) -> list[str]:
     errors: list[str] = []
     for phase_name in ("idle", "poll", "capture"):
         phase = result[phase_name]
@@ -188,9 +163,7 @@ def acceptance_errors(result: dict[str, object], profile: RigProfile) -> list[st
         if phase_name != "capture":
             rate = float(phase["ticks_per_s"])
             if not (
-                profile.sample_rate_hz * 0.98
-                <= rate
-                <= profile.sample_rate_hz * 1.02
+                profile.sample_rate_hz * 0.98 <= rate <= profile.sample_rate_hz * 1.02
             ):
                 errors.append(
                     f"{phase_name}: ticks_per_s={rate:.1f}, "
@@ -205,7 +178,10 @@ def acceptance_errors(result: dict[str, object], profile: RigProfile) -> list[st
                 f"limit {profile.max_loop_us} us"
             )
         timing = phase["phase"]
-        if isinstance(timing, dict) and timing["wake_phase_max"] - timing["wake_phase_min"] > 2:
+        if (
+            isinstance(timing, dict)
+            and timing["wake_phase_max"] - timing["wake_phase_min"] > 2
+        ):
             errors.append(f"{phase_name}: wake phase spread exceeds 2 us")
     capture = result["capture"]
     if isinstance(capture, dict):
@@ -217,9 +193,19 @@ def acceptance_errors(result: dict[str, object], profile: RigProfile) -> list[st
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rig", choices=RIGS, default="cbc")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
+        "--rig", default="cbc", help="discovered production profile name"
+    )
+    selection.add_argument("--profile", type=Path, help="path to a rig-owned profile")
     parser.add_argument("--host", default=os.environ.get("HELIC_DAQ_HOST"))
     parser.add_argument("--board", choices=("w5500", "w6100"), default="w5500")
+    parser.add_argument(
+        "--firmware-dir",
+        type=Path,
+        default=FIRMWARE,
+        help="Cargo workspace used for flashing (default: this repository's firmware)",
+    )
     parser.add_argument("--no-flash", action="store_true")
     parser.add_argument("--idle-seconds", type=float, default=5.0)
     parser.add_argument("--poll-seconds", type=float, default=5.0)
@@ -233,16 +219,39 @@ def main() -> int:
     parser.add_argument("--connect-timeout", type=float, default=15.0)
     args = parser.parse_args()
 
-    profile = RIGS[args.rig]
-    host = args.host or profile.default_host
+    try:
+        if args.profile is not None:
+            profiles = load_profiles([args.profile])
+            profile = next(iter(profiles.values()))
+        else:
+            profiles = load_profiles(DEFAULT_PROFILE_PATHS)
+            try:
+                profile = profiles[args.rig]
+            except KeyError:
+                parser.error(
+                    f"unknown rig profile {args.rig!r}; choose from {', '.join(profiles)}"
+                )
+    except ProfileError as error:
+        parser.error(str(error))
+
+    regression = profile.regression
+    host = args.host or regression.default_host
     if host is None:
-        parser.error("--host or HELIC_DAQ_HOST is required for the DHCP Pico 2W rig")
-    if not profile.wired and args.board != "w5500":
+        parser.error(
+            "--host or HELIC_DAQ_HOST is required when the profile has no host"
+        )
+    if not regression.wired and args.board != "w5500":
         parser.error("--board applies only to wired rigs")
 
-    result: dict[str, object] = {"rig": args.rig, "package": profile.package, "host": host}
+    result: dict[str, object] = {
+        "rig": profile.name,
+        "package": profile.package,
+        "host": host,
+    }
     if not args.no_flash:
-        result["flash_tail"] = flash(profile, args.board, args.flash_timeout).splitlines()[-12:]
+        result["flash_tail"] = flash(
+            profile, args.board, args.flash_timeout, args.firmware_dir
+        ).splitlines()[-12:]
 
     with connect(host, args.connect_timeout) as device:
         status = device.status()
@@ -253,7 +262,7 @@ def main() -> int:
             raise RuntimeError(
                 f"connected to {experiment!r}, expected {profile.experiment!r}"
             )
-        quiet_outputs(device)
+        quiet_outputs(device, regression)
         result["idle"] = measure_phase(device, args.idle_seconds, None)
         result["poll"] = measure_phase(device, args.poll_seconds, args.poll_interval)
 
@@ -265,7 +274,7 @@ def main() -> int:
         elif args.capture_sources:
             capture_sources = args.capture_sources.split(",")
         else:
-            capture_sources = list(profile.capture_sources)
+            capture_sources = list(regression.capture_sources)
         capture = device.capture(
             capture_sources,
             samples=args.capture_samples,
@@ -274,17 +283,19 @@ def main() -> int:
         captured = delta(before, snapshot(device), time.monotonic() - started)
         indices = capture["index"]
         captured.update(
-            records=int(len(indices)),
+            records=len(indices),
             lost_packets=int(capture["lost_packets"]),
             capture_dropped=int(capture["dropped"]),
-            index_gaps=sum(int(b) != int(a) + 1 for a, b in zip(indices, indices[1:])),
+            index_gaps=sum(
+                int(b) != int(a) + 1 for a, b in itertools.pairwise(indices)
+            ),
             sources=capture_sources,
             phase=phase_snapshot(device),
         )
         result["capture"] = captured
-        quiet_outputs(device)
+        quiet_outputs(device, regression)
 
-    errors = acceptance_errors(result, profile)
+    errors = acceptance_errors(result, regression)
     result["acceptance_errors"] = errors
     print(json.dumps(result, indent=2))
     return 1 if errors else 0

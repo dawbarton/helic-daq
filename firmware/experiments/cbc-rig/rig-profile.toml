@@ -1,0 +1,55 @@
+# Static and hardware verification contract for the production CBC rig.
+schema_version = 1
+name = "cbc"
+package = "fw-cbc-rig"
+experiment = "cbc-rig"
+
+[layout]
+elf = "fw-cbc-rig"
+required_patterns = [
+  ["run_hot_loop"],
+  ["run_reboot_quiesce"],
+  ["transfer_in_place"],
+  ["apply_program"],
+  ["set_rig_param"],
+  ["measure_rig"],
+  ["step_program"],
+  ["program_fault"],
+  ["safety_decide"],
+  ["actuate_rig"],
+  ["write_program_signals"],
+  ["table_buffer", "Active", "3get"],
+  ["table_buffer", "Active", "8activate"],
+]
+optional_patterns = [
+  ["run_rt_tick"],
+  ["reboot_quiesce_step"],
+  ["prepare_reboot"],
+]
+exact_symbols = [
+  "__aeabi_memcpy",
+  "__aeabi_memcpy4",
+  "__aeabi_memcpy8",
+  "__aeabi_memclr",
+  "__aeabi_memclr4",
+  "__aeabi_memclr8",
+]
+
+[regression]
+sample_rate_hz = 8000
+default_host = "192.168.1.235"
+capture_sources = ["adc0", "out"]
+wired = true
+max_loop_us = 60
+
+[[regression.quiet]]
+name = "forcing_coeffs"
+zeros = true
+
+[[regression.quiet]]
+name = "target_coeffs"
+zeros = true
+
+[[regression.quiet]]
+name = "table_mode"
+value = 0

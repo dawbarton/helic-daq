@@ -1,0 +1,53 @@
+# Static and hardware verification contract for the production Pico 2W rig.
+schema_version = 1
+name = "pico2w"
+package = "fw-pico2w-rig"
+experiment = "pico2w-rig"
+
+[layout]
+elf = "fw-pico2w-rig"
+required_patterns = [
+  ["run_hot_loop"],
+  ["run_reboot_quiesce"],
+  ["transfer_in_place"],
+  ["apply_program"],
+  ["set_rig_param"],
+  ["measure_rig"],
+  ["step_program"],
+  ["actuate_rig"],
+  ["write_program_signals"],
+  ["table_buffer", "Active", "3get"],
+  ["table_buffer", "Active", "8activate"],
+]
+optional_patterns = [
+  ["run_rt_tick"],
+  ["reboot_quiesce_step"],
+  ["prepare_reboot"],
+  ["program_fault"],
+  ["safety_decide"],
+]
+exact_symbols = [
+  "__aeabi_memcpy",
+  "__aeabi_memcpy4",
+  "__aeabi_memcpy8",
+  "__aeabi_memclr",
+  "__aeabi_memclr4",
+  "__aeabi_memclr8",
+]
+
+[regression]
+sample_rate_hz = 8000
+capture_sources = ["laser", "out"]
+wired = false
+
+[[regression.quiet]]
+name = "forcing_coeffs"
+zeros = true
+
+[[regression.quiet]]
+name = "target_coeffs"
+zeros = true
+
+[[regression.quiet]]
+name = "table_mode"
+value = 0
