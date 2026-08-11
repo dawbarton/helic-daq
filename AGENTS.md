@@ -25,12 +25,20 @@ There is no deployed protocol v1. Do not add compatibility shims. Crates are
 `helicdaq`. The repository directory may still be named `cbc-daq`, but code
 and current documentation use HELIC-DAQ except where CBC is the experiment.
 
-The supported production firmware set is exactly `cbc-rig`, `whirl-rig` and
-`pico2w-rig`. Do not restore retired experiment crates. Adding a genuinely new
-experiment also requires updating the firmware workspace and CI, adding its
-rig-owned verification profile, and updating the user/developer guides and
-`notes.md`. The shared layout and regression tools discover profiles as data;
-do not add an experiment-specific registry to either tool.
+The production firmware set in this repository is exactly `cbc-rig` and
+`pico2w-rig`. Do not restore retired experiment crates, and do not restore the
+whirl rig: it is maintained separately at
+[helic-whirl-rig](https://github.com/dawbarton/helic-whirl-rig), pinned to a
+platform tag. Adding a genuinely new experiment here also requires updating the
+firmware workspace and CI, adding its rig-owned verification profile, and
+updating the user/developer guides and `notes.md`. The shared layout and
+regression tools discover profiles as data; do not add an experiment-specific
+registry to either tool.
+
+A change to a shared crate is now a change to a downstream repository as well.
+Nothing in this repository rebuilds an out-of-tree rig, so treat the crate
+boundary as an interface with real consumers: honour the versioning rules
+below, and record consumer-visible changes in the release tag message.
 
 ## Component placement and ownership
 
@@ -227,8 +235,8 @@ experiment in which it was first needed:
   counters stayed healthy. Record exact firmware identity and results in
   `notes.md`.
 - Software checks, ELF addresses and successful streaming do not establish
-  electrical, RF or real-time behaviour. Do not promote whirl, Pico 2W or
-  W6100 paths from software-only status without ordered physical evidence.
+  electrical, RF or real-time behaviour. Do not promote Pico 2W or W6100 paths
+  from software-only status without ordered physical evidence.
 - A separately maintained rig owns its portable programme, firmware crate,
   target configuration, lockfile, exact shared-crate pins, dependency policy
   and `rig-profile.toml`. It installs the host package and drives
@@ -254,10 +262,8 @@ experiment in which it was first needed:
 - The optoNCDT UART input needs an idle-high line. The current rig uses an
   external 10 kΩ pull-up on GP1; without it, a disconnected sensor can cause
   a UART interrupt storm.
-- The whirl rig uses two RMB20SC12BC96 encoders: 12-bit natural binary SSI at
-  1 MHz with a shared clock. Its dual-SSI and optical-period paths, and the
-  Pico 2W Wi-Fi/DAC path, are not yet hardware-verified; consult `notes.md`
-  before relying on them.
+- The Pico 2W Wi-Fi/DAC path is not yet hardware-verified; consult `notes.md`
+  before relying on it.
 - Confirm the Ethernet controller physically attached before flashing a wired
   build. A successful W6100 cross-build is software evidence only and never
   authorises flashing that image to W5500 hardware.
@@ -286,10 +292,6 @@ set is:
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
-cargo clippy --manifest-path firmware/experiments/whirl-rig/Cargo.toml \
-  --lib --target x86_64-unknown-linux-gnu --no-default-features -- -D warnings
-cargo test --manifest-path firmware/experiments/whirl-rig/Cargo.toml \
-  --lib --target x86_64-unknown-linux-gnu --no-default-features
 pip install -e host-python   # provides helic-rt-layout and helic-deps-check
 cd firmware
 helic-deps-check
@@ -304,7 +306,6 @@ cargo clippy --manifest-path build/Cargo.toml --all-targets \
 cargo test --manifest-path build/Cargo.toml --target x86_64-unknown-linux-gnu
 helic-rt-layout
 cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100
-cargo build --release -p fw-whirl-rig --no-default-features --features board-w6100
 cd ../tests/external-rig
 cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings

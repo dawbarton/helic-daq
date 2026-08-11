@@ -20,9 +20,9 @@ class ProfileLoadingTests(unittest.TestCase):
     def test_production_profiles_are_rig_owned_data(self) -> None:
         profiles = load_profiles(PROFILE_PATHS)
 
-        self.assertEqual(set(profiles), {"cbc", "whirl", "pico2w"})
+        self.assertEqual(set(profiles), {"cbc", "pico2w"})
         self.assertEqual(profiles["cbc"].regression.max_loop_us, 60)
-        self.assertEqual(profiles["whirl"].regression.capture_sources[-1], "rpm")
+        self.assertEqual(profiles["cbc"].regression.capture_sources[0], "adc0")
         self.assertIsNone(profiles["pico2w"].regression.default_host)
         self.assertIn(
             ("table_buffer", "Active", "3get"),
@@ -52,7 +52,7 @@ class ProfileLoadingTests(unittest.TestCase):
 class LayoutProfileTests(unittest.TestCase):
     def test_checker_uses_profile_patterns_and_exact_symbols(self) -> None:
         profile = load_profile(
-            FIRMWARE / "experiments" / "whirl-rig" / "rig-profile.toml"
+            FIRMWARE / "experiments" / "pico2w-rig" / "rig-profile.toml"
         )
         realised = [
             (layout.SRAM_START, "prefix" + "_".join(pattern))

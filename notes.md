@@ -1,6 +1,6 @@
 # Hardware verification status
 
-Last updated 2026-08-10. Read this before a hardware session and update the
+Last updated 2026-08-11. Read this before a hardware session and update the
 verification boundary, failures and fitted-hardware assumptions afterwards.
 
 ## Verified on hardware
@@ -138,13 +138,11 @@ intentionally matches it.
   is zero clock jitter. Reproduce and explain this result; do not relax the
   limit to accommodate it.
 - Long phase-locked arbitrary table operation.
-- `fw-whirl-rig` and `fw-pico2w-rig`. They build with the firmware workspace
-  and their portable logic has host tests, but neither has been exercised as
-  a complete physical experiment. Both use the mandatory synchronous SRAM
-  core-1 architecture: whirl adapts it to the raw PWM-wrap latch and PIO FIFOs,
-  while Pico 2W uses the raw latch and SPI1 DAC path. This is static ELF and
-  cross-build evidence only, not real SSI, optical-input, Wi-Fi, DAC or timing
-  evidence.
+- `fw-pico2w-rig`. It builds with the firmware workspace and its portable logic
+  has host tests, but it has not been exercised as a complete physical
+  experiment. It uses the mandatory synchronous SRAM core-1 architecture with
+  the raw PWM-wrap latch and SPI1 DAC path. This is static ELF and cross-build
+  evidence only, not real Wi-Fi, DAC or timing evidence.
 - W6100 Ethernet on every wired experiment. The W6100 variants cross-build,
   but no W6100-EVB-Pico2 has been exercised. Verify link, static addressing,
   DHCP, discovery, TCP control and sustained UDP streaming before treating it
@@ -154,25 +152,17 @@ intentionally matches it.
 - Full 24-source W5500 throughput and CYW43439 throughput, latency and RF
   behaviour.
 
-The `fw-whirl-rig` constants match RMB20SC12BC96: 12-bit natural binary,
-4096 positions per revolution, 1 MHz SSI below the 4 MHz limit, and more than
-20.5 µs idle-high time between frames. Confirm the complete dual-converter
-wiring, bit ordering and PIO period calibration on hardware. For the Pico 2W,
-verify PIO1 radio bring-up, DHCP, discovery, a light capture and real-time tick
-stability while Wi-Fi is active.
+For the Pico 2W, verify PIO1 radio bring-up, DHCP, discovery, a light capture
+and real-time tick stability while Wi-Fi is active.
 
 ### Whirl rig
 
-- The two 5 V RMB20 encoders share the GP22 clock through separate
-  TTL-to-RS422 transmitters. Their 3.3 V-safe receiver outputs connect pitch
-  to GP26 and yaw to GP27.
-- PIO samples both SSI inputs simultaneously at 1 MHz. Counts 0 and 4095 are
-  valid positions and cannot be used as disconnected signatures.
-- GP28 receives an active-high 3.3 V optical pulse approximately 100 µs wide.
-  PIO measures rising-edge periods with a nominal 1 µs count and a fixed
-  program-overhead correction that still requires logic-analyser validation.
-- The intended range is approximately 2000–6000 RPM. Periods below 5 ms are
-  rejected as glitches; RPM becomes stale after 100 ms without a valid period.
+Moved on 2026-08-11. The whirl rig is maintained at
+[helic-whirl-rig](https://github.com/dawbarton/helic-whirl-rig) and records its
+hardware constraints, bring-up sequence and evidence in its own `notes.md`. Its
+dual-SSI and optical-period paths were still unverified at the split; that
+status moved with it. Entries dated before the split remain below as the
+platform's own history.
 
 ## Bring-up constraints and known hardware faults
 
@@ -437,8 +427,6 @@ evidence:
 
 1. Pico 2W association, discovery, DAC output and decimated streaming while
    checking the 8 kHz synchronous tick diagnostics;
-2. whirl-rig shared-clock SSI, simultaneous pitch/yaw capture and optical
-   period calibration;
 3. all-source W5500 streaming while watching `records_dropped`, UDP sequence
    gaps, `loop_time_max`, `overruns` and `tick_timeouts`;
 4. W6100 link, static addressing, DHCP, discovery, control and all-source
@@ -877,6 +865,31 @@ evidence:
 - Promotion to `helic-core` remains cheap and is deferred until an algorithm
   has a second real consumer, or is deliberately accepted as a platform
   primitive. Generic-looking code alone is not evidence of platform reuse.
+
+## 2026-08-11T18:20+00:00 Whirl rig split into its own repository
+
+- The whirl rig left this repository for
+  [helic-whirl-rig](https://github.com/dawbarton/helic-whirl-rig), with its
+  history preserved through `git subtree split`. It consumes the platform
+  crates as git dependencies pinned to `v0.1.1`; nothing is vendored.
+- Platform changes made first, so the split rested on a working boundary rather
+  than on hope: build identity is now owned by the application crate
+  (`helic-fw-build` plus `firmware_identity!`) instead of being derived from
+  this repository by `helic-fw-support`; `memory.x` and the linker build script
+  are shared; and the verification gates ship in the host package as
+  `helic-rt-layout`, `helic-rt-regression` and `helic-deps-check`.
+- The identity defect was real and would have been silent: built out-of-tree,
+  the old build script reported this repository's revision and the platform
+  crate's version, while `rt_regression` still passed because it compares only
+  the experiment name. The whirl firmware now reports
+  `fw-whirl-rig 0.1.0 <its own revision>`.
+- `tests/external-rig` gained `fw-fixture-service-rig`, which composes the
+  core-0 services the existing fixture forbids. That fixture could not have
+  caught the identity defect, because its dependency policy excludes the crate
+  containing it. Keep both members.
+- Nothing here is hardware evidence. No board was flashed, and the whirl rig's
+  dual-SSI and optical-period paths remain unverified; that status moved with
+  the rig.
 
 ## 2026-08-11T16:26+00:00 Whirl package-local RPM integration verified
 

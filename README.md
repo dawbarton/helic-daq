@@ -39,12 +39,16 @@ record segmented HDF5 files without changing the firmware.
 | Firmware package | Board and purpose | Verification |
 |---|---|---|
 | `fw-cbc-rig` | W5500/W6100-EVB-Pico2, AD7609, AD5064 and optional optoNCDT | Core path verified on W5500; W6100 software verified |
-| `fw-whirl-rig` | W5500/W6100-EVB-Pico2, dual RMB20 SSI and optical revolution pulse | Software verified; hardware verification pending |
 | `fw-pico2w-rig` | Pico 2W and AD5064 over Wi-Fi | Software verified |
 
 Here, software verified means that portable logic passes host tests and the
 complete firmware target builds; it is not a claim about the physical path.
 See [notes.md](notes.md) for the precise hardware-verification boundary.
+
+The dual-encoder whirl rig is maintained in its own repository,
+[helic-whirl-rig](https://github.com/dawbarton/helic-whirl-rig), pinned to a
+HELIC-DAQ release tag. Adding a rig that way is described in the developer
+guide under "Adding a rig in its own repository".
 
 ## Layout
 

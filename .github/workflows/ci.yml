@@ -21,10 +21,6 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
-      - name: Lint whirl-rig-local portable computation
-        run: cargo clippy --manifest-path firmware/experiments/whirl-rig/Cargo.toml --lib --target x86_64-unknown-linux-gnu --no-default-features -- -D warnings
-      - name: Test whirl-rig-local portable computation
-        run: cargo test --manifest-path firmware/experiments/whirl-rig/Cargo.toml --lib --target x86_64-unknown-linux-gnu --no-default-features
       - name: Test out-of-workspace rig programme
         run: cargo test --manifest-path tests/external-rig/Cargo.toml -p fixture-rig-program --target x86_64-unknown-linux-gnu
 
@@ -115,7 +111,6 @@ jobs:
           cargo build --release --workspace
       - name: Check out-of-workspace real-time symbols
         run: helic-rt-layout --profile ../tests/external-rig/rig-profile.toml --profile ../tests/external-rig/service-rig-profile.toml --elf-dir ../tests/external-rig/target/thumbv8m.main-none-eabihf/release
-      - name: Build W6100 wired variants
+      - name: Build the W6100 wired variant
         run: |
           cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100
-          cargo build --release -p fw-whirl-rig --no-default-features --features board-w6100

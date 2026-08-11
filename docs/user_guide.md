@@ -3,25 +3,27 @@
 HELIC-DAQ is a real-time control and data acquisition platform for laboratory
 control, signal generation and instrumentation. `cbc-rig` targets
 control-based continuation using an AD7609 ADC and AD5064 DAC. Wired
-experiments support the W5500-EVB-Pico2 and W6100-EVB-Pico2. `whirl-rig`
-samples two RMB20 SSI encoders and an optical revolution pulse. `pico2w-rig`
+experiments support the W5500-EVB-Pico2 and W6100-EVB-Pico2. `pico2w-rig`
 runs an AD5064 signal generator with optional optoNCDT laser logging on a
 Raspberry Pi Pico 2W over Wi-Fi.
+
+Rigs may also be maintained in their own repositories against a pinned
+HELIC-DAQ release; the dual-encoder
+[whirl rig](https://github.com/dawbarton/helic-whirl-rig) is one. The host
+workflows below are identical for such a rig, because the host discovers
+parameters and sources by name from whatever firmware it connects to.
 
 ## What it does
 
 - In `cbc-rig`, samples all 8 analogue inputs simultaneously at **1, 2, 4 or
   8 kHz** (compile-time preset), with hardware-timed conversion starts.
-- In `whirl-rig`, samples pitch and yaw simultaneously at **2 kHz** using one
-  PIO state machine and estimates rotor speed from a hardware-timed optical
-  pulse period.
 - In `pico2w-rig`, updates an AD5064 output at a hardware-timed **8 kHz** while
   Wi-Fi control, streaming and optional laser logging run on the other core.
 - Runs a **real-time control loop** every sample: measurements → controller →
   actuation where output hardware is fitted. The default builds select
   open-loop pass-through; a PID controller is provided and others can be
-  added in firmware. `whirl-rig` retains these calculations for future output
-  hardware but currently has no actuation.
+  added in firmware. A rig without output hardware retains these calculations
+  and has no actuation.
 - Generates a **periodic reference/forcing signal** as a Fourier series
   (16 harmonics by default) with µHz-resolution frequency control and
   glitch-free, phase-continuous updates, which are central to CBC.
@@ -51,7 +53,6 @@ header, plus `cargo install probe-rs-tools`):
 ```sh
 cd firmware
 cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
-cargo run --release -p fw-whirl-rig # Dual SSI encoders and revolution pulse
 HELIC_WIFI_SSID=lab HELIC_WIFI_PASSWORD=secret \
   cargo run --release -p fw-pico2w-rig # Pico 2W Wi-Fi signal generator
 ```
@@ -64,11 +65,7 @@ cargo run --release -p fw-cbc-rig --no-default-features --features board-w6100
 ```
 
 The synchronous SRAM real-time path is mandatory and is retained when default
-network features are disabled:
-
-```sh
-cargo run --release -p fw-whirl-rig --no-default-features --features board-w6100
-```
+network features are disabled.
 
 The log shows a boot banner, network bring-up, and a once-a-second status
 line with loop timing and overruns.
@@ -83,7 +80,7 @@ picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf 
 picotool load helic-daq.uf2 && picotool reboot
 ```
 
-Add `--no-default-features --features board-w6100` to the CBC or whirl
+Add `--no-default-features --features board-w6100` to the CBC
 build command for a W6100 image. The resulting executable has the same
 filename, so convert or copy it before building the other board variant.
 
@@ -99,7 +96,8 @@ helic-daq find
 ```
 
 The wired experiments use static addresses by default: `192.168.1.235/24` for
-`cbc-rig` and `192.168.1.238/24` for `whirl-rig`.
+`cbc-rig`. A separately maintained rig chooses its own; the whirl rig uses
+`192.168.1.238/24`.
 Connect it to your machine directly or via a switch and give your machine an
 address on the same subnet, for example `192.168.1.10/24`. After installing
 the host package below, check the TCP control service:
@@ -124,16 +122,6 @@ default and `helic-daq find` reports the assigned address. The Pico 2W LED is
 driven through the CYW43439, not GP25. Use wired Ethernet for sustained
 full-rate multi-source streaming; Wi-Fi is intended for control, signal
 generation and lighter captures.
-
-The whirl build reports wrapped pitch and yaw in revolutions. Both
-RMB20SC12BC96 encoders use 12-bit natural-binary SSI at 1 MHz and share one
-clock, so PIO samples both data inputs on the same instruction. The optical
-input exposes `rev_period`, EWMA `rpm`, `rev_pulse` and `rpm_valid`. The
-estimate uses a 250 ms time constant and becomes invalid after 100 ms without
-an accepted pulse. Its mandatory real-time path polls the hardware PWM-wrap
-latch and accesses both PIO FIFOs from SRAM without an executor on core 1.
-`ssi_errors`, `pulse_count`, `pulse_glitches` and `pulse_errors` provide
-transport diagnostics.
 
 Install the Python package from the repository root:
 
@@ -418,9 +406,6 @@ pass-through controller the output is simply `target + forcing`.
 | Analogue in 0–7 | AD7609 inputs, ±10 V (or ±20 V, compile-time) |
 | Analogue out 0–3 | Per-channel polarity, set in `board.rs` (`DAC_POLARITY`): unipolar 0–4.096 V or bipolar ±4.096 V |
 | Laser | optoNCDT 1420 via bidirectional RS422↔TTL at 921.6 kBaud; CBC configures its rate to match the sample clock |
-| SSI clock (`whirl-rig`) | GP22, fanned out to both TTL→RS422 clock transmitters |
-| Pitch/yaw (`whirl-rig`) | RS422→TTL data on GP26/GP27 respectively |
-| Revolution pulse (`whirl-rig`) | Active-high 3.3 V input on GP28 |
 
 Output-channel polarity must match your analogue board's output stages. The
 target design is two bipolar + two unipolar; the current build is **all four

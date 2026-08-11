@@ -199,7 +199,7 @@ including 0 and 1, returns bad value. A valid write disables streaming and
 disarms the safety gate. Core 1 then quiesces experiment outputs at sample
 boundaries: CBC restores both differential DAC inputs to their common-mode
 rest value and defines the unused channels, Pico 2W zeros all four DAC
-channels, and the actuator-free whirl rig completes immediately. Core 0 waits
+channels, and a rig with no actuator completes immediately. Core 0 waits
 up to 20 ms for that handshake, then asks the RP2350 ROM for an asynchronous,
 normal-path reset after 250 ms. A quiescence timeout is logged but does not
 prevent reset, because resetting is the remaining recovery for a stuck core 1.

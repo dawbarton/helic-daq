@@ -69,9 +69,6 @@ def check_default_policy(data: dict[str, Any], workspace: Path) -> None:
 
     require_exact(packages["helic-core"], {"libm"})
     require_exact(packages["helic-rt"], {"heapless", "helic-core", "helic-proto"})
-    # Whirl-only portable computation lives in this package's library target;
-    # every firmware dependency is ARM-target-gated so host tests stay isolated.
-    require_exact(packages["fw-whirl-rig"], set())
 
     forbidden_rt = {
         "embassy-executor",

@@ -86,7 +86,6 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | `firmware/support/` | Universal core-0 communication, network, identity, status and watchdog services | `thumbv8m.main-none-eabihf` only |
 | `firmware/integrations/optoncdt/` | Optional optoNCDT UART integration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
-| `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders, optical period capture and a dependency-free RPM library target | host library + `thumbv8m.main-none-eabihf` firmware |
 | `firmware/experiments/pico2w-rig/` | Pico 2W Wi-Fi signal generator, DAC and laser logger | `thumbv8m.main-none-eabihf` only |
 | `host-python/` | Python package `helic_daq` + `helic-daq` CLI, and the `helic_daq.verify` rig gates installed by out-of-tree rigs | host |
 | `tests/external-rig/` | Independent workspace proving out-of-workspace composition, with one real-time-only and one core-0 firmware member | host tests + `thumbv8m.main-none-eabihf` |
@@ -186,7 +185,7 @@ endpoints, composed component-owned parameter groups, and moved the standard
 target/forcing/controller/table graph behind the statically selected
 `Program`, and generalised the rig/program boundary to a bounded actuator
 vector. Table and harmonic capacities are experiment-selected const generics,
-the single-consumer RPM estimator now lives in the whirl package's host-tested
+the single-consumer RPM estimator lives in the whirl rig package's host-tested
 library target, and
 `helic-core` supplies the bounded measured-force PLL for future phase-locked
 programmes. The common loop owns timing, command dispatch, vector safety, and
@@ -217,7 +216,7 @@ re-exported through each experiment's `config.rs`).
 The software pipeline is edge-triggered on the BUSY falling edge
 (conversion complete). CBC uses the mandatory synchronous runner, which
 spin-polls the IO bank's raw
-edge-detect latch from SRAM. The ADC-free whirl and Pico 2W rigs use the same
+edge-detect latch from SRAM. ADC-free rigs, such as Pico 2W, use the same
 runner with the PWM peripheral's latched wrap flag. Each tick then runs
 
 1. apply at most two queued commands and advance the wrapping `cmd_epoch`
@@ -268,14 +267,15 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   `tick_timeouts` when no ADC is attached.
 - `PwmWrapSpinTick`: the ADC-free equivalent, spinning on the PWM
   peripheral's raw wrap latch while the PWM slice continues to own the 2 kHz
-  whirl or 8 kHz Pico 2W sample instant. The processor-facing PWM interrupt
+  ADC-free or 8 kHz Pico 2W sample instant. The processor-facing PWM interrupt
   remains disabled.
 - `helic_fw_rt::analog_spi`: register-level blocking SPI transfers in
   `.data.ram_func` with precomputed clock/format configs. The embassy
   drivers still perform one-time init; only the per-tick CBC ADC/DAC and Pico
   2W DAC data paths bypass them.
-- raw PIO FIFO access for the whirl rig's SSI and optical-period state
-  machines. Embassy retains ownership and performs one-time PIO setup, while
+- raw PIO FIFO access, as the out-of-tree whirl rig uses for its SSI and
+  optical-period state machines. Embassy retains ownership and performs
+  one-time PIO setup, while
   per-tick FIFO reads and writes use PAC registers from SRAM.
 - The tick body and RP-specific helpers placed directly in `.data.ram_func`.
   The firmware workspace enables the `rt-sram` feature for host-tested DSP,
@@ -289,7 +289,8 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
 - Network reboot quiescence: core 0 publishes a release/acquire reboot request;
   core 1 diverts at the next sample boundary into bounded `Rig::prepare_reboot`
   steps, publishes completion, and spins in SRAM. CBC and Pico 2W issue one DAC
-  word per boundary to preserve device timing; whirl completes immediately.
+  word per boundary to preserve device timing; a rig with no actuator
+  completes immediately.
   `helic-rt-layout` requires the shared completion symbol in SRAM and checks
   any emitted experiment quiescence symbols there too.
 
@@ -340,7 +341,7 @@ so "it still streams" proves nothing.
 
 ```sh
 cd firmware
-cargo build --release -p fw-cbc-rig -p fw-whirl-rig -p fw-pico2w-rig
+cargo build --release -p fw-cbc-rig -p fw-pico2w-rig
 helic-rt-layout
 ```
 
@@ -403,8 +404,7 @@ cd firmware
 helic-rt-regression --rig cbc
 ```
 
-Use `--rig whirl` or `--rig pico2w --host <DHCP-address>` for the other
-profiles. Acceptance, in **every** CBC phase at 8 kHz:
+Use `--rig pico2w --host <DHCP-address>` for the other profile. Acceptance, in **every** CBC phase at 8 kHz:
 
 - `overruns == 0`, `tick_timeouts == 0`, `records_dropped == 0`;
 - `ticks_per_s` ≈ 8000 (a deficit means BUSY edges are being skipped);
@@ -483,7 +483,8 @@ the async task is descheduled, holds approximately 170 ms at 8 kHz (beyond the
 50 ms time-watchdog recovery bound), and still lets the task publish each
 frame as soon as it runs.
 
-In `whirl-rig`, PIO0 SM0 drives a shared SSI clock and samples the contiguous
+In the out-of-tree whirl rig, PIO0 SM0 drives a shared SSI clock and samples
+the contiguous
 pitch and yaw pins with one `in pins, 2` instruction. Each hardware-latched
 2 kHz PWM tick consumes the previous pair and starts the next through raw
 SRAM-resident FIFO access, fixing both channels at the same sample instant
@@ -944,9 +945,10 @@ Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses prob
 - The `cbc-rig` behaviour is **verified on hardware** (2026-07): networking,
   RT loop, ADC read, DAC write, DAC→ADC loopback (DC + AC), signal generator, all
   four sample-rate presets, parameter round-trip, closed-loop PID, and the
-  optoNCDT command-and-stream path through an ISL3177E at 8 kHz. The whirl-rig
-  PIO and Pico 2W/CYW43 paths have compile-time and host-test verification
-  only. See [../notes.md](../notes.md).
+  optoNCDT command-and-stream path through an ISL3177E at 8 kHz. The
+  Pico 2W/CYW43 paths have compile-time and host-test verification only. See
+  [../notes.md](../notes.md); the whirl rig records its own evidence in its
+  repository.
 - Arbitrary table upload and playback are implemented and host-tested, but
   still require scope verification on hardware, including glitch-free
   re-commit and long phase-locked runs.

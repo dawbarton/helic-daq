@@ -962,30 +962,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fw-whirl-rig"
-version = "0.1.1"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 1.1.1",
- "defmt-rtt",
- "embassy-executor",
- "embassy-net",
- "embassy-rp",
- "embassy-time",
- "heapless",
- "helic-core",
- "helic-drivers",
- "helic-fw-build",
- "helic-fw-rt",
- "helic-fw-support",
- "helic-proto",
- "helic-rt",
- "panic-probe",
- "static_cell",
-]
-
-[[package]]
 name = "generator"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
