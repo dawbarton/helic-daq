@@ -1,9 +1,10 @@
 //! Bounded command and record types exchanged between the firmware cores.
 
 use heapless::spsc::{Consumer, Producer};
-use helic_core::CommitToken;
+use helic_core::generator::FourierCoeffs;
+use helic_core::{Active, CommitToken, Staging};
 
-use crate::MAX_SOURCES;
+use crate::{HARMONICS, MAX_SOURCES};
 
 /// Maximum number of scalar values copied inline by one RT command.
 ///
@@ -94,6 +95,8 @@ pub const COMMAND_QUEUE_LEN: usize = 32;
 pub const COMMANDS_PER_TICK: usize = 2;
 pub type CommandProducer = Producer<'static, RtCommand>;
 pub type CommandConsumer = Consumer<'static, RtCommand>;
+pub type CoeffStaging = Staging<FourierCoeffs<HARMONICS>>;
+pub type ActiveCoeffs = Active<FourierCoeffs<HARMONICS>>;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Record {
@@ -112,6 +115,10 @@ pub struct RtChannels {
     pub command_rx: CommandConsumer,
     pub record_tx: RecordProducer,
     pub record_rx: RecordConsumer,
+    pub target_staging: CoeffStaging,
+    pub target_active: ActiveCoeffs,
+    pub forcing_staging: CoeffStaging,
+    pub forcing_active: ActiveCoeffs,
 }
 
 #[cfg(test)]

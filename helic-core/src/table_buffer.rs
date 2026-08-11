@@ -56,7 +56,11 @@ pub type ValueStaging<const N: usize> = Staging<[f32; N]>;
 unsafe impl<T: Send> Sync for DoubleBuffer<T> {}
 
 impl<T: 'static> DoubleBuffer<T> {
-    const fn from_banks(first: T, second: T) -> Self {
+    /// Construct a buffer from the two initial bank values.
+    ///
+    /// Prefer a zero-valued pair for firmware statics so the object remains in
+    /// `.bss` rather than consuming flash initialisation data.
+    pub const fn from_banks(first: T, second: T) -> Self {
         Self {
             banks: [UnsafeCell::new(first), UnsafeCell::new(second)],
             active: AtomicU8::new(0),

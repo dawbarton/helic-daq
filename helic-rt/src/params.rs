@@ -20,8 +20,8 @@ use helic_core::{BufferError, Staging as TableStaging, MAX_TABLE_LEN};
 use helic_proto::{ErrorCode, ParamType};
 
 use crate::{
-    command_id, validate_sources, CommandProducer, Payload, Rig, RtCommand, SampleRate,
-    DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, HARMONICS, MAX_RT_VALUES,
+    command_id, validate_sources, CoeffStaging, CommandProducer, Payload, Rig, RtCommand,
+    SampleRate, DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, HARMONICS,
 };
 
 mod schema;
@@ -165,6 +165,8 @@ pub struct ParamStore<C: Controller, R: Rig> {
     commands: CommandProducer,
     shared: &'static RtShared,
     table: TableStaging,
+    target_buffer: CoeffStaging,
+    forcing_buffer: CoeffStaging,
     sample_rate: SampleRate,
     firmware_version: &'static str,
     experiment: &'static str,
@@ -189,6 +191,8 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         commands: CommandProducer,
         shared: &'static RtShared,
         table: TableStaging,
+        target_buffer: CoeffStaging,
+        forcing_buffer: CoeffStaging,
         sample_rate: SampleRate,
         firmware_version: &'static str,
         experiment: &'static str,
@@ -227,6 +231,8 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             commands,
             shared,
             table,
+            target_buffer,
+            forcing_buffer,
             sample_rate,
             firmware_version,
             experiment,
@@ -505,7 +511,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             }
             IDX_TARGET => {
                 let coeffs = deserialize_coeffs(data)?;
-                let payload = coeff_payload(&coeffs);
+                *self.target_buffer.buffer().map_err(map_buffer_error)? = coeffs;
+                let payload =
+                    Payload::Buffer(self.target_buffer.commit().map_err(map_buffer_error)?);
                 (
                     DOMAIN_GENERATOR,
                     command_id::generator::SET_TARGET,
@@ -515,7 +523,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             }
             IDX_FORCING => {
                 let coeffs = deserialize_coeffs(data)?;
-                let payload = coeff_payload(&coeffs);
+                *self.forcing_buffer.buffer().map_err(map_buffer_error)? = coeffs;
+                let payload =
+                    Payload::Buffer(self.forcing_buffer.commit().map_err(map_buffer_error)?);
                 (
                     DOMAIN_GENERATOR,
                     command_id::generator::SET_FORCING,
@@ -776,10 +786,17 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
     /// must be cancelled through its unique staging endpoint, or the inactive
     /// bank would remain permanently busy.
     fn reject_command(&mut self, command: RtCommand) {
-        if let (DOMAIN_TABLE, command_id::table::ACTIVATE, Payload::Buffer(token)) =
-            (command.domain, command.id, command.payload)
-        {
-            self.table.cancel(token);
+        match (command.domain, command.id, command.payload) {
+            (DOMAIN_GENERATOR, command_id::generator::SET_TARGET, Payload::Buffer(token)) => {
+                self.target_buffer.cancel(token)
+            }
+            (DOMAIN_GENERATOR, command_id::generator::SET_FORCING, Payload::Buffer(token)) => {
+                self.forcing_buffer.cancel(token)
+            }
+            (DOMAIN_TABLE, command_id::table::ACTIVATE, Payload::Buffer(token)) => {
+                self.table.cancel(token)
+            }
+            _ => {}
         }
     }
 
@@ -793,27 +810,45 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         if self.commands.capacity() - self.commands.len() < crate::COMMANDS_PER_TICK {
             return Err(ErrorCode::Busy);
         }
-        let ids = if cfg!(feature = "diag-wide-command-payload") {
-            [
-                command_id::generator::DIAGNOSTIC_VALUES,
-                command_id::generator::DIAGNOSTIC_VALUES,
-            ]
-        } else {
-            [
-                command_id::generator::SET_TARGET,
-                command_id::generator::SET_FORCING,
-            ]
-        };
-        for id in ids {
+
+        #[cfg(feature = "diag-wide-command-payload")]
+        for _ in 0..crate::COMMANDS_PER_TICK {
             let result = self.commands.enqueue(RtCommand {
                 domain: DOMAIN_GENERATOR,
-                id,
+                id: command_id::generator::DIAGNOSTIC_VALUES,
                 payload: Payload::Values {
                     len: COEFF_COUNT as u8,
-                    data: [0.0; MAX_RT_VALUES],
+                    data: [0.0; crate::MAX_RT_VALUES],
                 },
             });
             debug_assert!(result.is_ok());
+        }
+
+        #[cfg(not(feature = "diag-wide-command-payload"))]
+        {
+            *self.target_buffer.buffer().map_err(map_buffer_error)? = FourierCoeffs::zero();
+            let target = self.target_buffer.commit().map_err(map_buffer_error)?;
+            let command = RtCommand {
+                domain: DOMAIN_GENERATOR,
+                id: command_id::generator::SET_TARGET,
+                payload: Payload::Buffer(target),
+            };
+            if let Err(returned) = self.commands.enqueue(command) {
+                self.reject_command(returned);
+                return Err(ErrorCode::Busy);
+            }
+
+            *self.forcing_buffer.buffer().map_err(map_buffer_error)? = FourierCoeffs::zero();
+            let forcing = self.forcing_buffer.commit().map_err(map_buffer_error)?;
+            let command = RtCommand {
+                domain: DOMAIN_GENERATOR,
+                id: command_id::generator::SET_FORCING,
+                payload: Payload::Buffer(forcing),
+            };
+            if let Err(returned) = self.commands.enqueue(command) {
+                self.reject_command(returned);
+                return Err(ErrorCode::Busy);
+            }
         }
         Ok(())
     }
@@ -826,17 +861,6 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
 fn map_buffer_error(error: BufferError) -> ErrorCode {
     match error {
         BufferError::Busy => ErrorCode::Busy,
-    }
-}
-
-fn coeff_payload(coeffs: &FourierCoeffs<HARMONICS>) -> Payload {
-    let mut data = [0.0; MAX_RT_VALUES];
-    data[0] = coeffs.mean;
-    data[1..1 + HARMONICS].copy_from_slice(&coeffs.a);
-    data[1 + HARMONICS..1 + 2 * HARMONICS].copy_from_slice(&coeffs.b);
-    Payload::Values {
-        len: COEFF_COUNT as u8,
-        data,
     }
 }
 
@@ -913,7 +937,7 @@ mod tests {
 
     use heapless::spsc::Queue;
     use helic_core::controller::PassThrough;
-    use helic_core::TableBuffer;
+    use helic_core::{DoubleBuffer, TableBuffer};
 
     use super::*;
     use crate::{source, source_count, RtCommand, COMMAND_QUEUE_LEN};
@@ -943,20 +967,34 @@ mod tests {
         }
     }
 
-    fn store_with_table() -> (
+    fn store_with_buffers() -> (
         ParamStore<PassThrough, TestRig>,
         crate::CommandConsumer,
         helic_core::ActiveTable,
+        crate::ActiveCoeffs,
+        crate::ActiveCoeffs,
     ) {
         let queue = Box::leak(Box::new(Queue::<RtCommand, COMMAND_QUEUE_LEN>::new()));
         let (tx, rx) = queue.split();
         let shared = Box::leak(Box::new(RtShared::new()));
         let (table, active) = Box::leak(Box::new(TableBuffer::new())).split();
+        let (target_staging, target_active) = Box::leak(Box::new(DoubleBuffer::from_banks(
+            FourierCoeffs::zero(),
+            FourierCoeffs::zero(),
+        )))
+        .split();
+        let (forcing_staging, forcing_active) = Box::leak(Box::new(DoubleBuffer::from_banks(
+            FourierCoeffs::zero(),
+            FourierCoeffs::zero(),
+        )))
+        .split();
         (
             ParamStore::new(
                 tx,
                 shared,
                 table,
+                target_staging,
+                forcing_staging,
                 SampleRate::Hz8000,
                 "0.1.0 test",
                 "test-rig",
@@ -965,11 +1003,13 @@ mod tests {
             ),
             rx,
             active,
+            target_active,
+            forcing_active,
         )
     }
 
     fn store() -> (ParamStore<PassThrough, TestRig>, crate::CommandConsumer) {
-        let (store, commands, _active) = store_with_table();
+        let (store, commands, _table, _target, _forcing) = store_with_buffers();
         (store, commands)
     }
 
@@ -1069,7 +1109,7 @@ mod tests {
 
     #[test]
     fn coefficient_write_uses_bounded_addressed_payload() {
-        let (mut store, mut rx) = store();
+        let (mut store, mut rx, _table, mut target, _forcing) = store_with_buffers();
         let coeffs = FourierCoeffs {
             mean: 0.25,
             a: core::array::from_fn(|i| i as f32 + 1.0),
@@ -1082,18 +1122,15 @@ mod tests {
         let Some(RtCommand {
             domain: DOMAIN_GENERATOR,
             id: command_id::generator::SET_TARGET,
-            payload: Payload::Values { len, data },
+            payload: Payload::Buffer(token),
         }) = rx.dequeue()
         else {
             panic!("target write was not routed to the generator");
         };
-        assert_eq!(len as u16, COEFF_COUNT);
-        assert_eq!(data[0], coeffs.mean);
-        assert_eq!(&data[1..1 + HARMONICS], &coeffs.a);
-        assert_eq!(&data[1 + HARMONICS..COEFF_COUNT as usize], &coeffs.b);
-        assert!(data[COEFF_COUNT as usize..]
-            .iter()
-            .all(|value| *value == 0.0));
+        target.activate(token);
+        assert_eq!(target.get().mean, coeffs.mean);
+        assert_eq!(target.get().a, coeffs.a);
+        assert_eq!(target.get().b, coeffs.b);
     }
 
     #[cfg(feature = "diag-max-command-burst")]
@@ -1101,25 +1138,32 @@ mod tests {
     fn diagnostic_reset_preloads_exact_per_tick_command_limit() {
         let (mut store, mut rx) = store();
         store.set(IDX_DIAG_RESET, &1_u32.to_le_bytes()).unwrap();
-        let expected_ids = if cfg!(feature = "diag-wide-command-payload") {
-            [
-                command_id::generator::DIAGNOSTIC_VALUES,
-                command_id::generator::DIAGNOSTIC_VALUES,
-            ]
-        } else {
-            [
-                command_id::generator::SET_TARGET,
-                command_id::generator::SET_FORCING,
-            ]
-        };
-        for expected_id in expected_ids {
+
+        #[cfg(feature = "diag-wide-command-payload")]
+        for _ in 0..crate::COMMANDS_PER_TICK {
             assert!(matches!(
                 rx.dequeue(),
                 Some(RtCommand {
                     domain: DOMAIN_GENERATOR,
                     id,
                     payload: Payload::Values { len, .. },
-                }) if id == expected_id && len as u16 == COEFF_COUNT
+                }) if id == command_id::generator::DIAGNOSTIC_VALUES
+                    && len as u16 == COEFF_COUNT
+            ));
+        }
+
+        #[cfg(not(feature = "diag-wide-command-payload"))]
+        for expected_id in [
+            command_id::generator::SET_TARGET,
+            command_id::generator::SET_FORCING,
+        ] {
+            assert!(matches!(
+                rx.dequeue(),
+                Some(RtCommand {
+                    domain: DOMAIN_GENERATOR,
+                    id,
+                    payload: Payload::Buffer(_),
+                }) if id == expected_id
             ));
         }
         assert!(rx.dequeue().is_none());
@@ -1148,6 +1192,22 @@ mod tests {
     }
 
     #[test]
+    fn full_command_queue_returns_coefficient_token_and_restores_staging() {
+        let (mut store, mut rx) = store();
+        loop {
+            match store.set(IDX_FREQ, &20.0f32.to_le_bytes()) {
+                Ok(ParamAction::None) => {}
+                Err(ErrorCode::Busy) => break,
+                result => panic!("unexpected queue-fill result: {result:?}"),
+            }
+        }
+        let coefficients = [0_u8; COEFF_COUNT as usize * 4];
+        assert_eq!(store.set(IDX_TARGET, &coefficients), Err(ErrorCode::Busy));
+        rx.dequeue().unwrap();
+        assert_eq!(store.set(IDX_TARGET, &coefficients), Ok(ParamAction::None));
+    }
+
+    #[test]
     fn full_command_queue_does_not_update_scalar_shadow() {
         let (mut store, _rx) = store();
         loop {
@@ -1168,7 +1228,7 @@ mod tests {
 
     #[test]
     fn table_length_changes_only_after_core_one_activation() {
-        let (mut store, mut rx, mut active) = store_with_table();
+        let (mut store, mut rx, mut active, _target, _forcing) = store_with_buffers();
         let bytes: std::vec::Vec<_> = [1.0f32, 2.0, 3.0]
             .into_iter()
             .flat_map(f32::to_le_bytes)

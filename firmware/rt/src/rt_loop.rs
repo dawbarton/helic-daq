@@ -10,20 +10,30 @@ use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
 use helic_core::phase::PhaseAccumulator;
 use helic_core::table::TablePlayer;
-use helic_core::ActiveTable;
+use helic_core::{ActiveTable, DoubleBuffer};
 use helic_rt::{
-    command_id, source_count, CommandConsumer, Payload, Record, RecordProducer, Rig, RtChannels,
-    RtCommand, RtShared, SampleRate, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN,
+    command_id, source_count, ActiveCoeffs, CommandConsumer, Payload, Record, RecordProducer, Rig,
+    RtChannels, RtCommand, RtShared, SampleRate, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN,
     DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, HARMONICS, MAX_SOURCES,
     RECORD_QUEUE_LEN,
 };
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 /// Mask for a command epoch that remains exactly representable as `f32`.
 const COMMAND_EPOCH_MASK: u32 = (1 << 24) - 1;
 
 static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
 static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
+static TARGET_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<HARMONICS>>> =
+    ConstStaticCell::new(DoubleBuffer::from_banks(
+        FourierCoeffs::zero(),
+        FourierCoeffs::zero(),
+    ));
+static FORCING_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<HARMONICS>>> =
+    ConstStaticCell::new(DoubleBuffer::from_banks(
+        FourierCoeffs::zero(),
+        FourierCoeffs::zero(),
+    ));
 
 /// Initialise the platform's single pair of cross-core queues.
 ///
@@ -33,11 +43,17 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 pub fn init_channels() -> RtChannels {
     let (command_tx, command_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (record_tx, record_rx) = RECORD_QUEUE.init(Queue::new()).split();
+    let (target_staging, target_active) = TARGET_COEFFS.take().split();
+    let (forcing_staging, forcing_active) = FORCING_COEFFS.take().split();
     RtChannels {
         command_tx,
         command_rx,
         record_tx,
         record_rx,
+        target_staging,
+        target_active,
+        forcing_staging,
+        forcing_active,
     }
 }
 
@@ -95,8 +111,8 @@ fn run_rt_tick<R: Rig>(
     records: &mut RecordProducer,
     lut: &SinLut,
     phase: &mut PhaseAccumulator,
-    target_coeffs: &mut FourierCoeffs<HARMONICS>,
-    forcing_coeffs: &mut FourierCoeffs<HARMONICS>,
+    target_coeffs: &mut ActiveCoeffs,
+    forcing_coeffs: &mut ActiveCoeffs,
     command_epoch: &mut u32,
     table_player: &mut TablePlayer,
     active_table: &mut ActiveTable,
@@ -146,19 +162,11 @@ fn run_rt_tick<R: Rig>(
             (DOMAIN_GENERATOR, command_id::generator::SET_INCREMENT, Payload::U32(increment)) => {
                 phase.set_increment(increment)
             }
-            (
-                DOMAIN_GENERATOR,
-                command_id::generator::SET_TARGET,
-                Payload::Values { len, data },
-            ) => {
-                write_coeffs(len, &data, target_coeffs);
+            (DOMAIN_GENERATOR, command_id::generator::SET_TARGET, Payload::Buffer(token)) => {
+                target_coeffs.activate(token);
             }
-            (
-                DOMAIN_GENERATOR,
-                command_id::generator::SET_FORCING,
-                Payload::Values { len, data },
-            ) => {
-                write_coeffs(len, &data, forcing_coeffs);
+            (DOMAIN_GENERATOR, command_id::generator::SET_FORCING, Payload::Buffer(token)) => {
+                forcing_coeffs.activate(token);
             }
             #[cfg(feature = "diag-max-command-burst")]
             (
@@ -229,8 +237,8 @@ fn run_rt_tick<R: Rig>(
     rig.measure(&mut values[..n_inputs]);
     let measure_us = now_us().wrapping_sub(m0);
     let (theta, period_start) = phase.step();
-    let target = target_coeffs.evaluate(lut, theta);
-    let forcing = forcing_coeffs.evaluate(lut, theta);
+    let target = target_coeffs.get().evaluate(lut, theta);
+    let forcing = forcing_coeffs.get().evaluate(lut, theta);
     let controller_out = controller.tick(&values[..n_inputs], target, dt);
     let table_out = table_player.step(active_table.get(), theta, period_start);
     let out_cmd = controller_out + forcing + table_out;
@@ -303,22 +311,6 @@ fn run_rt_tick<R: Rig>(
     shared.live.ticks.fetch_add(1, Ordering::Relaxed);
 }
 
-#[unsafe(link_section = ".data.ram_func")]
-fn write_coeffs(
-    len: u8,
-    data: &[f32; helic_rt::MAX_RT_VALUES],
-    coeffs: &mut FourierCoeffs<HARMONICS>,
-) {
-    if len as usize != 1 + 2 * HARMONICS {
-        return;
-    }
-    coeffs.mean = data[0];
-    coeffs.a.copy_from_slice(&data[1..1 + HARMONICS]);
-    coeffs
-        .b
-        .copy_from_slice(&data[1 + HARMONICS..1 + 2 * HARMONICS]);
-}
-
 /// Run one bounded, experiment-specific output-quiescence step.
 ///
 /// The stable source name is also checked in every production ELF by the
@@ -351,8 +343,8 @@ struct RtLoopState<R: Rig, T: TickSource> {
     records: RecordProducer,
     lut: &'static SinLut,
     phase: PhaseAccumulator,
-    target_coeffs: FourierCoeffs<HARMONICS>,
-    forcing_coeffs: FourierCoeffs<HARMONICS>,
+    target_coeffs: ActiveCoeffs,
+    forcing_coeffs: ActiveCoeffs,
     command_epoch: u32,
     table_player: TablePlayer,
     active_table: ActiveTable,
@@ -376,6 +368,8 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
     commands: CommandConsumer,
     records: RecordProducer,
     active_table: ActiveTable,
+    target_coeffs: ActiveCoeffs,
+    forcing_coeffs: ActiveCoeffs,
 ) -> ! {
     let n_inputs = R::INPUTS.len();
     let n_telemetry = R::Ctrl::TELEMETRY.len();
@@ -402,8 +396,8 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
         records,
         lut,
         phase: PhaseAccumulator::new(),
-        target_coeffs: FourierCoeffs::zero(),
-        forcing_coeffs: FourierCoeffs::zero(),
+        target_coeffs,
+        forcing_coeffs,
         command_epoch: 0,
         table_player: TablePlayer::new(),
         active_table,

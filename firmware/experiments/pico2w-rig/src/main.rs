@@ -83,6 +83,8 @@ fn main() -> ! {
         channels.command_tx,
         &RT_SHARED,
         table_staging,
+        channels.target_staging,
+        channels.forcing_staging,
         config::SAMPLE_RATE,
         helic_fw_support::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
@@ -102,6 +104,8 @@ fn main() -> ! {
             channels.command_rx,
             channels.record_tx,
             active_table,
+            channels.target_active,
+            channels.forcing_active,
         )
     });
 
