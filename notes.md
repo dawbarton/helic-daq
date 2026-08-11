@@ -756,3 +756,32 @@ evidence:
 - No whirl hardware was attached, so Stage 9 has host, cross-build, and ELF
   evidence only. The CBC W5500 was not reflashed and remains on accepted Stage
   8 firmware `0.1.0 57d8de7`, disarmed and quiet. W6100 was not flashed.
+
+## 2026-08-11T15:31+00:00 Rig-decoupling implementation stage 10
+
+- `helic-core` now provides a borrowed `HarmonicFrame<H>` and
+  `HarmonicGenerator<H>`, plus a single-drive-point `Pll<H>` which coherently
+  demodulates measured force and response at the fundamental. Projection
+  retains the existing Fourier accumulation order, and the frame's
+  `period_start` comes directly from accumulator overflow rather than a
+  reconstructed zero-phase test.
+- The PLL implements `Fixed`, non-faulting `Acquiring`, `Locked`, and latched
+  `LockLost` states. Tests cover lock and unlock tolerance/time hysteresis,
+  acquisition timeout and explicit retry, invalid-sample stalling/loss,
+  idempotent configuration replay, locked-only saturation loss, low-amplitude
+  rejection, and bounded output under divergent and non-finite input. The
+  missing setpoint ownership in the design sketch was made explicit in
+  `PllConfig` and `set_setpoint_increment`; retaining the command as `u32`
+  avoids the three-LSB error observed when a 50 Hz phase increment was briefly
+  stored as `f32`.
+- The future tick path uses squared amplitudes, integer-preserving fractional
+  correction, and a bounded algebraic atan2 rather than `libm` square root,
+  atan2, or rounding calls. A 40400-direction host sweep bounds atan2 error
+  below 0.1 degree, and an end-to-end two-channel test locks a measured
+  -30-degree response/force phase while preserving the exact setpoint.
+- All 175 root Rust tests plus four doctests pass. The release firmware
+  workspace passed dependency checking, formatting, clippy, build, and the
+  three-ELF SRAM layout gate; both W6100 wired variants cross-built and were
+  not flashed. No production programme instantiates the PLL, so there is no
+  relevant hardware path yet. The attached CBC W5500 was not reflashed and
+  remains on accepted Stage 8 firmware `0.1.0 57d8de7`, disarmed and quiet.

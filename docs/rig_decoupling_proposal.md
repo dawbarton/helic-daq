@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–9 completed 2026-08-11. Revision
-14. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–10 completed 2026-08-11. Revision
+15. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1616,7 +1616,22 @@ production rigs here and treats the crate boundary as the contract that
    and both W6100 variants pass. No whirl hardware was attached, so this is
    host, cross-build, and ELF evidence only; the accepted CBC W5500 image was
    not reflashed.
-10. **`Pll` into `helic-core`** with its state machine and bounds.
+10. **Completed 2026-08-11: `Pll` in `helic-core`** with a borrowed
+    `HarmonicFrame<H>` and `HarmonicGenerator<H>` for phase-coherent synthesis
+    and two-channel fundamental demodulation. `Pll<H>` implements the reviewed
+    `Fixed`, `Acquiring`, `Locked`, and latched `LockLost` states, independent
+    lock/unlock tolerances and dwells, acquisition timeout, invalid-amplitude
+    policy, locked-only saturation loss, idempotent enable, and inclusive
+    increment bounds. `PllConfig` makes the setpoint explicit because timeout
+    cannot otherwise restore it; the commanded value remains an exact `u32`,
+    with only fractional correction stored as `f32`. Squared amplitude checks,
+    integer-preserving rounding, and a host-bounded algebraic atan2 avoid
+    flash-resident `libm` calls on the future tick path. Nine new tests cover
+    frame projection and wrap, coherent measured-force/response locking,
+    approximation error below 0.1 degree, all state transitions, low-amplitude
+    stalling, replay idempotence, saturation, timeout, and bounds. All root and
+    release firmware gates pass. No production programme instantiates the PLL,
+    so hardware evidence is correctly deferred to its first real consumer.
 11. **Layout gate and `rt-sram` features** extended to the new hot-path symbols.
 12. **Decouple the safety and regression tooling.** `check_rt_layout.py` keys
     `REQUIRED_SYMBOLS` on the three package names (`check_rt_layout.py:31`) and
@@ -1781,6 +1796,16 @@ wake phase is the baseline.
    Stage-10 implementation produces contrary compiler evidence.
 
 ## Revision history
+
+**Revision 15** records the bounded PLL primitive. A borrowed harmonic frame
+provides one coherent basis for synthesis and measured-force/measured-response
+demodulation. The explicit four-state machine distinguishes non-faulting
+acquisition failure from latched loss of an established lock, while phase and
+time hysteresis, validity thresholds, and locked-only saturation dwell prevent
+chatter and false trips. The exact `u32` setpoint and bounded correction path
+close the frequency-safety requirement; no per-tick software-math call is
+required. This remains host and cross-build evidence until a production
+programme consumes the PLL.
 
 **Revision 14** records the single-consumer RPM estimator move. The estimator
 and its six tests now live in a dependency-free, host-testable

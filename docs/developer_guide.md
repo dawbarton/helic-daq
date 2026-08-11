@@ -76,7 +76,7 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 
 | Path | What | Builds for |
 |---|---|---|
-| `helic-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
+| `helic-core/` | DSP: phase and harmonic bases, generators, filters, PID, controller trait, Fourier estimator, and bounded PLL | host + firmware (`no_std`, no alloc) |
 | `helic-rt/` | Portable rig/tick contracts, cross-core types and state, source assembly, and parameter registry | host + firmware (`no_std`, no Embassy) |
 | `whirl-rig-program/` | Whirl-specific portable computation, currently optical-period RPM estimation | host + firmware (`no_std`, no alloc) |
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
@@ -175,15 +175,17 @@ PWM-wrap tick and omit the ADC read.
 
 The component-ownership refactor in
 [rig_decoupling_proposal.md](rig_decoupling_proposal.md) is being implemented
-in explicit regression-gated stages. Stages 0–9 have moved the cross-core
+in explicit regression-gated stages. Stages 0–10 have moved the cross-core
 state and portable contracts into `helic-rt`, split firmware support by
 execution domain, replaced the global waveform buffers with owner-checked
 endpoints, composed component-owned parameter groups, and moved the standard
 target/forcing/controller/table graph behind the statically selected
 `Program`, and generalised the rig/program boundary to a bounded actuator
 vector. Table and harmonic capacities are experiment-selected const generics,
-and the single-consumer RPM estimator now lives in `whirl-rig-program`. The
-common loop owns timing, command dispatch, vector safety, and record assembly.
+the single-consumer RPM estimator now lives in `whirl-rig-program`, and
+`helic-core` supplies the bounded measured-force PLL for future phase-locked
+programmes. The common loop owns timing, command dispatch, vector safety, and
+record assembly.
 
 ```
 core 1 (real-time)                       core 0 (everything else)
