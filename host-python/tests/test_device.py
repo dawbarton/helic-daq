@@ -1,6 +1,7 @@
 """Device tests against the public simulator over real TCP loopback."""
 
 import struct
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -201,9 +202,32 @@ class TestDevice(unittest.TestCase):
             self.dev.broker_info()
         self.assertEqual(caught.exception.code, 2)
 
+    def test_concurrent_requests_are_serialised(self):
+        # Each request blocks in a socket read, so without serialisation the
+        # threads interleave frames and the sequence check fails.
+        errors = []
+
+        def hammer():
+            try:
+                for _ in range(20):
+                    self.dev.status()
+                    self.dev.get("sample_freq")
+            except Exception as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=hammer) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(self.dev.status()["n_params"], len(self.sim.params))
+
     def test_recent_capture_orchestration(self):
         device = object.__new__(Device)
         device.host = "127.0.0.1"
+        # __init__ is bypassed here, so supply the lock its transactions take.
+        device._request_lock = threading.RLock()
         device.sources = [Source(0, "adc0", "V"), Source(1, "out", "V")]
         information = bytes.fromhex(
             "01 1f 0f 00 10 27 00 00 2a 00 00 00 02 00 "

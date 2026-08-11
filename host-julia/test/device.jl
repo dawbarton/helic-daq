@@ -321,6 +321,35 @@ end
     close(opened.listener)
 end
 
+@testset "device request serialisation" begin
+    mock = start_mock_device()
+    device = Device("127.0.0.1"; port = mock.port)
+    try
+        # Each request yields inside its socket read, so without serialisation
+        # concurrent tasks interleave frames and the sequence check fails.
+        tasks = map(1:8) do _
+            return @async for _ in 1:20
+                status(device)
+                device[:freq]
+            end
+        end
+        failures = 0
+        for task in tasks
+            try
+                wait(task)
+            catch
+                failures += 1
+            end
+        end
+        @test failures == 0
+        @test status(device).n_params == 64
+    finally
+        close(device)
+        wait(mock.task)
+        close(mock.listener)
+    end
+end
+
 @testset "device timeout" begin
     # A listener that accepts the connection but never responds.
     silent = listen(ip"127.0.0.1", 0)

@@ -30,8 +30,14 @@ end
 
 """A HELIC-DAQ TCP control connection with connection-local discovery tables.
 
-Connecting and every request give up after `timeout` seconds; a timed-out
-connection is closed and must be reopened.
+Connecting and each request/response exchange give up after `timeout` seconds;
+a timed-out connection is closed and must be reopened. `timeout` bounds the
+exchange itself, not the wait for `request_lock`, so a request queued behind
+another can take a multiple of it in wall-clock terms.
+
+`request_lock` serialises control-channel transactions. Callers composing their
+own multi-request sequence should hold it for the whole sequence; it is
+reentrant, so the individual requests within still go through.
 """
 mutable struct Device
     socket::TCPSocket
@@ -118,6 +124,10 @@ function Base.open(f::Function, ::Type{Device}, host::AbstractString; kwargs...)
     end
 end
 
+# The lock makes one request/response exchange atomic, which is what keeps the
+# sequence counter and the frame stream coherent. It does not make a sequence of
+# exchanges atomic: helpers whose steps must not be interleaved take the same
+# lock across the whole sequence.
 function _request(device::Device, message_type, payload = UInt8[])
     return lock(device.request_lock) do
         _request_unlocked(device, message_type, payload)
@@ -439,13 +449,20 @@ function capture(
     end
     samples > 0 || throw(ArgumentError("samples must be positive"))
     samples <= typemax(UInt32) || throw(ArgumentError("samples must fit a UInt32"))
-    resolved = configure_stream!(device, sources; decimation, count = samples)
     receiver = StreamReceiver(; port, timeout)
     started = false
     try
         prime!(receiver, device.host)
-        start_stream!(device, receiver.port)
-        started = true
+        # Setup and start are one transaction: another task's stream control
+        # between them would start this capture on a configuration it did not
+        # choose. The lock is released before the blocking receive, which would
+        # otherwise stall every other task for the length of the capture.
+        resolved = lock(device.request_lock) do
+            configured = configure_stream!(device, sources; decimation, count = samples)
+            start_stream!(device, receiver.port)
+            started = true
+            return configured
+        end
         return capture(receiver, samples, (source.name for source in resolved))
     finally
         if started && isopen(device)
@@ -471,26 +488,33 @@ function capture_recent(
     receiver = StreamReceiver(; port, timeout)
     try
         prime!(receiver, device.host)
-        start_stream_quiet!(device, receiver.port)
-        # Snapshot the shared configuration only after attaching: a stream
-        # restart before then could mislabel the replay, whereas once attached
-        # a restart detaches this client and GetRecent fails.
-        information = broker_info(device)
-        if isnothing(samples)
-            samples = max(
-                1,
-                floor(Int, seconds * status(device).sample_rate / information.decimation),
-            )
+        # Attaching, snapshotting, and requesting the replay are one
+        # transaction: another task's stream control in between would leave the
+        # snapshot describing a different stream from the one replayed. The lock
+        # is released before the blocking receive, which would otherwise stall
+        # every other task for the length of the capture.
+        information, n_samples = lock(device.request_lock) do
+            start_stream_quiet!(device, receiver.port)
+            # Snapshot the shared configuration only after attaching: a stream
+            # restart before then could mislabel the replay, whereas once attached
+            # a restart detaches this client and GetRecent fails.
+            info = broker_info(device)
+            count = if isnothing(samples)
+                max(1, floor(Int, seconds * status(device).sample_rate / info.decimation))
+            else
+                samples
+            end
+            1 <= count <= typemax(UInt32) ||
+                throw(ArgumentError("samples must fit a positive UInt32"))
+            payload = IOBuffer()
+            Protocol._write_le(payload, UInt32(count))
+            request = take!(payload)
+            response = _request(device, Protocol.GET_RECENT, request)
+            response == request ||
+                throw(Protocol.ProtocolError("broker recent-capture response is inconsistent"))
+            return (info, count)
         end
-        1 <= samples <= typemax(UInt32) ||
-            throw(ArgumentError("samples must fit a positive UInt32"))
-        payload = IOBuffer()
-        Protocol._write_le(payload, UInt32(samples))
-        request = take!(payload)
-        response = _request(device, Protocol.GET_RECENT, request)
-        response == request ||
-            throw(Protocol.ProtocolError("broker recent-capture response is inconsistent"))
-        return capture(receiver, samples, information.sources)
+        return capture(receiver, n_samples, information.sources)
     finally
         isopen(receiver) && close(receiver)
     end
@@ -558,27 +582,33 @@ function upload_table!(
     end
     bytes = take!(raw)
     chunk_size = div(Protocol.MAX_PAYLOAD - 6, 4) * 4
-    for byte_offset in 0:chunk_size:(length(bytes) - 1)
-        ending = min(byte_offset + chunk_size, length(bytes))
-        payload = Protocol.encode_set_block(
-            table.index,
-            div(byte_offset, 4),
-            @view(bytes[(byte_offset + 1):ending]),
+    # Staging, committing, and configuring are one transaction: the staging
+    # buffer is device-wide, so a concurrent upload interleaving here would
+    # commit a table made of both. Per-request framing alone does not prevent it.
+    lock(device.request_lock) do
+        for byte_offset in 0:chunk_size:(length(bytes) - 1)
+            ending = min(byte_offset + chunk_size, length(bytes))
+            payload = Protocol.encode_set_block(
+                table.index,
+                div(byte_offset, 4),
+                @view(bytes[(byte_offset + 1):ending]),
+            )
+            _request_with_busy_retry(device, Protocol.SET_BLOCK, payload)
+        end
+        _request_with_busy_retry(
+            device,
+            Protocol.COMMIT,
+            Protocol.encode_commit(table.index, length(table_values)),
         )
-        _request_with_busy_retry(device, Protocol.SET_BLOCK, payload)
+        !isnothing(frequency) && setparam!(device, "table_freq", frequency)
+        setparam!(device, "table_gain", gain)
+        setparam!(device, "table_interp", interpolations[interpolation])
+        setparam!(device, "table_mult", multiplier)
+        setparam!(device, "table_phase", phase)
+        mode_value = modes[mode]
+        setparam!(device, "table_mode", mode_value)
+        mode_value in (2, 4) && setparam!(device, "table_trigger", 1)
+        return nothing
     end
-    _request_with_busy_retry(
-        device,
-        Protocol.COMMIT,
-        Protocol.encode_commit(table.index, length(table_values)),
-    )
-    !isnothing(frequency) && setparam!(device, "table_freq", frequency)
-    setparam!(device, "table_gain", gain)
-    setparam!(device, "table_interp", interpolations[interpolation])
-    setparam!(device, "table_mult", multiplier)
-    setparam!(device, "table_phase", phase)
-    mode_value = modes[mode]
-    setparam!(device, "table_mode", mode_value)
-    mode_value in (2, 4) && setparam!(device, "table_trigger", 1)
     return device
 end

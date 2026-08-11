@@ -204,6 +204,16 @@ data = snapshot.capture_recent(seconds=1.0, port=0)
 # This connection remains attached and quiet; the global stream keeps running.
 ```
 
+A single connection may also be shared between Python threads or Julia tasks:
+the Python and Julia hosts serialise control-channel transactions internally, so
+a background heartbeat cannot interleave its frames with a command in progress.
+Multi-request helpers such as `upload_table` and `capture_recent` hold that lock
+for their whole sequence, releasing it before any blocking receive. Composing
+your own such sequence means taking the lock yourself, `device._request_lock` in
+Python and `device.request_lock` in Julia; both are reentrant. The MATLAB host
+offers no equivalent, and the timeout bounds each exchange rather than the wait
+for the lock.
+
 The ordinary `capture` helper configures and later stops a stream, so it is
 intended for direct-MCU use or for deliberately owning the broker's global
 capture. Use `capture_recent` (Python and Julia) or `captureRecent` (MATLAB)

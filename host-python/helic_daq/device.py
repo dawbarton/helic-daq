@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 import struct
 import math
+import threading
 import time
 from dataclasses import dataclass
 
@@ -63,9 +64,17 @@ class Device:
     Discovers the parameter registry at connect; parameters are then
     accessible by name through :meth:`get`/:meth:`set` or the :attr:`par`
     attribute accessor.
+
+    Control-channel transactions are serialised on ``_request_lock``, so a
+    connection may be shared between threads. ``timeout`` bounds each socket
+    operation, not the wait for that lock, so a request queued behind another
+    can take a multiple of it in wall-clock terms. Callers composing their own
+    multi-request sequence should hold the lock for the whole sequence; it is
+    reentrant, so the individual requests within still go through.
     """
 
     def __init__(self, host: str, port: int = protocol.CONTROL_PORT, timeout: float = 5.0):
+        self._request_lock = threading.RLock()
         self._sock = socket.create_connection((host, port), timeout=timeout)
         try:
             self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -114,22 +123,27 @@ class Device:
         return b"".join(chunks)
 
     def _request(self, msg_type: int, payload: bytes = b"") -> bytes:
-        self._seq = (self._seq + 1) & 0xFF
-        self._sock.sendall(protocol.encode_frame(msg_type, self._seq, payload))
-        header = self._read_exact(protocol.HEADER_LEN)
-        (length,) = struct.unpack_from("<H", header, 4)
-        rest = self._read_exact(length + protocol.TRAILER_LEN)
-        r_type, r_seq, r_payload = protocol.decode_frame(header + rest)
-        if r_seq != self._seq:
-            raise DeviceError(f"sequence mismatch (sent {self._seq}, got {r_seq})")
-        if r_type == MsgType.ERROR:
-            code = r_payload[0] if r_payload else 0
-            raise DeviceError(
-                f"device error: {protocol.ERROR_NAMES.get(code, f'code {code}')}", code
-            )
-        if r_type != msg_type:
-            raise DeviceError(f"response type mismatch ({r_type} != {msg_type})")
-        return r_payload
+        # The lock makes one request/response exchange atomic, which is what
+        # keeps the sequence counter and the frame stream coherent. It does not
+        # make a sequence of exchanges atomic: methods whose steps must not be
+        # interleaved take the same lock across the whole sequence.
+        with self._request_lock:
+            self._seq = (self._seq + 1) & 0xFF
+            self._sock.sendall(protocol.encode_frame(msg_type, self._seq, payload))
+            header = self._read_exact(protocol.HEADER_LEN)
+            (length,) = struct.unpack_from("<H", header, 4)
+            rest = self._read_exact(length + protocol.TRAILER_LEN)
+            r_type, r_seq, r_payload = protocol.decode_frame(header + rest)
+            if r_seq != self._seq:
+                raise DeviceError(f"sequence mismatch (sent {self._seq}, got {r_seq})")
+            if r_type == MsgType.ERROR:
+                code = r_payload[0] if r_payload else 0
+                raise DeviceError(
+                    f"device error: {protocol.ERROR_NAMES.get(code, f'code {code}')}", code
+                )
+            if r_type != msg_type:
+                raise DeviceError(f"response type mismatch ({r_type} != {msg_type})")
+            return r_payload
 
     # -- discovery ---------------------------------------------------------
 
@@ -262,23 +276,28 @@ class Device:
 
         raw = struct.pack(f"<{len(values)}f", *values)
         chunk_bytes = (protocol.MAX_PAYLOAD - 6) // 4 * 4
-        for byte_offset in range(0, len(raw), chunk_bytes):
-            payload = protocol.encode_set_block(
-                table.index, byte_offset // 4, raw[byte_offset : byte_offset + chunk_bytes]
+        # Staging, committing, and configuring are one transaction: the staging
+        # buffer is device-wide, so a concurrent upload interleaving here would
+        # commit a table made of both. Per-request framing alone does not
+        # prevent it.
+        with self._request_lock:
+            for byte_offset in range(0, len(raw), chunk_bytes):
+                payload = protocol.encode_set_block(
+                    table.index, byte_offset // 4, raw[byte_offset : byte_offset + chunk_bytes]
+                )
+                self._request_with_busy_retry(MsgType.SET_BLOCK, payload)
+            self._request_with_busy_retry(
+                MsgType.COMMIT, protocol.encode_commit(table.index, len(values))
             )
-            self._request_with_busy_retry(MsgType.SET_BLOCK, payload)
-        self._request_with_busy_retry(
-            MsgType.COMMIT, protocol.encode_commit(table.index, len(values))
-        )
-        if freq is not None:
-            self.set("table_freq", freq)
-        self.set("table_gain", gain)
-        self.set("table_interp", interpolation_value)
-        self.set("table_mult", mult)
-        self.set("table_phase", phase)
-        self.set("table_mode", mode_value)
-        if mode_value in (2, 4):
-            self.set("table_trigger", 1)
+            if freq is not None:
+                self.set("table_freq", freq)
+            self.set("table_gain", gain)
+            self.set("table_interp", interpolation_value)
+            self.set("table_mult", mult)
+            self.set("table_phase", phase)
+            self.set("table_mode", mode_value)
+            if mode_value in (2, 4):
+                self.set("table_trigger", 1)
 
     def _request_with_busy_retry(
         self, msg_type: int, payload: bytes, timeout: float = 1.0
@@ -417,10 +436,16 @@ class Device:
         if samples is None:
             fs = self.status()["sample_rate"]
             samples = max(1, int(seconds * fs / decimation))
-        names = self.stream_setup(sources, decimation=decimation, count=samples)
         with StreamReceiver(port=port) as rx:
             rx.prime(self.host)
-            self.stream_start(rx.port)
+            # Setup and start are one transaction: another thread's stream
+            # control between them would start this capture on a configuration
+            # it did not choose. The lock is released before the blocking
+            # receive, which would otherwise stall every other thread for the
+            # length of the capture.
+            with self._request_lock:
+                names = self.stream_setup(sources, decimation=decimation, count=samples)
+                self.stream_start(rx.port)
             try:
                 return rx.capture(samples, names)
             finally:
@@ -443,19 +468,26 @@ class Device:
             raise ValueError("seconds must be positive")
         with StreamReceiver(port=port) as rx:
             rx.prime(self.host)
-            self.stream_start_quiet(rx.port)
-            # Snapshot the shared configuration only after attaching: a stream
-            # restart before then could mislabel the replay, whereas once
-            # attached a restart detaches this client and GetRecent fails.
-            information = self.broker_info()
-            if samples is None:
-                samples = max(
-                    1,
-                    int(seconds * self.status()["sample_rate"] / information["decimation"]),
-                )
-            if not 1 <= samples <= 0xFFFFFFFF:
-                raise ValueError("samples must fit a positive uint32")
-            response = self._request(MsgType.GET_RECENT, struct.pack("<I", samples))
-            if response != struct.pack("<I", samples):
-                raise ProtocolError("broker recent-capture response is inconsistent")
+            # Attaching, snapshotting, and requesting the replay are one
+            # transaction: another thread's stream control in between would
+            # leave the snapshot describing a different stream from the one
+            # replayed. The lock is released before the blocking receive, which
+            # would otherwise stall every other thread for the length of the
+            # capture.
+            with self._request_lock:
+                self.stream_start_quiet(rx.port)
+                # Snapshot the shared configuration only after attaching: a stream
+                # restart before then could mislabel the replay, whereas once
+                # attached a restart detaches this client and GetRecent fails.
+                information = self.broker_info()
+                if samples is None:
+                    samples = max(
+                        1,
+                        int(seconds * self.status()["sample_rate"] / information["decimation"]),
+                    )
+                if not 1 <= samples <= 0xFFFFFFFF:
+                    raise ValueError("samples must fit a positive uint32")
+                response = self._request(MsgType.GET_RECENT, struct.pack("<I", samples))
+                if response != struct.pack("<I", samples):
+                    raise ProtocolError("broker recent-capture response is inconsistent")
             return rx.capture(samples, information["sources"])
