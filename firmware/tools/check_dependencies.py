@@ -67,6 +67,7 @@ def main() -> None:
 
     require_exact(packages["helic-core"], {"libm"})
     require_exact(packages["helic-rt"], {"heapless", "helic-core", "helic-proto"})
+    require_exact(packages["whirl-rig-program"], set())
 
     forbidden_rt = {"embassy-executor", "embassy-net", "embassy-time", "helic-fw-support"}
     direct_rt = normal_dependencies(packages["helic-fw-rt"])

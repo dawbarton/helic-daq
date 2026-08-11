@@ -13,7 +13,6 @@ pub mod generator;
 pub mod lut;
 pub mod phase;
 pub mod pid;
-pub mod rpm;
 pub mod safety;
 pub mod table;
 mod table_buffer;

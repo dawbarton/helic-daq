@@ -1,7 +1,7 @@
 //! Fixed-state RPM estimation from a once-per-revolution pulse period.
 //!
 //! The estimator retains the latest raw period, applies a time-normalised
-//! EWMA to RPM, rejects implausible periods and invalidates stale estimates.
+//! EWMA to RPM, rejects implausible periods, and invalidates stale estimates.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RpmEstimate {

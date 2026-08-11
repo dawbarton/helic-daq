@@ -12,6 +12,7 @@ helic-core = { path = "../helic-core" }
 helic-drivers = { version = "0.1.0", path = "../helic-drivers" }
 helic-proto = { path = "../helic-proto" }
 helic-rt = { path = "../helic-rt" }
+whirl-rig-program = { path = "../whirl-rig-program", features = ["rt-sram"] }
 helic-fw-optoncdt = { path = "integrations/optoncdt" }
 helic-fw-rt = { path = "rt", features = ["rt-sram"] }
 helic-fw-support = { path = "support", default-features = false }

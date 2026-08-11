@@ -980,6 +980,7 @@ dependencies = [
  "helic-rt",
  "panic-probe",
  "static_cell",
+ "whirl-rig-program",
 ]
 
 [[package]]
@@ -1930,6 +1931,10 @@ dependencies = [
  "same-file",
  "winapi-util",
 ]
+
+[[package]]
+name = "whirl-rig-program"
+version = "0.1.0"
 
 [[package]]
 name = "winapi-util"

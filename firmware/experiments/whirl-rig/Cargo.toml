@@ -17,6 +17,7 @@ helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
 helic-rt.workspace = true
+whirl-rig-program.workspace = true
 helic-fw-rt.workspace = true
 helic-fw-support = { workspace = true, features = ["net-wiznet"] }
 cortex-m.workspace = true
