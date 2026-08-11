@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–5 completed 2026-08-11. Revision
-10. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–6 completed 2026-08-11. Revision
+11. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1561,9 +1561,20 @@ production rigs here and treats the crate boundary as the contract that
    mutations inside `debug_assert!` had again been optimised away. The calls are
    unconditional, and the table transaction test now also passes under
    `cargo test --release -p helic-rt`.
-6. **`Program` trait and `StandardProgram`**, the `phase` signal, and retention
-   of core-1 `table_len` publication. The table group already landed in stage
-   5; this stage moves its core-1 execution behind `StandardProgram`.
+6. **Completed 2026-08-11: `Program` trait and `StandardProgram`**, the `phase`
+   signal, and retention of core-1 `table_len` publication. `StandardProgram`
+   now owns the controller, master accumulator, active coefficient and table
+   endpoints, table player, and cached programme signals. The common loop
+   routes claimed command domains through the statically selected programme,
+   validates its input requirement, and assembles its discovered signals
+   between rig inputs and the still-scalar applied output. `StepCtx`, named but
+   not defined in the reviewed design, is the minimal immutable pair of sine
+   LUT and sample rate. CBC consequently exposes 15 sources. Exact W5500
+   firmware `0.1.0 77fa0e4` passed the 8000-record all-source and 60000-record
+   sustained regressions at 34–35 us, with fixed 36 us wake phase and no timing
+   faults, loss, drops, or gaps. Only CBC W5500 hardware was available; the
+   other production ELFs and both wired W6100 variants have software evidence,
+   not new physical evidence.
 7. **Bounded output vector**, `Rig::ACTUATORS`, slice `actuate`, `safety_decide`
    plus its atomic wrapper, `Program::fault`, the non-finite trip, and generic
    source assembly. Migrate all three rigs together.
@@ -1719,14 +1730,27 @@ wake phase is the baseline.
 6. **Device integrations** (`laser.rs`, `analog_spi.rs`) in a crate every rig
    depends on.
 7. **Embassy pinning across repositories.**
-8. **`HarmonicFrame` by borrow or by value.** `rt_program_proposal.md` left this
-   open pending evidence that the borrow "forces an unwanted lifetime
-   restriction". Example 2 is that evidence: a programme mutating the generator
-   within the tick that uses the frame must scope the borrow explicitly. The
-   reordering above is correct but fragile; by value costs 40 bytes at `H = 5`
-   and 128 at `H = 16`. Decide with stage 6 ELF evidence.
+8. **Resolved at Stage 6: retain `HarmonicFrame` by borrow.** `StandardProgram`
+   does not need a frame, and its realised CBC hot loop introduced no
+   flash-resident calls. The appropriation sketch already demonstrates the
+   only lifetime restriction: all frame consumers sit in one explicit scope,
+   after which the generator increment may change. Copying 40 bytes at `H = 5`
+   or 128 bytes at `H = 16` would add work and potential EABI helpers to the
+   mandatory path merely to avoid that visible scope. Revisit only if the
+   Stage-10 implementation produces contrary compiler evidence.
 
 ## Revision history
+
+**Revision 11** records the completed programme extraction. The statically
+selected `Program` owns controller, Fourier, table, and signal state;
+`StandardProgram` preserves sample-boundary command routing and active
+`table_len` publication. The new coherent `phase` source raises CBC discovery
+from 14 to 15 sources. Exact W5500 hardware passed focused phase/forcing and
+table checks plus the all-source and sustained regression gates with 34–35 us
+maxima and no faults or continuity failures. The reviewed design named but did
+not define `StepCtx`; the implementation supplies only the immutable sine LUT
+and sample rate. `HarmonicFrame` remains borrowed because the explicit scope is
+cheap and avoids an otherwise unmotivated hot-path copy.
 
 **Revision 10** records the completed component-owned parameter composition.
 `ParamStore` now walks six statically allocated groups and binds commands to

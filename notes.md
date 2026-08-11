@@ -617,3 +617,35 @@ evidence:
   forcing coefficients. The attached board is W5500; no W6100 image was
   flashed. The laser and actuator supplies remained down, so this is logic,
   timing, network, and safety-quiet evidence, not powered-path evidence.
+
+## 2026-08-11T14:39+00:00 Rig-decoupling implementation stage 6
+
+- `helic-rt::Program` now defines the statically dispatched computation between
+  rig measurement and actuation. `StandardProgram` owns the controller, master
+  phase accumulator, active target/forcing/table endpoints, table player,
+  active-table-length publication, and programme signal cache. The common
+  firmware loop retains timing, bounded command application, record assembly,
+  and the rig/program boundary. Its output remains scalar until Stage 7.
+- CBC now discovers 15 sources in this exact order: `adc0`–`adc7`, `laser`,
+  `target`, `forcing`, `table`, `phase`, `out`, and `cmd_epoch`. On exact clean
+  W5500 firmware `0.1.0 77fa0e4`, a disarmed 137 Hz sine capture matched
+  `sin(2*pi*phase)` to 4.71e-6 maximum absolute error; the observed phase
+  increment matched `137/8000` to 4.84e-8 turn. `cmd_epoch` advanced from 36
+  to 38 for the frequency and coefficient commands, and applied `out` remained
+  exactly zero. A three-sample table published `table_len = 3` and streamed
+  from 0.2500003 to 0.7487499 V over the finite capture, again with zero
+  applied output.
+- The required 8000-record all-15-source W5500 regression passed with idle,
+  TCP-poll, and capture loop maxima of 34, 35, and 35 us. The 60000-record
+  `adc0,out` regression measured 34, 35, and 34 us. Both held wake phase at
+  36/36 us and had zero jitter, overruns, tick timeouts, source or capture
+  drops, UDP loss, and index gaps. Firmware reported protocol 3, 42 parameters,
+  15 sources, and 8000 Hz.
+- All three production release ELFs rebuilt and passed the SRAM layout gate.
+  The CBC and whirl W6100 feature variants cross-built but were not flashed.
+  Root Rust tests, 65 Python tests, and all 89 Julia checks passed; MATLAB was
+  unavailable on this host. Final W5500 state was `arm = 0`, `table_mode = 0`,
+  `freq = 0`, with zero target/forcing coefficients and clean timing counters.
+  The laser and actuator supplies remained down, so this establishes logic,
+  timing, network, and safety-quiet behaviour, not powered laser or actuator
+  behaviour.

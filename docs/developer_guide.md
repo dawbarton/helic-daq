@@ -170,14 +170,16 @@ wrapper. Keep this pattern when sharing a task across experiments.
 The CBC acquisition path is shown; ADC-free rigs replace CONVST/BUSY with a
 PWM-wrap tick and omit the ADC read.
 
-The current loop owns the standard target/forcing/controller/table graph
-directly. The component-ownership refactor in
+The component-ownership refactor in
 [rig_decoupling_proposal.md](rig_decoupling_proposal.md) is being implemented
-in explicit regression-gated stages. Stages 0–3 have moved the cross-core
+in explicit regression-gated stages. Stages 0–6 have moved the cross-core
 state and portable contracts into `helic-rt`, split firmware support by
-execution domain, and replaced the global waveform buffers with owner-checked
-endpoints. The `Program` and component-owned parameter contracts have not
-landed yet.
+execution domain, replaced the global waveform buffers with owner-checked
+endpoints, composed component-owned parameter groups, and moved the standard
+target/forcing/controller/table graph behind the statically selected
+`Program`. The common loop now owns timing, command dispatch, record assembly,
+and the rig/program boundary; Stage 7 generalises its remaining scalar output
+path.
 
 ```
 core 1 (real-time)                       core 0 (everything else)
@@ -186,9 +188,9 @@ core 1 (real-time)                       core 0 (everything else)
 │  PWM slice 4 → CONVST       │ commands │   ParamStore (registry+shadow)│
 │  BUSY↓ → SPI read (AD7609)  │◄─────────│ UDP streamer (:2351)          │
 │  ≤2 queued commands/tick    │  SPSC    │ laser UART task → atomic      │
-│  generators (target+forcing │          │ status task (1 Hz defmt)      │
-│  + waveform table)          │          │                               │
-│  controller → rig output    │ records  │ embassy-net + net backend     │
+│  selected Program           │          │ status task (1 Hz defmt)      │
+│   target+forcing+table      │          │                               │
+│   controller → rig output   │ records  │ embassy-net + net backend     │
 │  injected RtShared atomics  │─────────►│ heartbeat LED                 │
 └─────────────────────────────┘  SPSC    └───────────────────────────────┘
 ```
@@ -211,12 +213,17 @@ runner with the PWM peripheral's latched wrap flag. Each tick then runs
    once per command (updates land at a sample boundary; excess commands
    remain FIFO-ordered for later ticks);
 2. SPI read of the 144-bit frame (~12 µs at 12 MHz) and scaling to volts;
-3. one `PhaseAccumulator::step()`, then evaluation of the **target** and
-   **forcing** Fourier series against the same phase (all harmonics of
-   both stay locked forever through wrapping-multiply phases; see
-   [periodic_signal_generator.md](periodic_signal_generator.md));
-4. `controller.tick(inputs, target, dt) + forcing + table` → rig actuation;
-5. a `Record` pushed into the stream ring; diagnostics updated.
+3. the statically selected programme steps once; `StandardProgram` advances
+   one `PhaseAccumulator`, evaluates the **target** and **forcing** Fourier
+   series against that phase (all harmonics of both stay locked forever
+   through wrapping-multiply phases; see
+   [periodic_signal_generator.md](periodic_signal_generator.md)), steps the
+   waveform table, and calls the controller;
+4. the programme output is passed through the current scalar safety gate and
+   into rig actuation (Stage 7 generalises this boundary to a bounded vector);
+5. rig inputs, programme signals including coherent master `phase`, applied
+   output, and `cmd_epoch` are assembled into a `Record`; diagnostics are
+   updated.
 
 A 2-period timeout on the BUSY wait keeps the loop alive (at reduced rate)
 with no ADC attached, so bench bring-up works; such ticks increment
