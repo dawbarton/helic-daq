@@ -19,7 +19,10 @@ use helic_core::table::{TableInterpolation, TableMode};
 use helic_core::{BufferError, Staging as TableStaging, MAX_TABLE_LEN};
 use helic_proto::{ErrorCode, ParamType};
 
-use crate::{validate_sources, CommandProducer, Rig, RtCommand, SampleRate, HARMONICS};
+use crate::{
+    command_id, validate_sources, CommandProducer, Payload, Rig, RtCommand, SampleRate,
+    DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, HARMONICS, MAX_RT_VALUES,
+};
 
 mod schema;
 
@@ -484,14 +487,16 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         if data.len() != def.ty.size() * def.count as usize {
             return Err(ErrorCode::BadLength);
         }
-        let (cmd, shadow) = match index {
+        let (domain, id, payload, shadow) = match index {
             IDX_FREQ => {
                 let freq = f32::from_le_bytes(data.try_into().unwrap());
                 if !(0.0..self.sample_rate.hz() / 2.0).contains(&freq) {
                     return Err(ErrorCode::BadValue);
                 }
                 (
-                    RtCommand::SetIncrement(PhaseAccumulator::increment_for(
+                    DOMAIN_GENERATOR,
+                    command_id::generator::SET_INCREMENT,
+                    Payload::U32(PhaseAccumulator::increment_for(
                         freq as f64,
                         self.sample_rate.hz() as f64,
                     )),
@@ -500,15 +505,21 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             }
             IDX_TARGET => {
                 let coeffs = deserialize_coeffs(data)?;
+                let payload = coeff_payload(&coeffs);
                 (
-                    RtCommand::SetTargetCoeffs(coeffs),
+                    DOMAIN_GENERATOR,
+                    command_id::generator::SET_TARGET,
+                    payload,
                     ShadowUpdate::Target(coeffs),
                 )
             }
             IDX_FORCING => {
                 let coeffs = deserialize_coeffs(data)?;
+                let payload = coeff_payload(&coeffs);
                 (
-                    RtCommand::SetForcingCoeffs(coeffs),
+                    DOMAIN_GENERATOR,
+                    command_id::generator::SET_FORCING,
+                    payload,
                     ShadowUpdate::Forcing(coeffs),
                 )
             }
@@ -516,7 +527,12 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 if u32::from_le_bytes(data.try_into().unwrap()) == 0 {
                     return Ok(ParamAction::None);
                 }
-                (RtCommand::ResetController, ShadowUpdate::None)
+                (
+                    DOMAIN_CONTROLLER,
+                    command_id::controller::RESET,
+                    Payload::Unit,
+                    ShadowUpdate::None,
+                )
             }
             IDX_TABLE => return Err(ErrorCode::BadLength),
             IDX_TABLE_FREQ => {
@@ -525,7 +541,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                     return Err(ErrorCode::BadValue);
                 }
                 (
-                    RtCommand::SetTableIncrement(PhaseAccumulator::increment_for(
+                    DOMAIN_TABLE,
+                    command_id::table::SET_INCREMENT,
+                    Payload::U32(PhaseAccumulator::increment_for(
                         freq as f64,
                         self.sample_rate.hz() as f64,
                     )),
@@ -537,22 +555,30 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 if !gain.is_finite() {
                     return Err(ErrorCode::BadValue);
                 }
-                (RtCommand::SetTableGain(gain), ShadowUpdate::TableGain(gain))
+                (
+                    DOMAIN_TABLE,
+                    command_id::table::SET_GAIN,
+                    Payload::F32(gain),
+                    ShadowUpdate::TableGain(gain),
+                )
             }
             IDX_TABLE_INTERPOLATION => {
                 let interpolation = u32::from_le_bytes(data.try_into().unwrap());
-                let interpolation_value =
-                    TableInterpolation::from_u32(interpolation).ok_or(ErrorCode::BadValue)?;
+                TableInterpolation::from_u32(interpolation).ok_or(ErrorCode::BadValue)?;
                 (
-                    RtCommand::SetTableInterpolation(interpolation_value),
+                    DOMAIN_TABLE,
+                    command_id::table::SET_INTERPOLATION,
+                    Payload::U32(interpolation),
                     ShadowUpdate::TableInterpolation(interpolation),
                 )
             }
             IDX_TABLE_MODE => {
                 let mode = u32::from_le_bytes(data.try_into().unwrap());
-                let mode_value = TableMode::from_u32(mode).ok_or(ErrorCode::BadValue)?;
+                TableMode::from_u32(mode).ok_or(ErrorCode::BadValue)?;
                 (
-                    RtCommand::SetTableMode(mode_value),
+                    DOMAIN_TABLE,
+                    command_id::table::SET_MODE,
+                    Payload::U32(mode),
                     ShadowUpdate::TableMode(mode),
                 )
             }
@@ -562,7 +588,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                     return Err(ErrorCode::BadValue);
                 }
                 (
-                    RtCommand::SetTableMultiplier(multiplier),
+                    DOMAIN_TABLE,
+                    command_id::table::SET_MULTIPLIER,
+                    Payload::U32(multiplier),
                     ShadowUpdate::TableMult(multiplier),
                 )
             }
@@ -573,7 +601,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 }
                 let offset = (phase as f64 * 4294967296.0) as u32;
                 (
-                    RtCommand::SetTablePhase(offset),
+                    DOMAIN_TABLE,
+                    command_id::table::SET_PHASE,
+                    Payload::U32(offset),
                     ShadowUpdate::TablePhase(phase),
                 )
             }
@@ -581,7 +611,12 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 if u32::from_le_bytes(data.try_into().unwrap()) == 0 {
                     return Ok(ParamAction::None);
                 }
-                (RtCommand::TriggerTable, ShadowUpdate::None)
+                (
+                    DOMAIN_TABLE,
+                    command_id::table::TRIGGER,
+                    Payload::Unit,
+                    ShadowUpdate::None,
+                )
             }
             IDX_DIAG_RESET => {
                 // Resets are applied directly: the diagnostics are atomics
@@ -620,7 +655,9 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 let value = f32::from_le_bytes(data.try_into().unwrap());
                 let value = R::normalise_param(id, value).ok_or(ErrorCode::BadValue)?;
                 (
-                    RtCommand::SetRigParam(id, value),
+                    DOMAIN_RIG,
+                    id,
+                    Payload::F32(value),
                     ShadowUpdate::RigParam(id as usize, value),
                 )
             }
@@ -634,13 +671,23 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                 let value =
                     C::normalise_param(id, value, R::INPUTS.len()).ok_or(ErrorCode::BadValue)?;
                 (
-                    RtCommand::SetCtrlParam(id, value),
+                    DOMAIN_CONTROLLER,
+                    id,
+                    Payload::F32(value),
                     ShadowUpdate::CtrlParam(id as usize, value),
                 )
             }
             _ => return Err(ErrorCode::BadIndex),
         };
-        self.commands.enqueue(cmd).map_err(|_| ErrorCode::Busy)?;
+        let command = RtCommand {
+            domain,
+            id,
+            payload,
+        };
+        if let Err(returned) = self.commands.enqueue(command) {
+            self.reject_command(returned);
+            return Err(ErrorCode::Busy);
+        }
         match shadow {
             ShadowUpdate::None => {}
             ShadowUpdate::Freq(freq) => self.freq_hz = freq,
@@ -706,16 +753,32 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             debug_assert!(length_set);
         }
         let token = self.table.commit().map_err(map_buffer_error)?;
-        match self.commands.enqueue(RtCommand::UseTable(token)) {
+        let command = RtCommand {
+            domain: DOMAIN_TABLE,
+            id: command_id::table::ACTIVATE,
+            payload: Payload::Buffer(token),
+        };
+        match self.commands.enqueue(command) {
             Ok(()) => {}
-            Err(RtCommand::UseTable(returned)) => {
-                self.table.cancel(returned);
+            Err(returned) => {
+                self.reject_command(returned);
                 return Err(ErrorCode::Busy);
             }
-            // The queue returns the exact value passed above.
-            Err(_) => unreachable!(),
         }
         Ok(())
+    }
+
+    /// Return ownership-bearing payloads after a command fails to reach core 1.
+    ///
+    /// Scalar and copied payloads require no unwind. A table activation token
+    /// must be cancelled through its unique staging endpoint, or the inactive
+    /// bank would remain permanently busy.
+    fn reject_command(&mut self, command: RtCommand) {
+        if let (DOMAIN_TABLE, command_id::table::ACTIVATE, Payload::Buffer(token)) =
+            (command.domain, command.id, command.payload)
+        {
+            self.table.cancel(token);
+        }
     }
 
     pub const fn sample_rate(&self) -> SampleRate {
@@ -726,6 +789,17 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
 fn map_buffer_error(error: BufferError) -> ErrorCode {
     match error {
         BufferError::Busy => ErrorCode::Busy,
+    }
+}
+
+fn coeff_payload(coeffs: &FourierCoeffs<HARMONICS>) -> Payload {
+    let mut data = [0.0; MAX_RT_VALUES];
+    data[0] = coeffs.mean;
+    data[1..1 + HARMONICS].copy_from_slice(&coeffs.a);
+    data[1 + HARMONICS..1 + 2 * HARMONICS].copy_from_slice(&coeffs.b);
+    Payload::Values {
+        len: COEFF_COUNT as u8,
+        data,
     }
 }
 
@@ -946,7 +1020,43 @@ mod tests {
         let (mut store, mut rx) = store();
         store.set(IDX_FREQ, &20.0f32.to_le_bytes()).unwrap();
         let expected = PhaseAccumulator::increment_for(20.0, 8000.0);
-        assert!(matches!(rx.dequeue(), Some(RtCommand::SetIncrement(value)) if value == expected));
+        assert!(matches!(
+            rx.dequeue(),
+            Some(RtCommand {
+                domain: DOMAIN_GENERATOR,
+                id: command_id::generator::SET_INCREMENT,
+                payload: Payload::U32(value),
+            }) if value == expected
+        ));
+    }
+
+    #[test]
+    fn coefficient_write_uses_bounded_addressed_payload() {
+        let (mut store, mut rx) = store();
+        let coeffs = FourierCoeffs {
+            mean: 0.25,
+            a: core::array::from_fn(|i| i as f32 + 1.0),
+            b: core::array::from_fn(|i| -(i as f32) - 1.0),
+        };
+        let mut bytes = [0_u8; COEFF_COUNT as usize * 4];
+        serialize_coeffs(&coeffs, &mut bytes);
+        store.set(IDX_TARGET, &bytes).unwrap();
+
+        let Some(RtCommand {
+            domain: DOMAIN_GENERATOR,
+            id: command_id::generator::SET_TARGET,
+            payload: Payload::Values { len, data },
+        }) = rx.dequeue()
+        else {
+            panic!("target write was not routed to the generator");
+        };
+        assert_eq!(len as u16, COEFF_COUNT);
+        assert_eq!(data[0], coeffs.mean);
+        assert_eq!(&data[1..1 + HARMONICS], &coeffs.a);
+        assert_eq!(&data[1 + HARMONICS..COEFF_COUNT as usize], &coeffs.b);
+        assert!(data[COEFF_COUNT as usize..]
+            .iter()
+            .all(|value| *value == 0.0));
     }
 
     #[test]
@@ -972,6 +1082,25 @@ mod tests {
     }
 
     #[test]
+    fn full_command_queue_does_not_update_scalar_shadow() {
+        let (mut store, _rx) = store();
+        loop {
+            match store.set(IDX_FREQ, &20.0f32.to_le_bytes()) {
+                Ok(ParamAction::None) => {}
+                Err(ErrorCode::Busy) => break,
+                result => panic!("unexpected queue-fill result: {result:?}"),
+            }
+        }
+        assert_eq!(
+            store.set(IDX_FREQ, &21.0f32.to_le_bytes()),
+            Err(ErrorCode::Busy)
+        );
+        let mut out = [0_u8; 4];
+        store.get(IDX_FREQ, &mut out).unwrap();
+        assert_eq!(f32::from_le_bytes(out), 20.0);
+    }
+
+    #[test]
     fn table_length_changes_only_after_core_one_activation() {
         let (mut store, mut rx, mut active) = store_with_table();
         let bytes: std::vec::Vec<_> = [1.0f32, 2.0, 3.0]
@@ -985,7 +1114,12 @@ mod tests {
         store.get(IDX_TABLE_LEN, &mut out).unwrap();
         assert_eq!(u16::from_le_bytes(out), 0);
 
-        let Some(RtCommand::UseTable(token)) = rx.dequeue() else {
+        let Some(RtCommand {
+            domain: DOMAIN_TABLE,
+            id: command_id::table::ACTIVATE,
+            payload: Payload::Buffer(token),
+        }) = rx.dequeue()
+        else {
             panic!("table activation command was not enqueued");
         };
         active.activate(token);

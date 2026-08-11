@@ -12,8 +12,9 @@ use helic_core::phase::PhaseAccumulator;
 use helic_core::table::TablePlayer;
 use helic_core::ActiveTable;
 use helic_rt::{
-    source_count, CommandConsumer, Record, RecordProducer, Rig, RtChannels, RtCommand, RtShared,
-    SampleRate, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN, HARMONICS, MAX_SOURCES,
+    command_id, source_count, CommandConsumer, Payload, Record, RecordProducer, Rig, RtChannels,
+    RtCommand, RtShared, SampleRate, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN,
+    DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, HARMONICS, MAX_SOURCES,
     RECORD_QUEUE_LEN,
 };
 use static_cell::StaticCell;
@@ -141,29 +142,55 @@ fn run_rt_tick<R: Rig>(
             break;
         };
         commands_applied += 1;
-        match command {
-            RtCommand::SetIncrement(increment) => phase.set_increment(increment),
-            RtCommand::SetTargetCoeffs(coeffs) => *target_coeffs = coeffs,
-            RtCommand::SetForcingCoeffs(coeffs) => *forcing_coeffs = coeffs,
-            RtCommand::SetTableIncrement(increment) => table_player.set_increment(increment),
-            RtCommand::SetTableGain(gain) => table_player.set_gain(gain),
-            RtCommand::SetTableInterpolation(interpolation) => {
-                table_player.set_interpolation(interpolation)
+        match (command.domain, command.id, command.payload) {
+            (DOMAIN_GENERATOR, command_id::generator::SET_INCREMENT, Payload::U32(increment)) => {
+                phase.set_increment(increment)
             }
-            RtCommand::SetTableMode(mode) => table_player.set_mode(mode),
-            RtCommand::SetTableMultiplier(multiplier) => table_player.set_multiplier(multiplier),
-            RtCommand::SetTablePhase(offset) => table_player.set_phase_offset(offset),
-            RtCommand::TriggerTable => table_player.trigger(),
-            RtCommand::UseTable(token) => {
+            (DOMAIN_GENERATOR, command_id::generator::SET_TARGET, payload) => {
+                if let Some(coeffs) = coeffs_from_payload(payload) {
+                    *target_coeffs = coeffs;
+                }
+            }
+            (DOMAIN_GENERATOR, command_id::generator::SET_FORCING, payload) => {
+                if let Some(coeffs) = coeffs_from_payload(payload) {
+                    *forcing_coeffs = coeffs;
+                }
+            }
+            (DOMAIN_TABLE, command_id::table::SET_INCREMENT, Payload::U32(increment)) => {
+                table_player.set_increment(increment)
+            }
+            (DOMAIN_TABLE, command_id::table::SET_GAIN, Payload::F32(gain)) => {
+                table_player.set_gain(gain)
+            }
+            (DOMAIN_TABLE, command_id::table::SET_INTERPOLATION, Payload::U32(value)) => {
+                if let Some(interpolation) = helic_core::table::TableInterpolation::from_u32(value)
+                {
+                    table_player.set_interpolation(interpolation);
+                }
+            }
+            (DOMAIN_TABLE, command_id::table::SET_MODE, Payload::U32(value)) => {
+                if let Some(mode) = helic_core::table::TableMode::from_u32(value) {
+                    table_player.set_mode(mode);
+                }
+            }
+            (DOMAIN_TABLE, command_id::table::SET_MULTIPLIER, Payload::U32(multiplier)) => {
+                table_player.set_multiplier(multiplier)
+            }
+            (DOMAIN_TABLE, command_id::table::SET_PHASE, Payload::U32(offset)) => {
+                table_player.set_phase_offset(offset)
+            }
+            (DOMAIN_TABLE, command_id::table::TRIGGER, Payload::Unit) => table_player.trigger(),
+            (DOMAIN_TABLE, command_id::table::ACTIVATE, Payload::Buffer(token)) => {
                 active_table.activate(token);
                 shared
                     .live
                     .active_table_len
                     .store(active_table.get().len() as u32, Ordering::Relaxed);
             }
-            RtCommand::ResetController => controller.reset(),
-            RtCommand::SetCtrlParam(id, value) => controller.set_param(id, value),
-            RtCommand::SetRigParam(id, value) => rig.set_param(id, value),
+            (DOMAIN_CONTROLLER, command_id::controller::RESET, Payload::Unit) => controller.reset(),
+            (DOMAIN_CONTROLLER, id, Payload::F32(value)) => controller.set_param(id, value),
+            (DOMAIN_RIG, id, Payload::F32(value)) => rig.set_param(id, value),
+            _ => {}
         }
     }
     if commands_applied != 0 {
@@ -258,6 +285,23 @@ fn run_rt_tick<R: Rig>(
         shared.diagnostics.overruns.fetch_add(1, Ordering::Relaxed);
     }
     shared.live.ticks.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(link_section = ".data.ram_func")]
+fn coeffs_from_payload(payload: Payload) -> Option<FourierCoeffs<HARMONICS>> {
+    let Payload::Values { len, data } = payload else {
+        return None;
+    };
+    if len as usize != 1 + 2 * HARMONICS {
+        return None;
+    }
+    let mut coeffs = FourierCoeffs::zero();
+    coeffs.mean = data[0];
+    coeffs.a.copy_from_slice(&data[1..1 + HARMONICS]);
+    coeffs
+        .b
+        .copy_from_slice(&data[1 + HARMONICS..1 + 2 * HARMONICS]);
+    Some(coeffs)
 }
 
 /// Run one bounded, experiment-specific output-quiescence step.
