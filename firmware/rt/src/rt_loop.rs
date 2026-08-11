@@ -146,15 +146,19 @@ fn run_rt_tick<R: Rig>(
             (DOMAIN_GENERATOR, command_id::generator::SET_INCREMENT, Payload::U32(increment)) => {
                 phase.set_increment(increment)
             }
-            (DOMAIN_GENERATOR, command_id::generator::SET_TARGET, payload) => {
-                if let Some(coeffs) = coeffs_from_payload(payload) {
-                    *target_coeffs = coeffs;
-                }
+            (
+                DOMAIN_GENERATOR,
+                command_id::generator::SET_TARGET,
+                Payload::Values { len, data },
+            ) => {
+                write_coeffs(len, &data, target_coeffs);
             }
-            (DOMAIN_GENERATOR, command_id::generator::SET_FORCING, payload) => {
-                if let Some(coeffs) = coeffs_from_payload(payload) {
-                    *forcing_coeffs = coeffs;
-                }
+            (
+                DOMAIN_GENERATOR,
+                command_id::generator::SET_FORCING,
+                Payload::Values { len, data },
+            ) => {
+                write_coeffs(len, &data, forcing_coeffs);
             }
             #[cfg(feature = "diag-max-command-burst")]
             (
@@ -300,20 +304,19 @@ fn run_rt_tick<R: Rig>(
 }
 
 #[unsafe(link_section = ".data.ram_func")]
-fn coeffs_from_payload(payload: Payload) -> Option<FourierCoeffs<HARMONICS>> {
-    let Payload::Values { len, data } = payload else {
-        return None;
-    };
+fn write_coeffs(
+    len: u8,
+    data: &[f32; helic_rt::MAX_RT_VALUES],
+    coeffs: &mut FourierCoeffs<HARMONICS>,
+) {
     if len as usize != 1 + 2 * HARMONICS {
-        return None;
+        return;
     }
-    let mut coeffs = FourierCoeffs::zero();
     coeffs.mean = data[0];
     coeffs.a.copy_from_slice(&data[1..1 + HARMONICS]);
     coeffs
         .b
         .copy_from_slice(&data[1 + HARMONICS..1 + 2 * HARMONICS]);
-    Some(coeffs)
 }
 
 /// Run one bounded, experiment-specific output-quiescence step.

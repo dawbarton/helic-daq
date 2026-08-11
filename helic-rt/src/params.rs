@@ -793,10 +793,21 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         if self.commands.capacity() - self.commands.len() < crate::COMMANDS_PER_TICK {
             return Err(ErrorCode::Busy);
         }
-        for _ in 0..crate::COMMANDS_PER_TICK {
+        let ids = if cfg!(feature = "diag-wide-command-payload") {
+            [
+                command_id::generator::DIAGNOSTIC_VALUES,
+                command_id::generator::DIAGNOSTIC_VALUES,
+            ]
+        } else {
+            [
+                command_id::generator::SET_TARGET,
+                command_id::generator::SET_FORCING,
+            ]
+        };
+        for id in ids {
             let result = self.commands.enqueue(RtCommand {
                 domain: DOMAIN_GENERATOR,
-                id: command_id::generator::DIAGNOSTIC_VALUES,
+                id,
                 payload: Payload::Values {
                     len: COEFF_COUNT as u8,
                     data: [0.0; MAX_RT_VALUES],
@@ -1090,10 +1101,18 @@ mod tests {
     fn diagnostic_reset_preloads_exact_per_tick_command_limit() {
         let (mut store, mut rx) = store();
         store.set(IDX_DIAG_RESET, &1_u32.to_le_bytes()).unwrap();
-        for expected_id in [
-            command_id::generator::DIAGNOSTIC_VALUES,
-            command_id::generator::DIAGNOSTIC_VALUES,
-        ] {
+        let expected_ids = if cfg!(feature = "diag-wide-command-payload") {
+            [
+                command_id::generator::DIAGNOSTIC_VALUES,
+                command_id::generator::DIAGNOSTIC_VALUES,
+            ]
+        } else {
+            [
+                command_id::generator::SET_TARGET,
+                command_id::generator::SET_FORCING,
+            ]
+        };
+        for expected_id in expected_ids {
             assert!(matches!(
                 rx.dequeue(),
                 Some(RtCommand {
