@@ -340,10 +340,14 @@ python3 tools/check_rt_layout.py
 ```
 
 The checker requires `run_hot_loop`, the ARM EABI copy/clear helpers and, where
-used, the analogue transfer routine at `2000xxxx` SRAM addresses. It permits
-one-time flash-to-SRAM linker veneers. `run_rt_tick` may be inlined; if emitted
-separately, it must also be in SRAM. Review newly emitted helper symbols as
-well: the script is a guardrail, not a complete call-graph proof.
+used, the analogue transfer routine at `2000xxxx` SRAM addresses. It also
+requires realised adapters for programme command application and stepping, rig
+parameter writes and measurement, programme fault evaluation where applicable,
+the safety decision, vector actuation, programme signal publication, and active
+double-buffer access. It permits one-time flash-to-SRAM linker veneers.
+`run_rt_tick` may be inlined; if emitted separately, it must also be in SRAM.
+Review newly emitted helper symbols as well: the script is a guardrail, not a
+complete call-graph proof.
 
 **2. Hardware check — production regression** (device + probe attached, one
 sequential client):

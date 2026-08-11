@@ -785,3 +785,30 @@ evidence:
   not flashed. No production programme instantiates the PLL, so there is no
   relevant hardware path yet. The attached CBC W5500 was not reflashed and
   remains on accepted Stage 8 firmware `0.1.0 57d8de7`, disarmed and quiet.
+
+## 2026-08-11T15:40+00:00 Rig-decoupling implementation stage 11
+
+- Named, non-inlined SRAM adapters now expose programme application, stepping,
+  signal publication and fault evaluation, plus rig parameter writes,
+  measurement and vector actuation, to static inspection. `Active::get`,
+  `Active::activate`, and `safety_decide` are also realised named symbols. The
+  strengthened layout gate requires every applicable boundary and rejects any
+  emitted instance outside SRAM in all three production ELFs.
+- Exact CBC W5500 firmware `0.1.0 a21d762` passed the 8000-record all-source
+  regression with idle, TCP-poll and capture loop maxima of 36, 37 and 37 us,
+  and the 60000-record `adc0,out` regression with the same maxima. Both held
+  wake phase at 36/36 us and had zero jitter, overruns, tick timeouts, source or
+  capture drops, UDP loss and index gaps. The unchanged 60 us CBC acceptance
+  limit therefore retains 23 us margin.
+- The automatic flash again timed out waiting for the first connection. A
+  debugger flash of the identical W5500 image reported normal IPv4 and link
+  state, after which both ordered no-flash runs passed. Final state was
+  `arm = 0`, `freq = 0`, zero target and forcing coefficients,
+  `table_mode = 0`, `safety = 0b1010`, and zero jitter, overrun, timeout, drop
+  and backlog counters; the live loop repopulated `loop_time_max = 35 us`
+  immediately after diagnostic reset.
+- Exact committed firmware passed release formatting, clippy, all-production
+  build and the strengthened SRAM layout gate. CBC and whirl W6100 variants
+  cross-built but were not flashed. Only the attached W5500 was tested; the
+  laser and actuator supplies remained down, so no powered-path evidence was
+  obtained.

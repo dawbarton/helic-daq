@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–10 completed 2026-08-11. Revision
-15. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–11 completed 2026-08-11. Revision
+16. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1632,7 +1632,20 @@ production rigs here and treats the crate boundary as the contract that
     stalling, replay idempotence, saturation, timeout, and bounds. All root and
     release firmware gates pass. No production programme instantiates the PLL,
     so hardware evidence is correctly deferred to its first real consumer.
-11. **Layout gate and `rt-sram` features** extended to the new hot-path symbols.
+11. **Completed 2026-08-11: layout-verifiable hot-path boundaries.** The common
+    loop now calls named, non-inlined SRAM adapters for programme command
+    application, rig parameter writes and measurement, programme stepping,
+    fault evaluation, vector actuation, and programme signal publication.
+    `Active::get`, `Active::activate`, and `safety_decide` are likewise realised
+    named SRAM symbols. The layout checker accepts compound patterns for generic
+    symbols, requires every applicable boundary in each production ELF, and
+    rejects any emitted hot symbol outside SRAM. Exact CBC W5500 firmware
+    `0.1.0 a21d762` passed the 8000-record all-source and 60000-record sustained
+    regressions: idle, TCP-poll, and capture maxima were 36/37/37 us in both
+    runs, wake phase remained 36/36 us, and timing faults, jitter, source and
+    capture drops, UDP loss, and index gaps were all zero. The final rig state
+    was disarmed and quiet. All production release ELFs passed the strengthened
+    gate, and both W6100 variants cross-built but were not flashed.
 12. **Decouple the safety and regression tooling.** `check_rt_layout.py` keys
     `REQUIRED_SYMBOLS` on the three package names (`check_rt_layout.py:31`) and
     `rt_regression.py` hard-codes three `RigProfile` entries with
@@ -1796,6 +1809,15 @@ wake phase is the baseline.
    Stage-10 implementation produces contrary compiler evidence.
 
 ## Revision history
+
+**Revision 16** records the enforceable SRAM boundary contract. Named,
+non-inlined adapters make each programme and rig operation in the mandatory
+tick path visible to the linker and layout checker; table-buffer access and the
+safety decision are similarly realised rather than accepted on the strength of
+LTO inlining. The strengthened three-ELF gate passes, and exact CBC W5500
+hardware retains a 37 us worst-case loop time with no continuity or timing
+faults across the all-source and sustained captures. W6100 evidence remains
+cross-build-only.
 
 **Revision 15** records the bounded PLL primitive. A borrowed harmonic frame
 provides one coherent basis for synthesis and measured-force/measured-response
