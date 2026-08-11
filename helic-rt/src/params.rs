@@ -626,6 +626,8 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
                     for extra in self.extras {
                         extra.reset_diagnostic();
                     }
+                    #[cfg(feature = "diag-max-command-burst")]
+                    self.enqueue_max_command_burst()?;
                 }
                 return Ok(ParamAction::None);
             }
@@ -779,6 +781,33 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         {
             self.table.cancel(token);
         }
+    }
+
+    /// Queue the exact two-command WCET case immediately after `diag_reset`.
+    ///
+    /// This diagnostic-only path changes no registry entry. Checking capacity
+    /// before either enqueue makes the pair transactional with respect to the
+    /// producer; the concurrent consumer can only increase available space.
+    #[cfg(feature = "diag-max-command-burst")]
+    fn enqueue_max_command_burst(&mut self) -> Result<(), ErrorCode> {
+        if self.commands.capacity() - self.commands.len() < crate::COMMANDS_PER_TICK {
+            return Err(ErrorCode::Busy);
+        }
+        for id in [
+            command_id::generator::SET_TARGET,
+            command_id::generator::SET_FORCING,
+        ] {
+            let result = self.commands.enqueue(RtCommand {
+                domain: DOMAIN_GENERATOR,
+                id,
+                payload: Payload::Values {
+                    len: COEFF_COUNT as u8,
+                    data: [0.0; MAX_RT_VALUES],
+                },
+            });
+            debug_assert!(result.is_ok());
+        }
+        Ok(())
     }
 
     pub const fn sample_rate(&self) -> SampleRate {
@@ -1057,6 +1086,27 @@ mod tests {
         assert!(data[COEFF_COUNT as usize..]
             .iter()
             .all(|value| *value == 0.0));
+    }
+
+    #[cfg(feature = "diag-max-command-burst")]
+    #[test]
+    fn diagnostic_reset_preloads_exact_per_tick_command_limit() {
+        let (mut store, mut rx) = store();
+        store.set(IDX_DIAG_RESET, &1_u32.to_le_bytes()).unwrap();
+        for expected_id in [
+            command_id::generator::SET_TARGET,
+            command_id::generator::SET_FORCING,
+        ] {
+            assert!(matches!(
+                rx.dequeue(),
+                Some(RtCommand {
+                    domain: DOMAIN_GENERATOR,
+                    id,
+                    payload: Payload::Values { len, .. },
+                }) if id == expected_id && len as u16 == COEFF_COUNT
+            ));
+        }
+        assert!(rx.dequeue().is_none());
     }
 
     #[test]

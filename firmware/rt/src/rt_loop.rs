@@ -33,30 +33,6 @@ static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::n
 pub fn init_channels() -> RtChannels {
     let (command_tx, command_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (record_tx, record_rx) = RECORD_QUEUE.init(Queue::new()).split();
-    #[cfg(feature = "diag-max-command-burst")]
-    let command_tx = {
-        let mut command_tx = command_tx;
-        // Preload exactly the reviewed per-boundary limit before core 1 starts.
-        // Each command has the widest inline representation even though the
-        // standard Fourier component consumes only its 33-value prefix. This
-        // makes the copy WCET measurable without adding a wire-visible hook.
-        for id in [
-            command_id::generator::SET_TARGET,
-            command_id::generator::SET_FORCING,
-        ] {
-            command_tx
-                .enqueue(RtCommand {
-                    domain: DOMAIN_GENERATOR,
-                    id,
-                    payload: Payload::Values {
-                        len: (1 + 2 * HARMONICS) as u8,
-                        data: [0.0; helic_rt::MAX_RT_VALUES],
-                    },
-                })
-                .unwrap();
-        }
-        command_tx
-    };
     RtChannels {
         command_tx,
         command_rx,

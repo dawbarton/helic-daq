@@ -11,7 +11,10 @@ use crate::MAX_SOURCES;
 /// vectors use an owner-checked [`helic_core::ValueBuffer`], because hardware
 /// timing rejected copying 132 values through this envelope. Changing this
 /// bound changes queue SRAM use and command WCET, so it is breaking.
+#[cfg(not(feature = "diag-wide-command-payload"))]
 pub const MAX_RT_VALUES: usize = 33;
+#[cfg(feature = "diag-wide-command-payload")]
+pub const MAX_RT_VALUES: usize = 132;
 /// Widest reviewed buffered force vector: four actuators at sixteen harmonics.
 pub const MAX_FORCE_VALUES: usize = 132;
 
@@ -55,6 +58,10 @@ pub mod command_id {
 /// Deliberately not `Copy` or `Clone`: `Buffer` contains a linear token whose
 /// ownership must travel back to the staging endpoint if enqueueing fails.
 #[derive(Debug)]
+#[cfg_attr(
+    feature = "diag-wide-command-payload",
+    allow(clippy::large_enum_variant)
+)]
 pub enum Payload {
     Unit,
     F32(f32),
@@ -71,7 +78,9 @@ pub struct RtCommand {
     pub payload: Payload,
 }
 
+#[cfg(not(feature = "diag-wide-command-payload"))]
 const _: () = assert!(core::mem::size_of::<RtCommand>() <= 160);
+const _: () = assert!(core::mem::size_of::<RtCommand>() <= 560);
 
 pub const COMMAND_QUEUE_LEN: usize = 32;
 /// Maximum number of host commands applied at one sample boundary.
@@ -109,8 +118,12 @@ mod tests {
 
     #[test]
     fn command_envelope_stays_within_reviewed_sram_bound() {
-        assert_eq!(MAX_RT_VALUES, 33);
-        assert!(core::mem::size_of::<RtCommand>() <= 160);
+        if cfg!(feature = "diag-wide-command-payload") {
+            assert_eq!(MAX_RT_VALUES, 132);
+        } else {
+            assert_eq!(MAX_RT_VALUES, 33);
+            assert!(core::mem::size_of::<RtCommand>() <= 160);
+        }
     }
 
     #[test]
@@ -118,6 +131,8 @@ mod tests {
         const ACTUATORS: usize = 4;
         const HARMONICS: usize = 16;
         assert_eq!(ACTUATORS * (1 + 2 * HARMONICS), MAX_FORCE_VALUES);
-        assert_eq!(1 + 2 * HARMONICS, MAX_RT_VALUES);
+        if !cfg!(feature = "diag-wide-command-payload") {
+            assert_eq!(1 + 2 * HARMONICS, MAX_RT_VALUES);
+        }
     }
 }
