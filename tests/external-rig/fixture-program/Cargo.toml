@@ -1,0 +1,13 @@
+# Host-testable programme selected by the external fixture firmware.
+[package]
+name = "fixture-rig-program"
+description = "Independent programme used to verify HELIC-DAQ rig composition"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+rt-sram = ["helic-rt/rt-sram"]
+
+[dependencies]
+helic-rt.workspace = true

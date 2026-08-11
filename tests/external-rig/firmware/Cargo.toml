@@ -1,0 +1,17 @@
+# RP2350 firmware which composes shared crates from an independent workspace.
+[package]
+name = "fw-fixture-rig"
+description = "Out-of-workspace HELIC-DAQ composition fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fixture-rig-program = { path = "../fixture-program", features = ["rt-sram"] }
+helic-core.workspace = true
+helic-rt = { workspace = true, features = ["rt-sram"] }
+helic-fw-rt.workspace = true
+cortex-m-rt.workspace = true
+defmt-rtt.workspace = true
+panic-probe.workspace = true
+static_cell.workspace = true

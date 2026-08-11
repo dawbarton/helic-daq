@@ -1,0 +1,27 @@
+# Dependency boundaries owned by the independent fixture workspace.
+schema_version = 1
+
+[[exact]]
+package = "fixture-rig-program"
+dependencies = ["helic-rt"]
+
+[[exact]]
+package = "fw-fixture-rig"
+dependencies = [
+  "cortex-m-rt",
+  "defmt-rtt",
+  "fixture-rig-program",
+  "helic-core",
+  "helic-fw-rt",
+  "helic-rt",
+  "panic-probe",
+  "static_cell",
+]
+
+[[forbidden_source]]
+path = "firmware/src"
+dependencies = ["embassy-executor", "embassy-net", "embassy-time", "helic-fw-support"]
+
+[[unreachable]]
+root = "fw-fixture-rig"
+dependencies = ["helic-fw-support"]

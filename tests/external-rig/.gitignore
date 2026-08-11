@@ -1,0 +1,4 @@
+# Regenerable output from the independent fixture workspace.
+/target/
+__pycache__/
+*.pyc

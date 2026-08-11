@@ -1,0 +1,45 @@
+# Verification contract owned by the independent fixture workspace.
+schema_version = 1
+name = "fixture"
+package = "fw-fixture-rig"
+experiment = "fixture-rig"
+
+[layout]
+elf = "fw-fixture-rig"
+required_patterns = [
+  ["run_hot_loop"],
+  ["run_reboot_quiesce"],
+  ["apply_program"],
+  ["set_rig_param"],
+  ["measure_rig"],
+  ["step_program"],
+  ["actuate_rig"],
+  ["write_program_signals"],
+]
+optional_patterns = [
+  ["run_rt_tick"],
+  ["reboot_quiesce_step"],
+  ["prepare_reboot"],
+  ["program_fault"],
+  ["safety_decide"],
+  ["transfer_in_place"],
+]
+exact_symbols = [
+  "__aeabi_memcpy",
+  "__aeabi_memcpy4",
+  "__aeabi_memcpy8",
+  "__aeabi_memclr",
+  "__aeabi_memclr4",
+  "__aeabi_memclr8",
+]
+
+[regression]
+sample_rate_hz = 1000
+default_host = "127.0.0.1"
+capture_sources = ["sense", "drive"]
+wired = false
+max_loop_us = 500
+
+[[regression.quiet]]
+name = "drive_enable"
+value = 0
