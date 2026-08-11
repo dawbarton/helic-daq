@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: proposed, not implemented. Revision 8. Supersedes parts of
+Status: proposed, not implemented. Revision 8.1. Supersedes parts of
 `docs/rt_program_proposal.md`. Revision history and review responses are at the
 end.
 
@@ -1057,9 +1057,11 @@ Fixed ──enable──▶ Acquiring ──|error| < lock_tol for lock_dwell─
   than tripping, so a failed attempt leaves a usable rig. Re-entering
   `Acquiring` needs a fresh `set_enabled(true)`; `update` cannot enable itself,
   or the timeout would be meaningless.
-- **`Fixed → Acquiring` happens only on the `set_enabled` edge**, which the
+- **`Fixed → Acquiring` happens only via `set_enabled(true)`**, which the
   programme calls when the excitation-mode command lands, never implicitly from
-  `update`.
+  `update`. The call is **state-guarded and idempotent**: `true` is a no-op in
+  `Acquiring`, `Locked`, and `LockLost`, so replaying an unchanged
+  `excitation_mode` cannot discard a valid lock.
 - Separate `lock_tol`/`unlock_tol` and `lock_dwell`/`unlock_dwell` give
   hysteresis in **phase-error tolerance and in time**. Neither is an amplitude
   threshold; `min_amplitude` is the separate validity gate below.
@@ -1088,19 +1090,29 @@ impl<const H: usize> Pll<H> {
         dt: f32,
     ) -> u32;   // commanded increment, already clamped to configured bounds
 
-    /// **Command-triggered**, called when the excitation-mode command lands. It
-    /// is the only way into `Acquiring`, so `update` never enables itself.
+    /// Called when the excitation-mode command lands. It is the only way into
+    /// `Acquiring`, so `update` never enables itself: if it could, an
+    /// acquisition timeout would achieve nothing, because the next tick would
+    /// restart acquisition and the "reverts to a usable rig" property would be
+    /// lost.
     ///
-    /// This matters after an acquisition timeout: if calling `update` could
-    /// re-enter `Acquiring` from `Fixed`, the timeout would achieve nothing,
-    /// because the next tick would restart acquisition and the "reverts to a
-    /// usable rig" property would be lost.
+    /// **State-guarded, and therefore idempotent.** The transition depends on
+    /// the current state, not on the command being an edge:
     ///
-    /// "Command-triggered" rather than "edge-triggered" is deliberate. Each
-    /// `set_enabled(true)` restarts acquisition, **including when the
-    /// programme's mode is already `PhaseLocked`**: an intervening `false` is
-    /// not required. After a timeout the host re-sends the mode command to try
-    /// again, rather than having to disable and re-enable.
+    /// - `true` from `Fixed` enters `Acquiring`;
+    /// - `true` while `Acquiring` or `Locked` is a **no-op**;
+    /// - `true` while `LockLost` is a no-op: that state is latched until
+    ///   `reset()` or an explicit `set_enabled(false)`, matching the deliberate
+    ///   re-arm required after a safety trip;
+    /// - after an acquisition timeout the state is already `Fixed`, so a repeat
+    ///   `true` retries without needing an intervening `false`.
+    ///
+    /// The no-op while `Locked` is the point. A host or broker replaying its
+    /// configuration on reconnect re-sends `excitation_mode`; if that restarted
+    /// acquisition it would discard a valid lock mid-measurement, and because
+    /// `Acquiring` deliberately does not fault, it would do so silently.
+    /// Forcing re-acquisition remains possible and stays explicit:
+    /// `set_enabled(false)` then `true`, or `reset()`.
     pub fn set_enabled(&mut self, enabled: bool);
 
     pub fn state(&self) -> PllState;
@@ -1268,9 +1280,11 @@ impl Program for Appropriation {
             (ids::TARGET_PHASE, Payload::F32(v)) => self.pll.set_target_phase(v),
             (ids::FREQ_MIN, Payload::U32(inc)) => self.pll.set_min_increment(inc),
             (ids::FREQ_MAX, Payload::U32(inc)) => self.pll.set_max_increment(inc),
-            // The mode command is the `set_enabled` edge. Acquisition never
-            // starts implicitly from `step`, so an acquisition timeout leaves
-            // the rig at its setpoint frequency until the host asks again.
+            // Acquisition never starts implicitly from `step`, so an
+            // acquisition timeout leaves the rig at its setpoint frequency
+            // until the host asks again. `set_enabled` is state-guarded, so
+            // this stays correct when a reconnecting host replays an unchanged
+            // `excitation_mode`: it will not disturb an existing lock.
             (ids::EXCITATION_MODE, Payload::U32(m)) => {
                 self.mode = ExcitationMode::from_u32(m);
                 self.pll.set_enabled(self.mode == ExcitationMode::PhaseLocked);
@@ -1597,9 +1611,13 @@ boundary; acquisition timeout reverts to `Fixed` without tripping; only
 input including divergent and non-finite ones; sub-`min_amplitude` input stalls
 acquisition rather than driving the loop. **Entry**: after an acquisition
 timeout, repeated `update` calls leave the state at `Fixed`, and only a fresh
-`set_enabled(true)` re-enters `Acquiring`. **Saturation**: sustained saturation
-while `Acquiring` does not end the state, while the same saturation once
-`Locked` produces `LockLost`.
+`set_enabled(true)` re-enters `Acquiring`. **Idempotence**: `set_enabled(true)`
+while `Locked` leaves the state, the loop filter, and the commanded increment
+untouched — the direct regression test for a host or broker replaying an
+unchanged `excitation_mode` on reconnect — and is likewise a no-op in
+`Acquiring` and `LockLost`. **Saturation**: sustained saturation while
+`Acquiring` does not end the state, while the same saturation once `Locked`
+produces `LockLost`.
 
 **Phase fidelity** — the `f32` `phase` source is within `2⁻²⁵` turn of the `u32`
 accumulator, with the propagated estimator-error bound asserted.
@@ -1650,6 +1668,21 @@ wake phase is the baseline.
 
 ## Revision history
 
+**Revision 8.1** settles one behavioural point raised alongside the fifth
+review. Revision 8 said every `set_enabled(true)` restarts acquisition, so a
+host or broker replaying its configuration on reconnect would re-send an
+unchanged `excitation_mode` and discard a valid lock. Worse, because `Acquiring`
+deliberately does not fault, it would do so **silently**, corrupting an
+appropriation measurement with no diagnostic.
+
+`set_enabled` is now **state-guarded and idempotent**: `true` enters `Acquiring`
+only from `Fixed`, and is a no-op in `Acquiring`, `Locked`, and `LockLost`.
+Retry after an acquisition timeout still needs no intervening `false`, because
+the timeout already returns the state to `Fixed`. Forcing re-acquisition stays
+possible and explicit via `set_enabled(false)` then `true`, or `reset()`. This
+needs less state than the previous rule, not more, and makes the parameter
+behave like every other setter in the registry.
+
 **Revision 8** responds to a fifth review, which approved the direction subject
 to one buffer correction.
 
@@ -1682,7 +1715,7 @@ to one buffer correction.
 Clean-ups: the validation *test* list was still describing the pre-
 `CommandTarget` scheme and now matches it; `GroupEntry` replaces parallel
 `groups`/`targets` arrays and the alignment invariant they implied;
-`set_enabled` is documented as *command-triggered*, since after a timeout a
+`set_enabled` is documented as state-guarded (see revision 8.1), since after a timeout a
 repeat mode command must restart acquisition without an intervening `false`;
 the privacy compile-fail test is dropped, because Rust already proves private
 fields are private, while the buffer's borrow-rule doctests stay as the
