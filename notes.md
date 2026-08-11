@@ -863,3 +863,35 @@ evidence:
   unavailable. No firmware was flashed during Stage 13; the attached CBC
   W5500 remains on accepted firmware `0.1.0 a21d762`, disarmed and quiet. The
   W6100 was cross-built only, and the laser and actuator supplies remained down.
+
+## 2026-08-11T16:19+00:00 Rig-local code stays with its firmware package
+
+- The Stage-9 interpretation of single-consumer ownership was too literal:
+  creating a repository-root `whirl-rig-program` package kept RPM estimation
+  out of shared `helic-core`, but scattered one rig's implementation across
+  unrelated top-level locations.
+- Rig-specific portable computation will instead live in a dependency-light,
+  host-tested library target within that rig's firmware package. The firmware
+  binary remains hardware glue, while the package boundary keeps the complete
+  rig together.
+- Promotion to `helic-core` remains cheap and is deferred until an algorithm
+  has a second real consumer, or is deliberately accepted as a platform
+  primitive. Generic-looking code alone is not evidence of platform reuse.
+
+## 2026-08-11T16:26+00:00 Whirl package-local RPM integration verified
+
+- `fw-whirl-rig` now owns `RpmEstimator` in a dependency-free `no_std` library
+  target beside its firmware binary. Hardware dependencies are ARM-target-
+  gated, both board features enable `rt-sram`, and the dependency policy rejects
+  any target-independent dependency added to the package.
+- All six unchanged RPM tests pass on x86. The shared root suite passes 169
+  tests plus four compile-fail doctests; the complete production firmware
+  workspace passes formatting, release clippy, build and the three-profile SRAM
+  gate. Both CBC and whirl W6100 variants cross-build, and the whirl ELF retains
+  no standalone RPM symbol, consistent with inlining into the checked hot loop.
+- The empty legacy `firmware/common` tree, empty CBC `src/drivers` directory and
+  retired top-level `whirl-rig-program` directory were removed. Ignored local
+  settings, Python caches/package metadata and the 6.2 MB `tmp/hawk-rig`
+  reference-material tree were identified but deliberately left untouched.
+- No hardware was flashed. W6100 evidence remains cross-build-only, and the
+  attached CBC W5500 remains on the accepted, disarmed Stage-11 image.

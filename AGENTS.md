@@ -43,11 +43,10 @@ experiment in which it was first needed:
 | `helic-rt` | Portable, Embassy-free `Rig`, `TickSource` and `Program` contracts; commands, records and queues; `RtShared`; component parameter groups and `ParamStore`; source assembly and the pure safety decision. |
 | `helic-drivers` | Portable chip, sensor and peripheral logic expressed over `embedded-hal`, without RP2350 board policy. |
 | `helic-proto` | Wire and broker codecs, type codes, framing and protocol constants. |
-| `<rig>-program` | Host-tested, `no_std` programme state, controllers and computation used by one rig only. It must not own pins, Embassy tasks or network services. |
 | `firmware/rt` | Mandatory synchronous RP2350 core-1 mechanisms used by every rig: the loop driver, tick sources, raw PIO/SPI adapters and EABI SRAM shims. No executor, `embassy-time`, network or `firmware/support` dependency. |
 | `firmware/support` | Core-0 services used by every production rig: communications, identity, status, networking and the time watchdog. Optional or rig-specific services do not belong here. |
 | `firmware/integrations/<device>` | Optional hardware-facing Embassy services used by some rigs, such as the optoNCDT UART integration. Keep portable device logic in `helic-drivers`. |
-| `firmware/experiments/<rig>` | Only physical composition and auditable glue: `board.rs`, `config.rs`, `telemetry.rs`, `rig.rs`, `main.rs` and `rig-profile.toml`. |
+| `firmware/experiments/<rig>` | The complete rig-specific implementation. Keep dependency-light, host-tested `no_std` computation in the package's library target; keep `board.rs`, `config.rs`, `telemetry.rs`, `rig.rs` and `main.rs` as physical composition and auditable glue; keep `rig-profile.toml` beside them. |
 | Host packages | Processing reconstructible from streamed samples, including multi-channel estimation, continuation/update laws and offline analysis. Device-only inputs such as PIO FIFOs remain on core 1. |
 
 - Keep every experiment crate predictable: `board.rs` owns only pins and
@@ -55,8 +54,9 @@ experiment in which it was first needed:
   concrete `ActiveController`/`ActiveProgram`; `telemetry.rs` owns atomic-backed
   declarations; `rig.rs` assembles core-1 hardware and implements `Rig`; and
   `main.rs` binds interrupts, assigns cores and composes common runners. Move
-  reusable mechanisms out rather than adding experiment-local framework
-  wrappers.
+  code to shared crates only when reuse is established rather than scattering
+  one rig across repository-level packages. A rig-local library target must
+  remain host-testable without pulling in Embassy or RP2350 dependencies.
 - `Program` owns logical sample-rate computation: the master phase, controller,
   signal generators, table player, programme command domains, signals and
   programme-originated faults. `Rig` owns physical measurement, vector
@@ -272,6 +272,10 @@ set is:
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+cargo clippy --manifest-path firmware/experiments/whirl-rig/Cargo.toml \
+  --lib --target x86_64-unknown-linux-gnu --no-default-features -- -D warnings
+cargo test --manifest-path firmware/experiments/whirl-rig/Cargo.toml \
+  --lib --target x86_64-unknown-linux-gnu --no-default-features
 cd firmware
 uv run --no-project python tools/check_dependencies.py
 uv run --no-project python tools/check_dependencies.py \

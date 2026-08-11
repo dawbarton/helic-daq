@@ -78,7 +78,6 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 |---|---|---|
 | `helic-core/` | DSP: phase and harmonic bases, generators, filters, PID, controller trait, Fourier estimator, and bounded PLL | host + firmware (`no_std`, no alloc) |
 | `helic-rt/` | Portable rig/tick contracts, cross-core types and state, source assembly, and parameter registry | host + firmware (`no_std`, no Embassy) |
-| `whirl-rig-program/` | Whirl-specific portable computation, currently optical-period RPM estimation | host + firmware (`no_std`, no alloc) |
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `helic-broker/` | Loopback multi-client broker, recent history and optional HDF5 recording | host |
@@ -86,22 +85,25 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | `firmware/support/` | Universal core-0 communication, network, identity, status and watchdog services | `thumbv8m.main-none-eabihf` only |
 | `firmware/integrations/optoncdt/` | Optional optoNCDT UART integration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
-| `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders and optical period capture | `thumbv8m.main-none-eabihf` only |
+| `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders, optical period capture and a dependency-free RPM library target | host library + `thumbv8m.main-none-eabihf` firmware |
 | `firmware/experiments/pico2w-rig/` | Pico 2W Wi-Fi signal generator, DAC and laser logger | `thumbv8m.main-none-eabihf` only |
 | `host-python/` | Python package `helic_daq` + `helic-daq` CLI | host |
 | `host-julia/` | Julia package `HelicDAQ` + Tables.jl capture interface | host |
 | `host-matlab/` | MATLAB package `helicdaq` + native table capture interface | host |
 
 The split exists so that **everything with logic in it can be unit-tested on
-the host** (`cargo test` at the root plus the language-specific suites in
-`host-python/`, `host-julia/`, and `host-matlab/`).
-The experiment crates are deliberately thin: pin wiring, task plumbing, and
-glue. Portable computation specific to one rig lives in a host-testable
-`<rig>-program` crate; an algorithm moves into `helic-core` once it has two
-actual consumers. A module belongs in `helic-fw-support` only when it runs on
-core 0 and every production rig uses it; non-universal services belong in a
-separate integration crate. `tools/check_dependencies.py` enforces the critical
-crate boundaries in CI.
+the host** (`cargo test` at the root, explicit host tests for rig-local library
+targets, plus the language-specific suites in `host-python/`, `host-julia/`,
+and `host-matlab/`).
+The experiment packages keep a thin firmware binary for pin wiring, task
+plumbing and glue. Portable computation specific to one rig stays beside it in
+a dependency-light, host-tested library target; this keeps the complete rig in
+one package without coupling its tests to Embassy or RP2350. Promote an
+algorithm to `helic-core` once it has two actual consumers, or is deliberately
+accepted as a platform primitive. A module belongs in `helic-fw-support` only
+when it runs on core 0 and every production rig uses it; non-universal services
+belong in a separate integration crate. `tools/check_dependencies.py` enforces
+the critical crate boundaries in CI.
 
 ## Host broker architecture
 
@@ -174,15 +176,16 @@ The CBC acquisition path is shown; ADC-free rigs replace CONVST/BUSY with a
 PWM-wrap tick and omit the ADC read.
 
 The component-ownership refactor in
-[rig_decoupling_proposal.md](rig_decoupling_proposal.md) is being implemented
-in explicit regression-gated stages. Stages 0–10 have moved the cross-core
-state and portable contracts into `helic-rt`, split firmware support by
+[rig_decoupling_proposal.md](rig_decoupling_proposal.md) was completed in 13
+explicit regression-gated stages. It moved the cross-core state and portable
+contracts into `helic-rt`, split firmware support by
 execution domain, replaced the global waveform buffers with owner-checked
 endpoints, composed component-owned parameter groups, and moved the standard
 target/forcing/controller/table graph behind the statically selected
 `Program`, and generalised the rig/program boundary to a bounded actuator
 vector. Table and harmonic capacities are experiment-selected const generics,
-the single-consumer RPM estimator now lives in `whirl-rig-program`, and
+the single-consumer RPM estimator now lives in the whirl package's host-tested
+library target, and
 `helic-core` supplies the bounded measured-force PLL for future phase-locked
 programmes. The common loop owns timing, command dispatch, vector safety, and
 record assembly.
@@ -574,8 +577,9 @@ closest. An experiment crate has a deliberately predictable anatomy:
 6. In `main.rs`, bind only owned interrupts, move the complete RT parts bundle
    to core 1, and compose the common TCP, stream, beacon, laser and RT runners.
    Put algorithms with two actual consumers in `helic-core`, rig-specific
-   portable computation in a host-tested `<rig>-program` crate, portable device
-   logic in `helic-drivers`, mandatory core-1 RP2350 mechanisms in
+   portable computation in a dependency-light, host-tested library target in
+   the same experiment package, portable device logic in `helic-drivers`,
+   mandatory core-1 RP2350 mechanisms in
    `firmware/rt`, and universal core-0 services in `firmware/support`. Put
    optional hardware services in a focused crate under `firmware/integrations`.
 

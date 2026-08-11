@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
 Status: implementation completed; stages 0–13 completed 2026-08-11. Revision
-18. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+19. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -12,9 +12,10 @@ review responses are at the end.
 
 Fixed capacities are part of a bounded real-time platform, and raising one is a
 deliberate platform change with its own timing and memory evidence. A genuinely
-new reusable DSP algorithm belongs in `helic-core` and a new peripheral driver
-in `helic-drivers`; putting either in a rig crate would be the failure mode, not
-the success case.
+reusable DSP algorithm with established consumers belongs in `helic-core`, and
+a new peripheral driver in `helic-drivers`. Portable computation used by one
+rig stays with that rig in a host-tested library target; generic-looking code
+alone does not justify scattering the rig or expanding shared API.
 
 ### Shared crates evolve additively
 
@@ -73,8 +74,8 @@ only for what it uses.
 > by being conceptually general.
 
 Otherwise `helic-core` accumulates speculative API that constrains refactoring
-for users who never arrive. `RpmEstimator` therefore moves out to
-`whirl-rig-program`, having one consumer (`whirl-rig/src/rig.rs:10`).
+for users who never arrive. `RpmEstimator` therefore lives in the dependency-
+free library target of `fw-whirl-rig`, beside its only consumer.
 
 **Why this rule is cheap, which is the part that makes it work.** A reviewer
 objected that moving `RpmEstimator` out means a second rotating rig would later
@@ -316,8 +317,8 @@ reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 | **`helic-fw-rt`** (new) | core 1: tick sources, `rt_mem`, `analog_spi`, PIO, loop driver, safety wrapper | cross-build |
 | **`helic-fw-support`** (new) | core 0: `net/`, `comms/`, `time_watchdog`, `status_run` | cross-build |
 | `helic-drivers` | chip and sensor logic, pure and host-testable | host |
-| `<rig>-program` | that rig's programme, controllers, shadows, rig-specific DSP | host |
-| `fw-<rig>` | that rig's `board.rs`, `config.rs`, `rig.rs`, `main.rs` | cross-build |
+| `fw-<rig>` library target | that rig's dependency-light programme, controllers and rig-specific computation | host |
+| `fw-<rig>` binary target | that rig's `board.rs`, `config.rs`, `rig.rs`, `main.rs` and embedded composition | cross-build |
 
 ### Dependency rules, CI-checked
 
@@ -487,9 +488,12 @@ base should stay in a register for the whole tick and cost nothing, but this
 lands on the tick path, so it is verified by ELF inspection and a loop-maximum
 measurement at stage 2 rather than assumed.
 
-### `helic-core::rpm` moves to `whirl-rig-program`
+### `helic-core::rpm` stays local to `fw-whirl-rig`
 
-Under the two-consumer rule, `RpmEstimator` has one (`whirl-rig/src/rig.rs:10`).
+Under the two-consumer rule, `RpmEstimator` has one consumer. Its generic Rust
+implementation does not make it a shared platform component: it lives in the
+dependency-free library target of the whirl firmware package, where it retains
+host tests without separating one rig across top-level packages.
 
 **Recorded objection:** a reviewer noted that the type is a hardware-independent
 period-to-RPM estimator with staleness, so one *present* consumer does not
@@ -1137,8 +1141,8 @@ the ones earlier revisions left unannotated: `Program::write_signals`,
 `Program::fault`, all `Rig` safety hooks, `Active::get`, `safety_decide`, and
 the vector `actuate` path.
 
-- Each `<rig>-program` crate declares an `rt-sram` feature, enabled by its
-  `fw-<rig>` crate, gating
+- Each rig-local library target used on the tick declares an `rt-sram` feature,
+  enabled by its firmware board features, gating
   `#[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]`.
 - `check_rt_layout.py` gains required symbols for the programme step, apply,
   signal-writing, fault, safety decision, buffer activation, and vector
@@ -1472,11 +1476,13 @@ Core 1, on consuming the token, activates and publishes the length:
 
 ## Repository separation
 
-A rig repository contains `<rig>-program` and `fw-<rig>`, and needs the shared
-crates published or referenced as git dependencies, its own
-`.cargo/config.toml`, its own `Cargo.lock`, and a layout gate and regression
-runner it can drive from a rig-local profile rather than by editing this
-repository's tooling (stage 12). The
+A rig repository contains one `fw-<rig>` package by default, with a portable
+library target and embedded binary target. A further local package split needs
+a real independent build or reuse boundary, not merely generic-looking code.
+The rig needs the shared crates published or referenced as git dependencies,
+its own `.cargo/config.toml`, its own `Cargo.lock`, and a layout gate and
+regression runner it can drive from a rig-local profile rather than by editing
+this repository's tooling (stage 12). The
 Embassy pinning question remains open. A reasonable path keeps the three
 production rigs here and treats the crate boundary as the contract that
 *permits* an external rig, verified by one out-of-workspace test rig.
@@ -1607,9 +1613,10 @@ production rigs here and treats the crate boundary as the contract that
    phase and no timing faults, drops, loss, or gaps. The production ELFs and
    both W6100 wired variants have fresh software evidence; only the CBC W5500
    was flashed.
-9. **Completed 2026-08-11: `RpmEstimator` moved** to the new host-testable,
-   dependency-free `whirl-rig-program` crate. Its six behavioural tests moved
-   unchanged, and `fw-whirl-rig` enables the crate's `rt-sram` feature. Release
+9. **Completed 2026-08-11, placement corrected after review: `RpmEstimator`
+   moved** to the host-testable, dependency-free library target within
+   `fw-whirl-rig`. Its six behavioural tests moved unchanged, and each board
+   feature enables the package's `rt-sram` feature. Release
    inspection found no standalone estimator call target: `observe` and `tick`
    remain inlined into the SRAM-resident whirl hot loop. All root tests, the
    crate dependency gate, every production release ELF, the SRAM layout gate,
@@ -1825,6 +1832,16 @@ wake phase is the baseline.
 
 ## Revision history
 
+**Revision 19** corrects the ownership granularity for single-rig portable
+code. The earlier standalone `whirl-rig-program` package kept `RpmEstimator`
+out of shared API, but unnecessarily scattered one rig across repository-level
+packages. The estimator and its unchanged host tests now live in a dependency-
+free library target within `fw-whirl-rig`; hardware dependencies are ARM-
+target-gated, and both board features enable SRAM placement. The governing
+rule is now to keep rig-specific code with its rig and promote it to
+`helic-core` only when reuse is established. A separate local package requires
+an actual independent build or reuse boundary.
+
 **Revision 18** closes the migration with an independent composition fixture.
 The versioned consumer workspace owns a local programme and RP2350 firmware,
 builds a real shared hot-loop instantiation, checks its ELF using its local
@@ -1863,11 +1880,12 @@ required. This remains host and cross-build evidence until a production
 programme consumes the PLL.
 
 **Revision 14** records the single-consumer RPM estimator move. The estimator
-and its six tests now live in a dependency-free, host-testable
-`whirl-rig-program` crate rather than expanding `helic-core`'s shared API. The
-whirl firmware enables SRAM placement, and release symbol inspection confirms
-the methods inline into the existing SRAM hot loop. This is deliberately
-software-only evidence because no whirl hardware was attached.
+and its six tests initially moved to a dependency-free, host-testable
+`whirl-rig-program` crate rather than expanding `helic-core`'s shared API.
+Revision 19 retains the shared-API decision but corrects the unnecessary
+top-level package split. Release symbol inspection confirms the methods inline
+into the existing SRAM hot loop. This is deliberately software-only evidence
+because no whirl hardware was attached.
 
 **Revision 13** records the completed capacity generalisation. Waveform table
 capacity and Fourier harmonic count are now const generics carried through the
@@ -2086,8 +2104,10 @@ additive-evolution principle now stated in the goal: promoting a module back
 into `helic-core` changes no existing API and requires no other repository to do
 anything. The goal forbids a *new* rig imposing changes on *existing* rigs, not
 the shared crates growing. `RpmEstimator` therefore stays in
-`whirl-rig-program`, and the rule keeps speculative API out of `helic-core` in
-every case where the second consumer never arrives.
+the whirl rig, and the rule keeps speculative API out of `helic-core` in every
+case where the second consumer never arrives. Revision 19 later corrects the
+location from a standalone top-level package to the rig package's own library
+target.
 
 **Revision 5.1** closes the one genuine implementation blocker and renames a
 crate:
