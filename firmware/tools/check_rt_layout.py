@@ -17,12 +17,22 @@ SRAM_END = 0x2008_2000
 # ignored: SRAM callers reach these definitions directly, so the veneers are
 # not part of the tick call graph.
 HOT_SYMBOLS = (
-    "run_hot_loop",
-    "run_rt_tick",
-    "run_reboot_quiesce",
-    "reboot_quiesce_step",
-    "prepare_reboot",
-    "transfer_in_place",
+    ("run_hot_loop",),
+    ("run_rt_tick",),
+    ("run_reboot_quiesce",),
+    ("reboot_quiesce_step",),
+    ("prepare_reboot",),
+    ("transfer_in_place",),
+    ("apply_program",),
+    ("set_rig_param",),
+    ("measure_rig",),
+    ("step_program",),
+    ("program_fault",),
+    ("safety_decide",),
+    ("actuate_rig",),
+    ("write_program_signals",),
+    ("table_buffer", "Active", "3get"),
+    ("table_buffer", "Active", "8activate"),
 )
 
 EABI_HOT_SYMBOLS = (
@@ -36,23 +46,53 @@ EABI_HOT_SYMBOLS = (
 
 REQUIRED_SYMBOLS = {
     "fw-cbc-rig": (
-        "run_hot_loop",
-        "run_reboot_quiesce",
-        "transfer_in_place",
-        *EABI_HOT_SYMBOLS,
+        ("run_hot_loop",),
+        ("run_reboot_quiesce",),
+        ("transfer_in_place",),
+        ("apply_program",),
+        ("set_rig_param",),
+        ("measure_rig",),
+        ("step_program",),
+        ("program_fault",),
+        ("safety_decide",),
+        ("actuate_rig",),
+        ("write_program_signals",),
+        ("table_buffer", "Active", "3get"),
+        ("table_buffer", "Active", "8activate"),
+        *((symbol,) for symbol in EABI_HOT_SYMBOLS),
     ),
     "fw-whirl-rig": (
-        "run_hot_loop",
-        "run_reboot_quiesce",
-        *EABI_HOT_SYMBOLS,
+        ("run_hot_loop",),
+        ("run_reboot_quiesce",),
+        ("apply_program",),
+        ("set_rig_param",),
+        ("measure_rig",),
+        ("step_program",),
+        ("actuate_rig",),
+        ("write_program_signals",),
+        ("table_buffer", "Active", "3get"),
+        ("table_buffer", "Active", "8activate"),
+        *((symbol,) for symbol in EABI_HOT_SYMBOLS),
     ),
     "fw-pico2w-rig": (
-        "run_hot_loop",
-        "run_reboot_quiesce",
-        "transfer_in_place",
-        *EABI_HOT_SYMBOLS,
+        ("run_hot_loop",),
+        ("run_reboot_quiesce",),
+        ("transfer_in_place",),
+        ("apply_program",),
+        ("set_rig_param",),
+        ("measure_rig",),
+        ("step_program",),
+        ("actuate_rig",),
+        ("write_program_signals",),
+        ("table_buffer", "Active", "3get"),
+        ("table_buffer", "Active", "8activate"),
+        *((symbol,) for symbol in EABI_HOT_SYMBOLS),
     ),
 }
+
+
+def matches(pattern: tuple[str, ...], name: str) -> bool:
+    return all(part in name for part in pattern)
 
 
 def symbols(elf: Path, nm: str) -> list[tuple[int, str]]:
@@ -83,15 +123,15 @@ def check_elf(package: str, elf_dir: Path, nm: str) -> list[str]:
     found = symbols(elf, nm)
     errors: list[str] = []
     for required in REQUIRED_SYMBOLS[package]:
-        if required in EABI_HOT_SYMBOLS:
-            present = any(required == name for _, name in found)
+        if len(required) == 1 and required[0] in EABI_HOT_SYMBOLS:
+            present = any(required[0] == name for _, name in found)
         else:
-            present = any(required in name and "Thunk" not in name for _, name in found)
+            present = any(matches(required, name) and "Thunk" not in name for _, name in found)
         if not present:
-            errors.append(f"{package}: required symbol {required!r} is absent")
+            errors.append(f"{package}: required symbol pattern {required!r} is absent")
 
     for address, name in found:
-        is_hot = name in EABI_HOT_SYMBOLS or any(marker in name for marker in HOT_SYMBOLS)
+        is_hot = name in EABI_HOT_SYMBOLS or any(matches(pattern, name) for pattern in HOT_SYMBOLS)
         if "Thunk" in name or not is_hot:
             continue
         if not SRAM_START <= address < SRAM_END:

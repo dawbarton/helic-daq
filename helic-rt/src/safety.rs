@@ -20,7 +20,7 @@ pub struct SafetyOutcome {
 /// conversion. The returned trip request deliberately remains true while a
 /// fault remains present, even if the snapshot was already tripped: a
 /// concurrent core-0 re-arm must be re-latched rather than masking the fault.
-#[inline]
+#[inline(never)]
 #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
 pub fn safety_decide<R: Rig>(
     rig: &R,

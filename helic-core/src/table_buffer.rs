@@ -209,7 +209,7 @@ impl<T: 'static> Active<T> {
     /// active.activate(token);
     /// let _ = table.len();
     /// ```
-    #[inline(always)]
+    #[inline(never)]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn get(&self) -> &T {
         // SAFETY: `current` names the bank owned for shared reads by this
@@ -219,7 +219,7 @@ impl<T: 'static> Active<T> {
     }
 
     /// Activate a committed bank, ignoring invalid or foreign tokens.
-    #[inline]
+    #[inline(never)]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn activate(&mut self, token: CommitToken) {
         if token.owner != self.buf.identity() {

@@ -90,6 +90,56 @@ fn now_us() -> u32 {
 }
 
 #[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn apply_program(program: &mut impl Program, domain: u8, id: u16, payload: Payload) {
+    program.apply(domain, id, payload);
+}
+
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn step_program(
+    program: &mut impl Program,
+    inputs: &[f32],
+    dt: f32,
+    ctx: &StepCtx<'_>,
+    outputs: &mut [f32],
+) {
+    program.step(inputs, dt, ctx, outputs);
+}
+
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn write_program_signals(program: &impl Program, out: &mut [f32]) {
+    program.write_signals(out);
+}
+
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn program_fault(program: &impl Program) -> bool {
+    core::hint::black_box(program.fault())
+}
+
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn set_rig_param(rig: &mut impl Rig, id: u16, value: f32) {
+    core::hint::black_box((id, value));
+    rig.set_param(id, value);
+}
+
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn measure_rig(rig: &mut impl Rig, values: &mut [f32]) {
+    rig.measure(values);
+}
+
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn actuate_rig(rig: &mut impl Rig, outputs: &[f32]) {
+    core::hint::black_box(outputs);
+    rig.actuate(outputs);
+}
+
+#[unsafe(link_section = ".data.ram_func")]
 #[allow(clippy::too_many_arguments)]
 fn run_rt_tick<R: Rig>(
     rig: &mut R,
@@ -155,9 +205,9 @@ fn run_rt_tick<R: Rig>(
             payload,
         } = command;
         match (domain, payload) {
-            (DOMAIN_RIG, Payload::F32(value)) => rig.set_param(id, value),
+            (DOMAIN_RIG, Payload::F32(value)) => set_rig_param(rig, id, value),
             (DOMAIN_RIG, _) => {}
-            (_, payload) => program.apply(domain, id, payload),
+            (_, payload) => apply_program(program, domain, id, payload),
         }
     }
     if commands_applied != 0 {
@@ -177,10 +227,16 @@ fn run_rt_tick<R: Rig>(
 
     let mut values = [0.0; MAX_SOURCES];
     let m0 = now_us();
-    rig.measure(&mut values[..n_inputs]);
+    measure_rig(rig, &mut values[..n_inputs]);
     let measure_us = now_us().wrapping_sub(m0);
     let mut commanded = [0.0; MAX_ACTUATORS];
-    program.step(&values[..n_inputs], dt, ctx, &mut commanded[..n_actuators]);
+    step_program(
+        program,
+        &values[..n_inputs],
+        dt,
+        ctx,
+        &mut commanded[..n_actuators],
+    );
     let mut applied = [0.0; MAX_ACTUATORS];
     // Hard output safety stage. For a non-gated rig this is a compile-time
     // no-op (the const is false), so every command is applied verbatim.
@@ -189,7 +245,7 @@ fn run_rt_tick<R: Rig>(
             rig,
             shared,
             &values[..n_inputs],
-            program.fault(),
+            program_fault(program),
             &commanded[..n_actuators],
             &mut applied[..n_actuators],
         );
@@ -197,10 +253,10 @@ fn run_rt_tick<R: Rig>(
         applied[..n_actuators].copy_from_slice(&commanded[..n_actuators]);
     }
     let a0 = now_us();
-    rig.actuate(&applied[..n_actuators]);
+    actuate_rig(rig, &applied[..n_actuators]);
     let actuate_us = now_us().wrapping_sub(a0);
 
-    program.write_signals(&mut values[n_inputs..n_inputs + n_program_signals]);
+    write_program_signals(program, &mut values[n_inputs..n_inputs + n_program_signals]);
     let generated = n_inputs + n_program_signals;
     values[generated..generated + n_actuators].copy_from_slice(&applied[..n_actuators]);
     values[generated + n_actuators] = *command_epoch as f32;
