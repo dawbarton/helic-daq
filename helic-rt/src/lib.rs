@@ -30,5 +30,6 @@ pub use safety::{safety_decide, SafetyOutcome};
 pub use sample_rate::SampleRate;
 pub use shared::{Diagnostics, Live, RebootShared, RtShared, Safety, SafetyInputs};
 
-/// Number of harmonics in the current periodic target and forcing generators.
-pub const HARMONICS: usize = 16;
+/// Default and maximum standard Fourier harmonic count.
+pub const DEFAULT_HARMONICS: usize = 16;
+pub const MAX_HARMONICS: usize = 16;

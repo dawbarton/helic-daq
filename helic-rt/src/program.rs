@@ -9,8 +9,8 @@ use helic_core::table::{TableInterpolation, TableMode, TablePlayer};
 use helic_core::MAX_TABLE_LEN;
 
 use crate::{
-    command_id, ActiveCoeffs, ActiveTable, Payload, RtShared, SampleRate, DOMAIN_CONTROLLER,
-    DOMAIN_GENERATOR, DOMAIN_TABLE,
+    command_id, ActiveCoeffs, ActiveTable, Payload, RtShared, SampleRate, DEFAULT_HARMONICS,
+    DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_TABLE, MAX_HARMONICS,
 };
 
 /// Immutable services supplied to one programme step by the loop driver.
@@ -66,11 +66,15 @@ fn phase_turns(phase: u32) -> f32 {
 }
 
 /// Current controller, Fourier generator, and waveform-table programme.
-pub struct StandardProgram<C: Controller, const N: usize = MAX_TABLE_LEN> {
+pub struct StandardProgram<
+    C: Controller,
+    const H: usize = DEFAULT_HARMONICS,
+    const N: usize = MAX_TABLE_LEN,
+> {
     controller: C,
     phase: PhaseAccumulator,
-    target_coeffs: ActiveCoeffs,
-    forcing_coeffs: ActiveCoeffs,
+    target_coeffs: ActiveCoeffs<H>,
+    forcing_coeffs: ActiveCoeffs<H>,
     table_player: TablePlayer,
     active_table: ActiveTable<N>,
     shared: &'static RtShared,
@@ -80,14 +84,15 @@ pub struct StandardProgram<C: Controller, const N: usize = MAX_TABLE_LEN> {
     phase_turns: f32,
 }
 
-impl<C: Controller, const N: usize> StandardProgram<C, N> {
+impl<C: Controller, const H: usize, const N: usize> StandardProgram<C, H, N> {
     pub fn new(
         controller: C,
-        target_coeffs: ActiveCoeffs,
-        forcing_coeffs: ActiveCoeffs,
+        target_coeffs: ActiveCoeffs<H>,
+        forcing_coeffs: ActiveCoeffs<H>,
         active_table: ActiveTable<N>,
         shared: &'static RtShared,
     ) -> Self {
+        assert!(H <= MAX_HARMONICS);
         Self {
             controller,
             phase: PhaseAccumulator::new(),
@@ -104,7 +109,7 @@ impl<C: Controller, const N: usize> StandardProgram<C, N> {
     }
 }
 
-impl<C: Controller, const N: usize> Program for StandardProgram<C, N> {
+impl<C: Controller, const H: usize, const N: usize> Program for StandardProgram<C, H, N> {
     const OUTPUTS: usize = 1;
     const INPUTS_REQUIRED: usize = 0;
     const DOMAINS: &'static [u8] = &[DOMAIN_GENERATOR, DOMAIN_TABLE, DOMAIN_CONTROLLER];
@@ -131,7 +136,7 @@ impl<C: Controller, const N: usize> Program for StandardProgram<C, N> {
                 command_id::generator::DIAGNOSTIC_VALUES,
                 Payload::Values { len, data },
             ) => {
-                debug_assert_eq!(len as usize, 1 + 2 * crate::HARMONICS);
+                debug_assert_eq!(len as usize, 1 + 2 * H);
                 core::hint::black_box(data);
             }
             (DOMAIN_TABLE, command_id::table::SET_INCREMENT, Payload::U32(increment)) => {
@@ -223,7 +228,7 @@ mod tests {
     use helic_core::{DoubleBuffer, TableBuffer};
 
     use super::*;
-    use crate::HARMONICS;
+    const TEST_HARMONICS: usize = 4;
 
     #[derive(Default)]
     struct TestController {
@@ -244,20 +249,20 @@ mod tests {
     }
 
     fn program() -> (
-        StandardProgram<TestController, 8>,
-        crate::CoeffStaging,
-        crate::CoeffStaging,
+        StandardProgram<TestController, TEST_HARMONICS, 8>,
+        crate::CoeffStaging<TEST_HARMONICS>,
+        crate::CoeffStaging<TEST_HARMONICS>,
         helic_core::Staging<helic_core::WaveTable<8>>,
         &'static RtShared,
     ) {
         let (target_staging, target_active) = Box::leak(Box::new(DoubleBuffer::from_banks(
-            FourierCoeffs::<HARMONICS>::zero(),
-            FourierCoeffs::<HARMONICS>::zero(),
+            FourierCoeffs::<TEST_HARMONICS>::zero(),
+            FourierCoeffs::<TEST_HARMONICS>::zero(),
         )))
         .split();
         let (forcing_staging, forcing_active) = Box::leak(Box::new(DoubleBuffer::from_banks(
-            FourierCoeffs::<HARMONICS>::zero(),
-            FourierCoeffs::<HARMONICS>::zero(),
+            FourierCoeffs::<TEST_HARMONICS>::zero(),
+            FourierCoeffs::<TEST_HARMONICS>::zero(),
         )))
         .split();
         let (table_staging, active_table) = Box::leak(Box::new(TableBuffer::<8>::new())).split();
@@ -282,8 +287,8 @@ mod tests {
         let (mut program, mut target, mut forcing, mut table, shared) = program();
         *target.buffer().unwrap() = FourierCoeffs {
             mean: 0.25,
-            a: [0.0; HARMONICS],
-            b: [0.0; HARMONICS],
+            a: [0.0; TEST_HARMONICS],
+            b: [0.0; TEST_HARMONICS],
         };
         let target_token = target.commit().unwrap();
         program.apply(
@@ -293,8 +298,8 @@ mod tests {
         );
         *forcing.buffer().unwrap() = FourierCoeffs {
             mean: 0.125,
-            a: [0.0; HARMONICS],
-            b: [0.0; HARMONICS],
+            a: [0.0; TEST_HARMONICS],
+            b: [0.0; TEST_HARMONICS],
         };
         let forcing_token = forcing.commit().unwrap();
         program.apply(
@@ -333,13 +338,16 @@ mod tests {
         program.write_signals(&mut signals);
         assert_eq!(signals, [2.0, 0.25, 0.125, 1.0, 0.25]);
         assert_eq!(shared.live.active_table_len.load(Ordering::Relaxed), 2);
-        assert_eq!(StandardProgram::<TestController, 8>::signal_count(), 5);
         assert_eq!(
-            StandardProgram::<TestController, 8>::signal(0),
+            StandardProgram::<TestController, TEST_HARMONICS, 8>::signal_count(),
+            5
+        );
+        assert_eq!(
+            StandardProgram::<TestController, TEST_HARMONICS, 8>::signal(0),
             Some(("observed", "V"))
         );
         assert_eq!(
-            StandardProgram::<TestController, 8>::signal(4),
+            StandardProgram::<TestController, TEST_HARMONICS, 8>::signal(4),
             Some(("phase", "turn"))
         );
     }

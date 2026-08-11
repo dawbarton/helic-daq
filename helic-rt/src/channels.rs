@@ -4,7 +4,7 @@ use heapless::spsc::{Consumer, Producer};
 use helic_core::generator::FourierCoeffs;
 use helic_core::{Active, CommitToken, Staging};
 
-use crate::{HARMONICS, MAX_SOURCES};
+use crate::{DEFAULT_HARMONICS, MAX_SOURCES};
 
 /// Maximum number of scalar values copied inline by one RT command.
 ///
@@ -96,8 +96,8 @@ pub const COMMAND_QUEUE_LEN: usize = 32;
 pub const COMMANDS_PER_TICK: usize = 2;
 pub type CommandProducer = Producer<'static, RtCommand>;
 pub type CommandConsumer = Consumer<'static, RtCommand>;
-pub type CoeffStaging = Staging<FourierCoeffs<HARMONICS>>;
-pub type ActiveCoeffs = Active<FourierCoeffs<HARMONICS>>;
+pub type CoeffStaging<const H: usize = DEFAULT_HARMONICS> = Staging<FourierCoeffs<H>>;
+pub type ActiveCoeffs<const H: usize = DEFAULT_HARMONICS> = Active<FourierCoeffs<H>>;
 pub type ActiveTable<const N: usize = { helic_core::MAX_TABLE_LEN }> =
     Active<helic_core::WaveTable<N>>;
 
@@ -113,15 +113,15 @@ pub type RecordProducer = Producer<'static, Record>;
 pub type RecordConsumer = Consumer<'static, Record>;
 
 /// The four uniquely owned queue endpoints connecting the two cores.
-pub struct RtChannels {
+pub struct RtChannels<const H: usize = DEFAULT_HARMONICS> {
     pub command_tx: CommandProducer,
     pub command_rx: CommandConsumer,
     pub record_tx: RecordProducer,
     pub record_rx: RecordConsumer,
-    pub target_staging: CoeffStaging,
-    pub target_active: ActiveCoeffs,
-    pub forcing_staging: CoeffStaging,
-    pub forcing_active: ActiveCoeffs,
+    pub target_staging: CoeffStaging<H>,
+    pub target_active: ActiveCoeffs<H>,
+    pub forcing_staging: CoeffStaging<H>,
+    pub forcing_active: ActiveCoeffs<H>,
 }
 
 #[cfg(test)]

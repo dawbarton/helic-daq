@@ -12,6 +12,8 @@ pub const EXPERIMENT: &str = "pico2w-rig";
 
 /// Maximum uploaded waveform length; storage is paid for by this rig.
 pub const TABLE_CAPACITY: usize = 4096;
+/// Fourier harmonics retained by each target and forcing generator.
+pub const HARMONICS: usize = 16;
 /// AD5064 channel which receives the generated output.
 pub const OUTPUT_CHANNEL: usize = 0;
 /// Full measuring range used to scale optoNCDT UART samples.
@@ -36,7 +38,7 @@ pub fn wifi_credentials() -> (&'static str, &'static str) {
 
 /// Statically selected controller for the bounded real-time path.
 pub type ActiveController = PassThrough;
-pub type ActiveProgram = helic_rt::StandardProgram<ActiveController, TABLE_CAPACITY>;
+pub type ActiveProgram = helic_rt::StandardProgram<ActiveController, HARMONICS, TABLE_CAPACITY>;
 
 /// Construct the controller which will be moved to core 1.
 pub fn make_controller() -> ActiveController {

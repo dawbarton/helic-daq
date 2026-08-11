@@ -16,7 +16,7 @@ use embassy_rp::multicore::{spawn_core1, Stack as CoreStack};
 use embassy_rp::peripherals::{DMA_CH2, DMA_CH3, PIO0};
 use embassy_rp::pio;
 use embassy_time::Timer;
-use helic_core::TableBuffer;
+use helic_core::{DoubleBuffer, FourierCoeffs, TableBuffer};
 use helic_fw_rt::rt_loop as shared_rt;
 use helic_fw_support::comms;
 use helic_fw_support::net;
@@ -54,8 +54,18 @@ static EXECUTOR0: StaticCell<Executor> = StaticCell::new();
 static RT_SHARED: RtShared = RtShared::new();
 static TABLE: ConstStaticCell<TableBuffer<{ config::TABLE_CAPACITY }>> =
     ConstStaticCell::new(TableBuffer::new());
+static TARGET_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<{ config::HARMONICS }>>> =
+    ConstStaticCell::new(DoubleBuffer::from_banks(
+        FourierCoeffs::zero(),
+        FourierCoeffs::zero(),
+    ));
+static FORCING_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<{ config::HARMONICS }>>> =
+    ConstStaticCell::new(DoubleBuffer::from_banks(
+        FourierCoeffs::zero(),
+        FourierCoeffs::zero(),
+    ));
 static PLATFORM_GROUP: StaticCell<PlatformGroup> = StaticCell::new();
-static GENERATOR_GROUP: StaticCell<GeneratorGroup> = StaticCell::new();
+static GENERATOR_GROUP: StaticCell<GeneratorGroup<{ config::HARMONICS }>> = StaticCell::new();
 static TABLE_GROUP: StaticCell<TableGroup<{ config::TABLE_CAPACITY }>> = StaticCell::new();
 static CONTROLLER_GROUP: StaticCell<ControllerGroup<config::ActiveController>> = StaticCell::new();
 static RIG_GROUP: StaticCell<RigGroup<WhirlRig>> = StaticCell::new();
@@ -70,7 +80,7 @@ fn main() -> ! {
     );
     let b = board::Board::new(p);
 
-    let channels = shared_rt::init_channels();
+    let channels = shared_rt::init_channels(TARGET_COEFFS.take(), FORCING_COEFFS.take());
     let (table_staging, active_table) = TABLE.take().split();
     let controller = config::make_controller();
     let mut store = Store::new(channels.command_tx, &RT_SHARED, config::SAMPLE_RATE);

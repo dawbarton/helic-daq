@@ -12,12 +12,12 @@ use helic_core::{BufferError, Staging as TableStaging, WaveTable, MAX_TABLE_LEN}
 use helic_proto::{ErrorCode, ParamType};
 
 use super::{
-    CommandTarget, ExtraParam, ParamAction, ParamDef, ParamGroup, Staged, COEFF_COUNT,
-    MAX_CTRL_PARAMS, MAX_EXTRA_PARAMS, MAX_RIG_PARAMS,
+    CommandTarget, ExtraParam, ParamAction, ParamDef, ParamGroup, Staged, MAX_CTRL_PARAMS,
+    MAX_EXTRA_PARAMS, MAX_RIG_PARAMS,
 };
 use crate::{
-    CoeffStaging, Payload, Rig, RtShared, SampleRate, DOMAIN_CONTROLLER, DOMAIN_GENERATOR,
-    DOMAIN_TABLE, HARMONICS,
+    CoeffStaging, Payload, Rig, RtShared, SampleRate, DEFAULT_HARMONICS, DOMAIN_CONTROLLER,
+    DOMAIN_GENERATOR, DOMAIN_TABLE, MAX_HARMONICS,
 };
 
 const PLATFORM_PARAMS: &[ParamDef] = &[
@@ -220,40 +220,45 @@ impl ParamGroup for PlatformGroup {
     }
 }
 
-const GENERATOR_PARAMS: &[ParamDef] = &[
-    ParamDef::writable("freq", ParamType::F32, 1),
-    ParamDef::writable("target_coeffs", ParamType::F32, COEFF_COUNT),
-    ParamDef::writable("forcing_coeffs", ParamType::F32, COEFF_COUNT),
-];
+const fn generator_params<const H: usize>() -> [ParamDef; 3] {
+    [
+        ParamDef::writable("freq", ParamType::F32, 1),
+        ParamDef::writable("target_coeffs", ParamType::F32, (1 + 2 * H) as u16),
+        ParamDef::writable("forcing_coeffs", ParamType::F32, (1 + 2 * H) as u16),
+    ]
+}
 
 #[derive(Clone, Copy)]
-enum GeneratorPending {
+enum GeneratorPending<const H: usize> {
     None,
     Frequency(f32),
-    Target(FourierCoeffs<HARMONICS>),
-    Forcing(FourierCoeffs<HARMONICS>),
+    Target(FourierCoeffs<H>),
+    Forcing(FourierCoeffs<H>),
 }
 
 /// Standard Fourier-generator parameter shadow and coefficient staging banks.
-pub struct GeneratorGroup {
-    target_buffer: CoeffStaging,
-    forcing_buffer: CoeffStaging,
+pub struct GeneratorGroup<const H: usize = DEFAULT_HARMONICS> {
+    target_buffer: CoeffStaging<H>,
+    forcing_buffer: CoeffStaging<H>,
+    defs: [ParamDef; 3],
     sample_rate: SampleRate,
     frequency: f32,
-    target: FourierCoeffs<HARMONICS>,
-    forcing: FourierCoeffs<HARMONICS>,
-    pending: GeneratorPending,
+    target: FourierCoeffs<H>,
+    forcing: FourierCoeffs<H>,
+    pending: GeneratorPending<H>,
 }
 
-impl GeneratorGroup {
+impl<const H: usize> GeneratorGroup<H> {
     pub const fn new(
-        target_buffer: CoeffStaging,
-        forcing_buffer: CoeffStaging,
+        target_buffer: CoeffStaging<H>,
+        forcing_buffer: CoeffStaging<H>,
         sample_rate: SampleRate,
     ) -> Self {
+        assert!(H <= MAX_HARMONICS);
         Self {
             target_buffer,
             forcing_buffer,
+            defs: generator_params::<H>(),
             sample_rate,
             frequency: 0.0,
             target: FourierCoeffs::zero(),
@@ -263,17 +268,17 @@ impl GeneratorGroup {
     }
 }
 
-impl ParamGroup for GeneratorGroup {
+impl<const H: usize> ParamGroup for GeneratorGroup<H> {
     fn target(&self) -> CommandTarget {
         CommandTarget::Program(DOMAIN_GENERATOR)
     }
 
     fn params(&self) -> &[ParamDef] {
-        GENERATOR_PARAMS
+        &self.defs
     }
 
     fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode> {
-        let size = checked_output(GENERATOR_PARAMS, id, out)?;
+        let size = checked_output(&self.defs, id, out)?;
         let out = &mut out[..size];
         match id {
             0 => out.copy_from_slice(&self.frequency.to_le_bytes()),
@@ -804,27 +809,27 @@ fn map_buffer_error(error: BufferError) -> ErrorCode {
     }
 }
 
-fn serialize_coeffs(coefficients: &FourierCoeffs<HARMONICS>, out: &mut [u8]) {
+fn serialize_coeffs<const H: usize>(coefficients: &FourierCoeffs<H>, out: &mut [u8]) {
     out[0..4].copy_from_slice(&coefficients.mean.to_le_bytes());
-    for harmonic in 0..HARMONICS {
+    for harmonic in 0..H {
         out[4 + 4 * harmonic..8 + 4 * harmonic]
             .copy_from_slice(&coefficients.a[harmonic].to_le_bytes());
-        let offset = 4 + 4 * (HARMONICS + harmonic);
+        let offset = 4 + 4 * (H + harmonic);
         out[offset..offset + 4].copy_from_slice(&coefficients.b[harmonic].to_le_bytes());
     }
 }
 
-fn deserialize_coeffs(data: &[u8]) -> Result<FourierCoeffs<HARMONICS>, ErrorCode> {
-    if data.len() != COEFF_COUNT as usize * 4 {
+fn deserialize_coeffs<const H: usize>(data: &[u8]) -> Result<FourierCoeffs<H>, ErrorCode> {
+    if data.len() != (1 + 2 * H) * 4 {
         return Err(ErrorCode::BadLength);
     }
     let value =
         |index: usize| f32::from_le_bytes(data[4 * index..4 * index + 4].try_into().unwrap());
     let mut coefficients = FourierCoeffs::zero();
     coefficients.mean = value(0);
-    for harmonic in 0..HARMONICS {
+    for harmonic in 0..H {
         coefficients.a[harmonic] = value(1 + harmonic);
-        coefficients.b[harmonic] = value(1 + HARMONICS + harmonic);
+        coefficients.b[harmonic] = value(1 + H + harmonic);
     }
     if coefficients.mean.is_finite()
         && coefficients.a.iter().all(|value| value.is_finite())

@@ -15,8 +15,10 @@ pub use groups::{
     ControllerGroup, GeneratorGroup, PlatformGroup, RigGroup, TableGroup, TelemetryGroup,
 };
 
-/// Serialized size of the current standard coefficient set.
-pub const COEFF_COUNT: u16 = (1 + 2 * crate::HARMONICS) as u16;
+/// Number of serialized Fourier coefficients for a selected harmonic count.
+pub const fn coeff_count<const H: usize>() -> u16 {
+    (1 + 2 * H) as u16
+}
 pub const MAX_GROUPS: usize = 8;
 pub(crate) const MAX_CTRL_PARAMS: usize = 17;
 pub(crate) const MAX_RIG_PARAMS: usize = 16;
@@ -506,6 +508,9 @@ mod tests {
     use super::*;
     use crate::{CommandConsumer, Rig, COMMAND_QUEUE_LEN};
 
+    const TEST_HARMONICS: usize = crate::DEFAULT_HARMONICS;
+    const COEFF_COUNT: u16 = coeff_count::<TEST_HARMONICS>();
+
     static EXTRA_VALUE: AtomicU32 = AtomicU32::new(0);
     static EXTRA_EVENT: AtomicU32 = AtomicU32::new(0);
     static EXTRAS: &[ExtraParam] = &[
@@ -636,6 +641,25 @@ mod tests {
     }
 
     #[test]
+    fn generator_group_discovers_its_const_generic_harmonic_count() {
+        const HARMONICS: usize = 3;
+        let (target, _active_target) = Box::leak(Box::new(DoubleBuffer::from_banks(
+            FourierCoeffs::<HARMONICS>::zero(),
+            FourierCoeffs::<HARMONICS>::zero(),
+        )))
+        .split();
+        let (forcing, _active_forcing) = Box::leak(Box::new(DoubleBuffer::from_banks(
+            FourierCoeffs::<HARMONICS>::zero(),
+            FourierCoeffs::<HARMONICS>::zero(),
+        )))
+        .split();
+        let group = GeneratorGroup::<HARMONICS>::new(target, forcing, SampleRate::Hz8000);
+
+        assert_eq!(group.params()[1].count, 1 + 2 * HARMONICS as u16);
+        assert_eq!(group.params()[2].count, 1 + 2 * HARMONICS as u16);
+    }
+
+    #[test]
     fn global_walk_routes_and_accepts_only_after_enqueue() {
         let (mut store, mut commands, _table, _target) = store();
         let frequency = index(&store, "freq");
@@ -761,10 +785,10 @@ mod tests {
         };
         let mut bytes = [0; COEFF_COUNT as usize * 4];
         bytes[..4].copy_from_slice(&coefficients.mean.to_le_bytes());
-        for harmonic in 0..crate::HARMONICS {
+        for harmonic in 0..TEST_HARMONICS {
             bytes[4 + 4 * harmonic..8 + 4 * harmonic]
                 .copy_from_slice(&coefficients.a[harmonic].to_le_bytes());
-            let offset = 4 + 4 * (crate::HARMONICS + harmonic);
+            let offset = 4 + 4 * (TEST_HARMONICS + harmonic);
             bytes[offset..offset + 4].copy_from_slice(&coefficients.b[harmonic].to_le_bytes());
         }
         store.set(target, &bytes).unwrap();

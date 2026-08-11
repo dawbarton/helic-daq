@@ -17,6 +17,9 @@ pub const EXPERIMENT: &str = "cbc-rig";
 /// Maximum uploaded waveform length; storage is paid for by this rig.
 pub const TABLE_CAPACITY: usize = 4096;
 
+/// Fourier harmonics retained by each target and forcing generator.
+pub const HARMONICS: usize = 16;
+
 /// DAC channel driven by the control output. Its polarity is defined in
 /// `board.rs` for the fitted analogue output stage.
 pub const OUTPUT_CHANNEL: usize = 0;
@@ -88,7 +91,7 @@ pub const MAC_ADDR: [u8; 6] = [0x02, 0x48, 0x4C, 0x00, 0x00, 0x01];
 /// ```
 pub type ActiveController = PassThrough;
 /// Statically selected core-1 programme.
-pub type ActiveProgram = helic_rt::StandardProgram<ActiveController, TABLE_CAPACITY>;
+pub type ActiveProgram = helic_rt::StandardProgram<ActiveController, HARMONICS, TABLE_CAPACITY>;
 
 /// Construct the one controller instance which is later moved to core 1.
 ///

@@ -5,42 +5,32 @@ use core::sync::atomic::Ordering;
 use defmt::info;
 use embassy_rp::pac;
 use heapless::spsc::Queue;
-use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
-use helic_core::DoubleBuffer;
+use helic_core::{DoubleBuffer, FourierCoeffs};
 use helic_rt::{
     safety_decide, source_count, CommandConsumer, Payload, Program, Record, RecordProducer, Rig,
     RtChannels, RtCommand, RtShared, SampleRate, StepCtx, TickSource, COMMANDS_PER_TICK,
-    COMMAND_QUEUE_LEN, DOMAIN_RIG, HARMONICS, MAX_ACTUATORS, MAX_SOURCES, RECORD_QUEUE_LEN,
+    COMMAND_QUEUE_LEN, DOMAIN_RIG, MAX_ACTUATORS, MAX_SOURCES, RECORD_QUEUE_LEN,
 };
-use static_cell::{ConstStaticCell, StaticCell};
+use static_cell::StaticCell;
 
 /// Mask for a command epoch that remains exactly representable as `f32`.
 const COMMAND_EPOCH_MASK: u32 = (1 << 24) - 1;
 
 static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
 static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
-static TARGET_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<HARMONICS>>> =
-    ConstStaticCell::new(DoubleBuffer::from_banks(
-        FourierCoeffs::zero(),
-        FourierCoeffs::zero(),
-    ));
-static FORCING_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<HARMONICS>>> =
-    ConstStaticCell::new(DoubleBuffer::from_banks(
-        FourierCoeffs::zero(),
-        FourierCoeffs::zero(),
-    ));
-
 /// Initialise the platform's single pair of cross-core queues.
 ///
-/// Keeping storage here makes capacities and direction part of the reusable
-/// runtime. The returned SPSC endpoint types still make it impossible for an
-/// experiment to use one producer or consumer from both cores.
-pub fn init_channels() -> RtChannels {
+/// Queue storage is universal; coefficient buffers are supplied by the
+/// experiment so its harmonic count determines their SRAM footprint.
+pub fn init_channels<const H: usize>(
+    target: &'static mut DoubleBuffer<FourierCoeffs<H>>,
+    forcing: &'static mut DoubleBuffer<FourierCoeffs<H>>,
+) -> RtChannels<H> {
     let (command_tx, command_rx) = COMMAND_QUEUE.init(Queue::new()).split();
     let (record_tx, record_rx) = RECORD_QUEUE.init(Queue::new()).split();
-    let (target_staging, target_active) = TARGET_COEFFS.take().split();
-    let (forcing_staging, forcing_active) = FORCING_COEFFS.take().split();
+    let (target_staging, target_active) = target.split();
+    let (forcing_staging, forcing_active) = forcing.split();
     RtChannels {
         command_tx,
         command_rx,

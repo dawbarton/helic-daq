@@ -10,6 +10,9 @@ pub const EXPERIMENT: &str = "whirl-rig";
 /// Maximum uploaded waveform length; storage is paid for by this rig.
 pub const TABLE_CAPACITY: usize = 4096;
 
+/// Fourier harmonics retained by each target and forcing generator.
+pub const HARMONICS: usize = 16;
+
 pub const ENCODER_BITS: u8 = 12;
 pub const ENCODER_BIT_RATE_HZ: u32 = 1_000_000;
 pub const ENCODER_COUNTS_PER_REV: u32 = 1 << ENCODER_BITS;
@@ -30,7 +33,7 @@ pub const NET_CONFIG: NetConfig = NetConfig::Static {
 pub const MAC_ADDR: [u8; 6] = [0x02, 0x48, 0x4C, 0x00, 0x00, 0x04];
 
 pub type ActiveController = PassThrough;
-pub type ActiveProgram = helic_rt::StandardProgram<ActiveController, TABLE_CAPACITY>;
+pub type ActiveProgram = helic_rt::StandardProgram<ActiveController, HARMONICS, TABLE_CAPACITY>;
 
 pub fn make_controller() -> ActiveController {
     PassThrough
