@@ -8,16 +8,16 @@ license.workspace = true
 [features]
 # Select exactly one physical WIZnet chip. The default matches current boards.
 default = ["board-w5500"]
-board-w5500 = ["helic-fw-support/net-wiznet-w5500"]
-board-w6100 = ["helic-fw-support/net-wiznet-w6100"]
+board-w5500 = ["rt-sram", "helic-fw-support/net-wiznet-w5500"]
+board-w6100 = ["rt-sram", "helic-fw-support/net-wiznet-w6100"]
+rt-sram = []
 
-[dependencies]
+[target.'cfg(target_arch = "arm")'.dependencies]
 # Workspace inheritance keeps all firmware crates on the same pinned versions.
 helic-core.workspace = true
 helic-drivers.workspace = true
 helic-proto.workspace = true
 helic-rt.workspace = true
-whirl-rig-program.workspace = true
 helic-fw-rt.workspace = true
 helic-fw-support = { workspace = true, features = ["net-wiznet"] }
 cortex-m.workspace = true

@@ -6,11 +6,10 @@ members = [
     "helic-drivers",
     "helic-proto",
     "helic-rt",
-    "whirl-rig-program",
 ]
-# The firmware is its own workspace: it always builds for
-# thumbv8m.main-none-eabihf (see firmware/.cargo/config.toml), whereas the
-# crates here build and test on the host.
+# The firmware is its own workspace and defaults to thumbv8m.main-none-eabihf
+# (see firmware/.cargo/config.toml). Dependency-light rig-local library targets
+# may also be tested explicitly on the host.
 exclude = ["firmware"]
 
 [workspace.package]
