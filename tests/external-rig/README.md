@@ -31,7 +31,9 @@ of the platform checkout, which is how a real out-of-tree rig consumes them.
 From this directory, the complete boundary check is:
 
 ```sh
-pip install -e ../../host-python   # or: pip install "helic-daq @ git+<url>@<tag>"
+pip install -e ../../host-python
+# A real out-of-tree rig instead installs it from the platform tag:
+#   pip install "helic-daq @ git+<url>@<tag>#subdirectory=host-python"
 cargo test -p fixture-rig-program --target x86_64-unknown-linux-gnu
 cargo build --release --workspace
 helic-deps-check --policy dependency-policy.toml

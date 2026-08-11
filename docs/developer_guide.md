@@ -726,7 +726,7 @@ defaults from the current directory, so none of them needs to know where the
 platform checkout is, and none of them is edited or copied:
 
 ```sh
-pip install "helic-daq @ git+https://github.com/dawbarton/helic-daq@v0.1.0"
+pip install "helic-daq @ git+https://github.com/dawbarton/helic-daq@v0.1.0#subdirectory=host-python"
 
 cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings
