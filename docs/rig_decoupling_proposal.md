@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: proposed, not implemented. Revision 7. Supersedes parts of
+Status: proposed, not implemented. Revision 8. Supersedes parts of
 `docs/rt_program_proposal.md`. Revision history and review responses are at the
 end.
 
@@ -90,6 +90,12 @@ the letter of the rule**, because it is being specified here as a shared
 primitive with the reuse intent stated up front rather than discovered. If that
 intent proves wrong it moves into the appropriation rig's crate, which is the
 same one-commit operation in the other direction.
+
+The rule also settles the buffer. A generic `DoubleBuffer<T>` had **zero**
+consumers: the waveform table is the only buffered type, and the copied-payload
+decision for the force vector deliberately avoids creating a second. It is
+therefore concrete `TableBuffer` (§3), to be generalised additively if and when
+a second buffered component exists.
 
 ## Target applications and what they constrain
 
@@ -184,7 +190,7 @@ so the whole vector must take effect at one sample boundary. The payload is
 Two mechanisms can deliver that atomically. The comparison, which earlier
 revisions asserted rather than showed:
 
-| | Copied payload (**chosen**) | `DoubleBuffer` force vector |
+| | Copied payload (**chosen**) | Buffered force vector |
 |---|---|---|
 | `MAX_RT_VALUES` | 132 | 33 |
 | Queue SRAM | 32 × ~540 = 17.3 KB | 32 × ~140 = 4.5 KB |
@@ -200,14 +206,17 @@ writing the force vector faster, so the **WCET case remains two maximum-width
 commands in one tick** and is what stage 4 must measure. Twelve kilobytes of
 roughly 390 KB free is not decisive either.
 
-The deciding argument is **correctness-risk concentration**. Making
-`DoubleBuffer` sound has taken three attempts (see "Revision history"), and the
-sound version below needs a generation counter, non-`Copy` propagation through
-the command type, and explicit `!Sync` markers. Putting the *force vector* on
-that mechanism means a token or generation defect applies a wrong force vector
-at a wrong `cmd_epoch`, which is materially worse than a wrong table sample and
-sits on the path where appropriation correctness is the entire point. A copied
-payload is trivially correct by construction.
+The deciding argument is **correctness-risk concentration**. Getting the buffer
+protocol right has taken four attempts (see "Revision history"), and the sound
+version needs a linear owner-checked token, non-`Copy` propagation through the
+command type, and explicit `!Sync` markers. Putting the *force vector* on that
+mechanism means a token defect applies a wrong force vector at a wrong
+`cmd_epoch`, which is materially worse than a wrong table sample and sits on the
+path where appropriation correctness is the entire point. A copied payload is
+trivially correct by construction.
+
+This choice also keeps the waveform table as the design's only buffered type,
+which is what lets §3 stay concrete rather than generic.
 
 **This decision is gated on measurement.** Stage 4 measures the actual
 `COMMANDS_PER_TICK` WCET at 132-value payloads. If the copy materially exceeds
@@ -311,7 +320,7 @@ reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 | Crate | Contents | Testable |
 |---|---|---|
 | `helic-proto` | wire protocol, `ErrorCode`; broker protocol feature-gated | host |
-| `helic-core` | DSP: generators, controllers, estimators, filters, tables, `Pll`, `DoubleBuffer` | host |
+| `helic-core` | DSP: generators, controllers, estimators, filters, tables, `Pll`, `TableBuffer` | host |
 | **`helic-rt`** (new) | `Rig`, `TickSource`, `Program`, `ParamGroup`, `ParamDef`, `Payload`, `RtCommand`, `ParamStore`, safety decision, source assembly | host |
 | **`helic-fw-rt`** (new) | core 1: tick sources, `rt_mem`, `analog_spi`, PIO, loop driver, safety wrapper | cross-build |
 | **`helic-fw-support`** (new) | core 0: `net/`, `comms/`, `time_watchdog`, `status_run` | cross-build |
@@ -622,26 +631,34 @@ pub trait ParamGroup {
 Ordering is written exactly once:
 
 ```rust
+/// A group and the target captured when it was registered, kept together so
+/// there is no parallel-array alignment invariant to maintain.
+struct GroupEntry {
+    group: &'static mut dyn ParamGroup,
+    target: CommandTarget,
+}
+
 impl ParamStore {
     pub fn set(&mut self, index: usize, data: &[u8]) -> Result<ParamAction, ErrorCode> {
         let (g, id) = self.locate(index).ok_or(ErrorCode::BadIndex)?;
-        match self.groups[g].stage(id, data)? {
+        let entry = &mut self.entries[g];
+        match entry.group.stage(id, data)? {
             Staged::Local(ParamAction::ResetDiagnostics) => {
-                self.groups[g].accept(id);
+                entry.group.accept(id);
                 // `diag_reset` spans groups: today it resets both the RT
                 // atomics and every experiment-owned event counter
                 // (`params.rs:543`). Component ownership makes that a
                 // store-level broadcast.
-                for group in self.groups.iter_mut() {
-                    group.reset_diagnostics();
+                for entry in self.entries.iter_mut() {
+                    entry.group.reset_diagnostics();
                 }
                 Ok(ParamAction::None)
             }
-            Staged::Local(action) => { self.groups[g].accept(id); Ok(action) }
+            Staged::Local(action) => { entry.group.accept(id); Ok(action) }
             Staged::Rt(payload) => {
                 // The address is built here, from the target captured at
                 // registration and the id already resolved by `locate`.
-                let domain = match self.targets[g] {
+                let domain = match entry.target {
                     CommandTarget::Rig => DOMAIN_RIG,
                     CommandTarget::Program(d) => d,
                     // A `Core0` group staging an RT command is a programming
@@ -651,16 +668,16 @@ impl ParamStore {
                     // buffer permanently unwritable. **Every** post-`stage`
                     // failure path returns the payload to its owner.
                     CommandTarget::Core0 => {
-                        self.groups[g].reject(id, Some(payload));
+                        entry.group.reject(id, Some(payload));
                         return Err(ErrorCode::BadIndex);
                     }
                 };
                 match self.commands.enqueue(RtCommand { domain, id, payload }) {
-                    Ok(()) => { self.groups[g].accept(id); Ok(ParamAction::None) }
+                    Ok(()) => { entry.group.accept(id); Ok(ParamAction::None) }
                     // heapless returns the value on failure, so the linear
                     // token travels back to its owner instead of being dropped.
                     Err(cmd) => {
-                        self.groups[g].reject(id, Some(cmd.payload));
+                        entry.group.reject(id, Some(cmd.payload));
                         Err(ErrorCode::Busy)
                     }
                 }
@@ -671,8 +688,8 @@ impl ParamStore {
     /// The only index arithmetic in the firmware.
     fn locate(&self, index: usize) -> Option<(usize, u16)> {
         let mut base = 0;
-        for (g, group) in self.groups.iter().enumerate() {
-            let n = group.params().len();
+        for (g, entry) in self.entries.iter().enumerate() {
+            let n = entry.group.params().len();
             if index < base + n { return Some((g, (index - base) as u16)); }
             base += n;
         }
@@ -701,49 +718,70 @@ defines the record layout.
 pub enum ParamKind { Scalar, Array(u16), Blob(u32) }
 ```
 
-### 3. Sound generic double buffering
+### 3. The table buffer: concrete, not generic
 
-Exposing `table.rs`'s discipline as a safe API has now failed three times, and
-every failure came from generalising *away* from the concrete implementation
-rather than toward it. This revision reverts to `table.rs`'s actual atomic
-layout and adds only what genericity requires: a generation, and an owner
-identity checked on **both** consuming operations.
+Four revisions were spent making a generic `DoubleBuffer<T>` safe, for a design
+in which the waveform table is the **only** buffered type — the force-vector
+decision deliberately avoids creating a second one. By this document's own
+two-consumer rule, that generalisation has not earned its place.
 
-**Why two atomics rather than one packed state word.** An earlier revision
-invented a single packed `AtomicU32` holding active id, pending flag, pending
-id, and generation. Because both cores write it, every transition became a
-load-then-store read-modify-write, and correctness then rested on an argument
-about which interleavings are reachable. `table.rs` avoids that entirely:
+So the type is concrete: `TableBuffer` in `helic-core`, holding two
+`WaveTable<N>` banks. The improvements that mattered are all independent of
+genericity and are kept: the endpoint split, the linear owner-checked token, and
+the normative ordering protocol. Adding a type parameter when a second buffered
+component genuinely appears is then a small additive change.
 
-- `ACTIVE` is written **only** by core 1;
-- `PENDING` is written by both cores, but always as a **whole-word store**,
-  never a read-modify-write.
+**A note on the diagnosis, because it affects the lesson.** Of the six defects
+found across those revisions — `split` callable twice, a `Copy` token,
+auto-`Sync`, missing ordering, foreign-token `cancel`, and generation wrap —
+only auto-`Sync` was actually caused by genericity. The other five lived in the
+endpoint and token protocol and would have occurred identically in a specialised
+type. The lesson is therefore not "avoid generics" but **start from the proven
+concrete code**: every one of those defects came from re-deriving `table.rs`
+rather than transcribing it.
 
-No cross-core read-modify-write exists, so there is nothing for a
-`compare_exchange` to defend, and none is used. This is both simpler than the
-packed word and the layout already proven on hardware.
+**Two atomics, no packed state word, no CAS.** `table.rs`'s layout has `active`
+written only by core 1, and `pending` written by both cores but always as a
+whole-word store. There is no cross-core read-modify-write, so nothing for a
+`compare_exchange` to defend.
+
+**No generation counter.** An earlier revision encoded
+`(generation << 1) | bank` in an `AtomicU32`. That was doubly broken: at
+`generation = 0x7FFFFFFF` with `bank = 1` a live commit encodes as exactly the
+`u32::MAX` sentinel, and from `2³¹` the shift discards the high bit so the
+comparison can never match again — either way the buffer is permanently pending
+and unusable. At one commit per sample at 8 kHz that is 3.1 days; at 20
+commits/s, 3.4 years.
+
+It was also unnecessary. The generation defended against a *duplicated* token,
+which stopped being possible once the token became linear. Because `commit`
+returns `Busy` while a commit is outstanding, and the token is consumed by
+exactly one of `activate` or `cancel`, no stale same-buffer token can exist in
+safe code. The counter was defence that had already been made redundant and was
+never removed.
 
 ```rust
-// helic-core/src/double_buffer.rs
+// helic-core/src/table_buffer.rs
 use core::cell::{Cell, UnsafeCell};
 use core::marker::PhantomData;
-use core::sync::atomic::{AtomicU8, AtomicU32};
+use core::sync::atomic::AtomicU8;
 
 pub enum BufferError { Busy }
 
-const NO_PENDING: u32 = u32::MAX;
+const NO_PENDING: u8 = 2;   // as in table.rs today
 
-pub struct DoubleBuffer<T> {
-    buffers: [UnsafeCell<T>; 2],
+pub struct TableBuffer<const N: usize> {
+    banks: [UnsafeCell<WaveTable<N>>; 2],
     /// Written only by core 1, at activation.
     active: AtomicU8,
-    /// `NO_PENDING`, or `(generation << 1) | bank_id`. Written by core 0 on
-    /// commit and cancel, and by core 1 on activation; always a whole-word
-    /// store, so the two cores cannot clobber each other's fields.
-    pending: AtomicU32,
+    /// Bank id, or `NO_PENDING`. Written by core 0 on commit and cancel and by
+    /// core 1 on activation, always as a whole-word store.
+    pending: AtomicU8,
 }
 
-unsafe impl<T: Send> Sync for DoubleBuffer<T> {}
+// `WaveTable` is plain data, so this needs no bound beyond the sharing
+// discipline the endpoints enforce.
+unsafe impl<const N: usize> Sync for TableBuffer<N> {}
 
 /// Linear proof that exactly one commit is outstanding. Neither `Copy` nor
 /// `Clone`: created by `Staging::commit`, moved into the command, and consumed
@@ -751,57 +789,54 @@ unsafe impl<T: Send> Sync for DoubleBuffer<T> {}
 /// it crosses cores inside `RtCommand`, but not duplicable.
 #[derive(Debug)]
 pub struct CommitToken {
-    /// Address-derived identity of the owning buffer. Checked by **both**
-    /// `activate` and `cancel`: checking it in only one of them lets a
-    /// same-generation token from another buffer clear this buffer's pending
-    /// flag, after which core 0 can obtain `&mut` to a bank core 1 is about
-    /// to read.
+    /// Address-derived identity of the owning buffer, checked by **both**
+    /// consuming operations. Checking it in only one lets a token from another
+    /// buffer clear this buffer's pending flag, after which core 0 can obtain
+    /// `&mut` to a bank core 1 is about to read.
     owner: usize,
-    generation: u32,
+    bank: u8,
 }
 
-impl<T: Send> DoubleBuffer<T> {
-    pub const fn new(a: T, b: T) -> Self;
+impl<const N: usize> TableBuffer<N> {
+    pub const fn new() -> Self;
 
     /// Split **once** into two uniquely owned endpoints. `&'static mut` makes a
     /// second split impossible, as `heapless::Queue::split` does. Obtain it
     /// from a `ConstStaticCell`: const-initialised, so no stack copy of a
     /// 16 KB table, and it panics on a second `take`.
-    pub fn split(&'static mut self) -> (Staging<T>, Active<T>);
+    pub fn split(&'static mut self) -> (Staging<N>, Active<N>);
 }
 
-/// `Send`, so it can be moved to its owning core; `!Sync` via `Cell`, so two
-/// threads cannot share one endpoint and obtain `&T` for a `!Sync` `T`.
-pub struct Staging<T: 'static> {
-    buf: &'static DoubleBuffer<T>,
-    /// Core-0-local; never read by core 1.
-    next_generation: u32,
+/// `Send`, so it can be moved to its owning core; `!Sync` via `Cell`, so one
+/// endpoint cannot be shared between threads.
+pub struct Staging<const N: usize> {
+    buf: &'static TableBuffer<N>,
     _not_sync: PhantomData<Cell<()>>,
 }
 
-pub struct Active<T: 'static> {
-    buf: &'static DoubleBuffer<T>,
+pub struct Active<const N: usize> {
+    buf: &'static TableBuffer<N>,
     /// Cached bank id, updated only in `activate`, so `get()` performs no
     /// atomic operation on the tick path.
     current: u8,
     _not_sync: PhantomData<Cell<()>>,
 }
 
-impl<T: Send> Staging<T> {
+impl<const N: usize> Staging<N> {
     /// Exclusive access to the inactive bank; the borrow is tied to
     /// `&mut self`, so a second call cannot alias the first.
-    pub fn buffer(&mut self) -> Result<&mut T, BufferError>;
+    pub fn buffer(&mut self) -> Result<&mut WaveTable<N>, BufferError>;
     pub fn commit(&mut self) -> Result<CommitToken, BufferError>;
-    /// Ignores a token belonging to another buffer or to a superseded commit.
+    /// Ignores a token belonging to another buffer.
     pub fn cancel(&mut self, token: CommitToken);
 }
 
-impl<T: Send> Active<T> {
+impl<const N: usize> Active<N> {
     /// Tied to `&self`, and `activate` takes `&mut self`, so no borrow can
     /// survive an activation.
     #[inline]
-    pub fn get(&self) -> &T;
-    /// Ignores a token belonging to another buffer or to a superseded commit.
+    pub fn get(&self) -> &WaveTable<N>;
+    /// Ignores a token belonging to another buffer.
     pub fn activate(&mut self, token: CommitToken);
 }
 ```
@@ -809,42 +844,38 @@ impl<T: Send> Active<T> {
 **The transition protocol and its memory ordering are normative.** The borrow
 API prevents local aliasing and says nothing about cross-core visibility.
 Without Release/Acquire pairing, core 1 may not observe the staged writes and
-core 0 may select a bank from a stale active id. `table.rs:13` states this for
-the concrete case; the generic version matches it.
+core 0 may select a bank from a stale active id. `table.rs:13` states this
+requirement today; this transcribes it.
 
 ```text
-identity()                            // no storage: the buffer's own address
+identity()                          // no storage: the buffer's own address
     self.buf as *const _ as usize
 
 Staging::buffer()
     if pending.load(Acquire) != NO_PENDING { Busy }   // pairs with activate
-    &mut buffers[active.load(Acquire) ^ 1]
+    &mut banks[active.load(Acquire) ^ 1]
 
 Staging::commit()
     if pending.load(Relaxed) != NO_PENDING { Busy }
-    g = self.next_generation; self.next_generation += 1
     bank = active.load(Relaxed) ^ 1
-    pending.store((g << 1) | bank, Release)    // Release: staged writes
-                                               // happen-before publication
-    CommitToken { owner: identity(), generation: g }
+    pending.store(bank, Release)     // Release: staged writes happen-before
+                                     // the publication core 1 will Acquire
+    CommitToken { owner: identity(), bank }
 
 Staging::cancel(token)
-    if token.owner != identity() { return }    // <-- the missing check
-    p = pending.load(Relaxed)
-    if p != NO_PENDING && (p >> 1) == token.generation {
-        pending.store(NO_PENDING, Release)
-    }
+    if token.owner != identity() { return }
+    pending.store(NO_PENDING, Release)
 
 Active::activate(token)
     if token.owner != identity() { return }
-    p = pending.load(Acquire)                  // pairs with commit's Release
-    if p == NO_PENDING || (p >> 1) != token.generation { return }
-    self.current = (p & 1) as u8               // cached for get()
+    p = pending.load(Acquire)        // pairs with commit's Release
+    if p == NO_PENDING || p != token.bank { return }
+    self.current = p                 // cached for get()
     active.store(self.current, Release)
     pending.store(NO_PENDING, Release)
 
 Active::get()
-    &buffers[self.current]                     // plain read, no atomic
+    &banks[self.current]             // plain read, no atomic
 ```
 
 The synchronisation cost is paid once per activation, not once per tick. Core 0
@@ -857,10 +888,10 @@ Soundness properties and how each is obtained:
 | Property | Mechanism |
 |---|---|
 | one endpoint pair only | `split` takes `&'static mut self` |
-| no two `&mut T` | borrow tied to `&mut Staging<T>` |
+| no two `&mut WaveTable` | borrow tied to `&mut Staging` |
 | no borrow across activation | `get(&self)` versus `activate(&mut self)` |
-| no concurrent `get` on a `!Sync` `T` | endpoints are `!Sync` |
-| no token replay or cross-buffer use | linear token, owner **and** generation checked in both `activate` and `cancel` |
+| no endpoint shared between threads | endpoints are `!Sync` |
+| no token replay or cross-buffer use | linear token, owner checked in both `activate` and `cancel` |
 | no lost token on a full queue | `enqueue` returns the command; the store hands it to `reject` |
 | no cross-core clobbering | single-writer `active`; whole-word stores to `pending` |
 
@@ -1057,14 +1088,19 @@ impl<const H: usize> Pll<H> {
         dt: f32,
     ) -> u32;   // commanded increment, already clamped to configured bounds
 
-    /// **Edge-triggered**, called when the excitation-mode command lands. It
+    /// **Command-triggered**, called when the excitation-mode command lands. It
     /// is the only way into `Acquiring`, so `update` never enables itself.
     ///
     /// This matters after an acquisition timeout: if calling `update` could
     /// re-enter `Acquiring` from `Fixed`, the timeout would achieve nothing,
     /// because the next tick would restart acquisition and the "reverts to a
-    /// usable rig" property would be lost. A new explicit `set_enabled(true)`
-    /// is required to try again.
+    /// usable rig" property would be lost.
+    ///
+    /// "Command-triggered" rather than "edge-triggered" is deliberate. Each
+    /// `set_enabled(true)` restarts acquisition, **including when the
+    /// programme's mode is already `PhaseLocked`**: an intervening `false` is
+    /// not required. After a timeout the host re-sends the mode command to try
+    /// again, rather than having to disable and re-enable.
     pub fn set_enabled(&mut self, enabled: bool);
 
     pub fn state(&self) -> PllState;
@@ -1149,8 +1185,8 @@ check, with a test for each malformed case:
 
 ```rust
 // fw-cbc-rig/src/main.rs
-static TABLE: ConstStaticCell<DoubleBuffer<WaveTable<4096>>> =
-    ConstStaticCell::new(DoubleBuffer::new(WaveTable::empty(), WaveTable::empty()));
+static TABLE: ConstStaticCell<TableBuffer<4096>> =
+    ConstStaticCell::new(TableBuffer::new());
 
 let (staging, active) = TABLE.take().split();
 
@@ -1412,7 +1448,7 @@ Core 1, on consuming the token, activates and publishes the length:
 | Four-shaker appropriation rig | not expressible | rig crates only |
 | Rig-specific estimator (e.g. RPM) | `helic-core` | rig crates only |
 | Rig with no waveform table | not expressible | omit the component |
-| Second buffered blob | copy `table.rs` | one `DoubleBuffer<T>` |
+| Second buffered blob | copy `table.rs` | generalise `TableBuffer` (additive) |
 | Different harmonic count (≤16) | `firmware/common/src/lib.rs` | const generic |
 | >24 sources, >4 actuators, >132 values | shared crates | shared crates, deliberately |
 | New primitive with two consumers | `helic-core` | `helic-core`, correctly |
@@ -1444,9 +1480,10 @@ production rigs here and treats the crate boundary as the contract that
    `helic-fw-support`'s crate documentation. Verify by ELF inspection and a
    loop-maximum measurement that injected `&'static RtShared` costs nothing on
    the tick path.
-3. **`DoubleBuffer<T>` into `helic-core`** with the endpoint split, linear
-   token, and `ConstStaticCell` construction. Reimplement `table.rs` on it.
-   Includes the compile-fail tests.
+3. **Move the table buffer into `helic-core` as `TableBuffer`**, adding the
+   endpoint split, the linear owner-checked token, and `ConstStaticCell`
+   construction. This is a transcription of `table.rs`'s atomic protocol, not a
+   re-derivation of it; the borrow-rule compile-fail doctests come with it.
 4. **`RtCommand`, `Payload`, non-`Copy` propagation, and the returned-command
    rejection path.** Measure `COMMANDS_PER_TICK` WCET at 132-value payloads and
    confirm EABI copy helpers remain in SRAM. **This measurement gates the
@@ -1474,14 +1511,20 @@ production rigs here and treats the crate boundary as the contract that
 13. **Out-of-workspace test rig** as the final architectural acceptance test. It
     must demonstrate all four of:
     - building against released or pinned shared crates;
-    - running the layout checker from a rig-local profile;
-    - defining and running its hardware-regression profile locally;
+    - running the layout checker over its own ELF from a rig-local profile;
+    - defining a hardware-regression profile locally and having the runner
+      **load and dry-run it against a mocked transport**;
     - running the dependency-rule CI check,
 
-    each **without editing or copying anything in this repository**. Until that
-    holds, the Rust composition is decoupled but a fully supported rig still
-    requires shared-repository changes, and the repository-separation claim is
-    only partly realised.
+    each **without editing or copying anything in this repository**.
+
+    This fixture tests the *repository boundary*, not the rig, so it
+    deliberately does not require real hardware: a dry run proves the profile
+    loads and the runner drives it. Actual hardware regression remains mandatory
+    when a rig becomes production-supported, and is covered by the normal
+    sequential suite. Until the four criteria hold, the Rust composition is
+    decoupled but a fully supported rig still needs shared-repository changes,
+    and the repository-separation claim is only partly realised.
 
 Stages 1 to 5 are worth doing regardless of MIMO: they remove the offset
 arithmetic and the bespoke unsafe module without changing externally visible
@@ -1489,21 +1532,25 @@ behaviour.
 
 ## Tests
 
-**`DoubleBuffer`** — `Busy` while pending; a superseded token is ignored;
-`cancel` restores writability; a rejected commit leaves the active buffer
-untouched; compile-fail tests for two `buffer()` borrows, a `get()` borrow held
-across `activate()`, a second `split()`, and any attempt to copy a
-`CommitToken`. **Ordering**: a host-side test that the values written before
-`commit` are exactly the values observed after `activate`, exercised under
-`loom` if it can be made to run on the state machine, and at minimum asserted by
-inspection of the emitted orderings against the protocol in §3.
+**`TableBuffer`** — `Busy` while pending; `cancel` restores writability; a
+rejected commit leaves the active bank untouched; a long run of
+commit/activate cycles never reaches a state where a commit cannot be consumed.
+**Ordering**: a host-side test that the values written before `commit` are
+exactly the values observed after `activate`, exercised under `loom` if it can be
+made to run on the state machine, and at minimum asserted by inspection of the
+emitted orderings against the protocol in §3.
 
-**Cross-buffer token rejection** — two `DoubleBuffer`s driven to the *same
-generation*, then each other's tokens passed to `cancel` **and** to `activate`.
-Both must be ignored. This is its own test because checking the owner in only
-one of the two consuming operations was a real unsoundness: a foreign
-same-generation token could clear a buffer's pending flag, after which core 0
-could obtain `&mut` to a bank core 1 was about to read.
+**Borrow rules (compile-fail doctests)** — two `buffer()` borrows, a `get()`
+borrow held across `activate()`, a second `split()`, and any attempt to copy a
+`CommitToken`. These earn a compile-fail harness because they are the
+user-facing half of an `unsafe impl Sync`; a test that merely restates ordinary
+field privacy would not.
+
+**Cross-buffer token rejection** — two `TableBuffer`s, with each other's tokens
+passed to `cancel` **and** to `activate`. Both must be ignored. This is its own
+test because checking the owner in only one of the two consuming operations was
+a real unsoundness: a foreign token could clear a buffer's pending flag, after
+which core 0 could obtain `&mut` to a bank core 1 was about to read.
 
 **Reboot handshake** — `request` → `is_requested` → `mark_quiesced` →
 `is_quiesced` across the `helic-rt` boundary, with the idempotent repeat-request
@@ -1525,21 +1572,23 @@ the same tick; a length mismatch updates none.
 **Golden registry** — the *set* of `(name, type, count, writable)` per rig.
 **Golden sources** — names *and order*, updated to include `phase`.
 
-**Validation** — one test per malformed composition in §8, including a duplicate
-group domain, a group domain absent from `Program::DOMAINS`, a group domain
-colliding with `DOMAIN_RIG`, a single parameter definition too large for one
-discovery page, and `INPUTS_REQUIRED` exceeding `R::INPUTS.len()`.
+**Validation** — one test per malformed composition in §8: a duplicate
+`Program(d)` across two groups; a zero entry in `Program::DOMAINS`; a
+`Program(d)` group target absent from `Program::DOMAINS` and vice versa; more
+than one group targeting `Rig`; a `Core0` group staging an `Rt` command, which
+must be rejected transactionally with its payload returned; a single parameter
+definition too large for one discovery page; and `INPUTS_REQUIRED` exceeding
+`R::INPUTS.len()`.
 
 **Safety** — `safety_decide` is pure and host-tested: rig fault, programme
 fault, and non-finite output each latch the trip and quiet all actuators;
 per-actuator clamping; counters per tick; non-gated rig verbatim.
 
-**Safety ownership** — `SafetyOutcome` carries no `armed`, and `Safety`'s
-atomics are private, so there is no expression the wrapper could write. The
-compile-fail test is that `shared.safety.armed` does not name a field. Add a
-concurrency test that a core-0 disarm occurring between the wrapper's
-`load_inputs` and its `latch_trip` leaves the output disarmed, and that
-`latch_trip` never clears an existing trip.
+**Safety ownership** — a behavioural concurrency test that a core-0 disarm
+occurring between the wrapper's `load_inputs` and its `latch_trip` leaves the
+output disarmed, and that `latch_trip` never clears an existing trip. No
+compile-fail harness: `Safety`'s atomics are private, and Rust already proves
+that a private field cannot be written from outside its module.
 
 **`Pll`** — acquisition from `Fixed` never reports a fault; lock is claimed only
 after `lock_dwell` within `lock_tol`; hysteresis prevents chatter at the
@@ -1600,6 +1649,46 @@ wake phase is the baseline.
    and 128 at `H = 16`. Decide with stage 6 ELF evidence.
 
 ## Revision history
+
+**Revision 8** responds to a fifth review, which approved the direction subject
+to one buffer correction.
+
+- **The generation counter is removed, and it carried a real defect.** The
+  encoding `(generation << 1) | bank` in an `AtomicU32` with a `u32::MAX`
+  sentinel fails twice: at `generation = 0x7FFFFFFF` with `bank = 1` a live
+  commit encodes as exactly the sentinel, and from `2³¹` the shift discards the
+  high bit so the comparison can never match again. Either way the buffer is
+  permanently pending. At one commit per sample at 8 kHz that is 3.1 days; at
+  20 commits/s, 3.4 years — inside the life of the equipment.
+
+  It was also unnecessary. The generation defended against a *duplicated*
+  token, which stopped being possible when the token became linear. The token
+  is now `{ owner, bank }` over `active: AtomicU8` and `pending: AtomicU8` with
+  a `2` sentinel, which is `table.rs` today plus an owner field.
+- **`DoubleBuffer<T>` becomes concrete `TableBuffer`.** Four revisions were
+  spent making a generalisation safe for a design with zero consumers of it,
+  which the document's own two-consumer rule forbids. The endpoint split, the
+  linear owner-checked token, and the ordering protocol are all kept; only the
+  type parameter goes, to return additively when a second buffered component
+  exists.
+
+  The diagnosis is recorded precisely, because it changes the lesson: of the six
+  defects across those revisions, **only auto-`Sync` was caused by genericity**.
+  The rest lived in the endpoint and token protocol and would have occurred
+  identically in a specialised type. The lesson is not "avoid generics" but
+  *start from the proven concrete code* — every defect came from re-deriving
+  `table.rs` rather than transcribing it. Stage 3 now says transcribe.
+
+Clean-ups: the validation *test* list was still describing the pre-
+`CommandTarget` scheme and now matches it; `GroupEntry` replaces parallel
+`groups`/`targets` arrays and the alignment invariant they implied;
+`set_enabled` is documented as *command-triggered*, since after a timeout a
+repeat mode command must restart acquisition without an intervening `false`;
+the privacy compile-fail test is dropped, because Rust already proves private
+fields are private, while the buffer's borrow-rule doctests stay as the
+user-facing half of an `unsafe impl`; and stage 13 requires a dry run against a
+mocked transport rather than real hardware, since it tests the repository
+boundary rather than a rig.
 
 **Revision 7** responds to a fourth review. All five must-fix findings accepted;
 two of the reviewer's suggested *mechanisms* were declined in favour of simpler
