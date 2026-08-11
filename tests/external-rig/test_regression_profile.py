@@ -12,12 +12,9 @@ from types import SimpleNamespace
 from typing import Self
 from unittest import mock
 
-FIXTURE = Path(__file__).resolve().parent
-REPOSITORY = FIXTURE.parents[1]
-sys.path.insert(0, str(REPOSITORY / "host-python"))
-sys.path.insert(0, str(REPOSITORY / "firmware" / "tools"))
+from helic_daq.verify import regression
 
-import rt_regression
+FIXTURE = Path(__file__).resolve().parent
 
 
 class FakeClock:
@@ -94,7 +91,7 @@ class RegressionDryRunTests(unittest.TestCase):
         clock = FakeClock()
         device = FakeDevice(clock)
         argv = [
-            "rt_regression.py",
+            "helic-rt-regression",
             "--profile",
             str(FIXTURE / "rig-profile.toml"),
             "--no-flash",
@@ -110,12 +107,12 @@ class RegressionDryRunTests(unittest.TestCase):
         output = io.StringIO()
         with (
             mock.patch.object(sys, "argv", argv),
-            mock.patch.object(rt_regression, "connect", return_value=device),
-            mock.patch.object(rt_regression.time, "monotonic", clock.monotonic),
-            mock.patch.object(rt_regression.time, "sleep", clock.sleep),
+            mock.patch.object(regression, "connect", return_value=device),
+            mock.patch.object(regression.time, "monotonic", clock.monotonic),
+            mock.patch.object(regression.time, "sleep", clock.sleep),
             contextlib.redirect_stdout(output),
         ):
-            result = rt_regression.main()
+            result = regression.main()
 
         report = json.loads(output.getvalue())
         self.assertEqual(result, 0)

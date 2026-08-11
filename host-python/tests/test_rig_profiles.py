@@ -2,23 +2,18 @@
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-REPOSITORY = Path(__file__).resolve().parents[3]
+from helic_daq.verify import discover_profiles, layout, regression
+from helic_daq.verify.profile import ProfileError, load_profile, load_profiles
+
+REPOSITORY = Path(__file__).resolve().parents[2]
 FIRMWARE = REPOSITORY / "firmware"
-sys.path.insert(0, str(REPOSITORY / "host-python"))
-sys.path.insert(0, str(FIRMWARE / "tools"))
-
-import check_rt_layout
-import rt_regression
-from rig_profile import ProfileError, load_profile, load_profiles
-
-PROFILE_PATHS = sorted((FIRMWARE / "experiments").glob("*/rig-profile.toml"))
+PROFILE_PATHS = discover_profiles(FIRMWARE)
 
 
 class ProfileLoadingTests(unittest.TestCase):
@@ -60,20 +55,20 @@ class LayoutProfileTests(unittest.TestCase):
             FIRMWARE / "experiments" / "whirl-rig" / "rig-profile.toml"
         )
         realised = [
-            (check_rt_layout.SRAM_START, "prefix" + "_".join(pattern))
+            (layout.SRAM_START, "prefix" + "_".join(pattern))
             for pattern in (
                 profile.layout.required_patterns + profile.layout.optional_patterns
             )
         ]
         realised.extend(
-            (check_rt_layout.SRAM_START, symbol)
+            (layout.SRAM_START, symbol)
             for symbol in profile.layout.exact_symbols
         )
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / profile.layout.elf).touch()
-            with mock.patch.object(check_rt_layout, "symbols", return_value=realised):
+            with mock.patch.object(layout, "symbols", return_value=realised):
                 self.assertEqual(
-                    check_rt_layout.check_elf(profile, Path(directory), "nm"), []
+                    layout.check_elf(profile, Path(directory), "nm"), []
                 )
 
     def test_checker_rejects_a_profiled_symbol_in_flash(self) -> None:
@@ -81,18 +76,18 @@ class LayoutProfileTests(unittest.TestCase):
             FIRMWARE / "experiments" / "cbc-rig" / "rig-profile.toml"
         )
         realised = [
-            (check_rt_layout.SRAM_START, "prefix" + "_".join(pattern))
+            (layout.SRAM_START, "prefix" + "_".join(pattern))
             for pattern in profile.layout.required_patterns
         ]
         realised.extend(
-            (check_rt_layout.SRAM_START, symbol)
+            (layout.SRAM_START, symbol)
             for symbol in profile.layout.exact_symbols
         )
         realised[0] = (0x1000_0000, realised[0][1])
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / profile.layout.elf).touch()
-            with mock.patch.object(check_rt_layout, "symbols", return_value=realised):
-                errors = check_rt_layout.check_elf(profile, Path(directory), "nm")
+            with mock.patch.object(layout, "symbols", return_value=realised):
+                errors = layout.check_elf(profile, Path(directory), "nm")
         self.assertTrue(any("outside SRAM" in error for error in errors))
 
     def test_checker_rejects_an_optional_hot_symbol_when_emitted_in_flash(self) -> None:
@@ -100,18 +95,18 @@ class LayoutProfileTests(unittest.TestCase):
             FIRMWARE / "experiments" / "cbc-rig" / "rig-profile.toml"
         )
         realised = [
-            (check_rt_layout.SRAM_START, "prefix" + "_".join(pattern))
+            (layout.SRAM_START, "prefix" + "_".join(pattern))
             for pattern in profile.layout.required_patterns
         ]
         realised.extend(
-            (check_rt_layout.SRAM_START, symbol)
+            (layout.SRAM_START, symbol)
             for symbol in profile.layout.exact_symbols
         )
         realised.append((0x1000_0000, "prefix_run_rt_tick"))
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / profile.layout.elf).touch()
-            with mock.patch.object(check_rt_layout, "symbols", return_value=realised):
-                errors = check_rt_layout.check_elf(profile, Path(directory), "nm")
+            with mock.patch.object(layout, "symbols", return_value=realised):
+                errors = layout.check_elf(profile, Path(directory), "nm")
         self.assertTrue(any("run_rt_tick" in error for error in errors))
 
 
@@ -132,7 +127,7 @@ class RegressionProfileTests(unittest.TestCase):
                 self.writes.append((name, value))
 
         device = FakeDevice()
-        rt_regression.quiet_outputs(device, profile.regression)  # type: ignore[arg-type]
+        regression.quiet_outputs(device, profile.regression)  # type: ignore[arg-type]
 
         self.assertEqual(
             device.writes,

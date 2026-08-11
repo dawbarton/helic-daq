@@ -17,16 +17,15 @@ import time
 from pathlib import Path
 
 from helic_daq import Device, protocol
-from rig_profile import (
+
+from . import discover_profiles
+from .profile import (
     ProfileError,
     RegressionProfile,
     RigProfile,
     load_profiles,
 )
 
-ROOT = Path(__file__).resolve().parents[2]
-FIRMWARE = ROOT / "firmware"
-DEFAULT_PROFILE_PATHS = sorted((FIRMWARE / "experiments").glob("*/rig-profile.toml"))
 COUNTERS = (
     "ticks",
     "loop_time_last",
@@ -203,8 +202,8 @@ def main() -> int:
     parser.add_argument(
         "--firmware-dir",
         type=Path,
-        default=FIRMWARE,
-        help="Cargo workspace used for flashing (default: this repository's firmware)",
+        default=Path.cwd(),
+        help="Cargo workspace used for flashing (default: the current directory)",
     )
     parser.add_argument("--no-flash", action="store_true")
     parser.add_argument("--idle-seconds", type=float, default=5.0)
@@ -224,7 +223,13 @@ def main() -> int:
             profiles = load_profiles([args.profile])
             profile = next(iter(profiles.values()))
         else:
-            profiles = load_profiles(DEFAULT_PROFILE_PATHS)
+            paths = discover_profiles()
+            if not paths:
+                parser.error(
+                    "no rig profile found below the current directory; "
+                    "pass --profile"
+                )
+            profiles = load_profiles(paths)
             try:
                 profile = profiles[args.rig]
             except KeyError:

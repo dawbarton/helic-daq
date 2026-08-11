@@ -102,7 +102,7 @@ one package without coupling its tests to Embassy or RP2350. Promote an
 algorithm to `helic-core` once it has two actual consumers, or is deliberately
 accepted as a platform primitive. A module belongs in `helic-fw-support` only
 when it runs on core 0 and every production rig uses it; non-universal services
-belong in a separate integration crate. `tools/check_dependencies.py` enforces
+belong in a separate integration crate. `helic-deps-check` enforces
 the critical crate boundaries in CI.
 
 ## Host broker architecture
@@ -288,7 +288,7 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   core 1 diverts at the next sample boundary into bounded `Rig::prepare_reboot`
   steps, publishes completion, and spins in SRAM. CBC and Pico 2W issue one DAC
   word per boundary to preserve device timing; whirl completes immediately.
-  `check_rt_layout.py` requires the shared completion symbol in SRAM and checks
+  `helic-rt-layout` requires the shared completion symbol in SRAM and checks
   any emitted experiment quiescence symbols there too.
 
 Each firmware crate owns one const-initialised `helic_rt::RtShared` and injects
@@ -339,7 +339,7 @@ so "it still streams" proves nothing.
 ```sh
 cd firmware
 cargo build --release -p fw-cbc-rig -p fw-whirl-rig -p fw-pico2w-rig
-python3 tools/check_rt_layout.py
+helic-rt-layout
 ```
 
 The checker requires `run_hot_loop`, the ARM EABI copy/clear helpers and, where
@@ -367,11 +367,9 @@ interface. A rig in another repository supplies its own profile and build
 directory without editing these tools:
 
 ```sh
-python3 tools/check_rt_layout.py --profile /rig/rig-profile.toml \
+helic-rt-layout --profile /rig/rig-profile.toml \
   --elf-dir /rig/target/thumbv8m.main-none-eabihf/release
-PYTHONPATH=host-python uv run --with numpy --python 3.12 \
-  python firmware/tools/rt_regression.py --profile /rig/rig-profile.toml \
-  --firmware-dir /rig/firmware
+helic-rt-regression --profile /rig/rig-profile.toml --firmware-dir /rig/firmware
 ```
 
 `--profile` is repeatable for the layout checker. The regression runner accepts
@@ -388,11 +386,13 @@ regression proves tool composition only, and cannot replace physical validation
 when a rig is promoted to production support.
 
 **2. Hardware check — production regression** (device + probe attached, one
-sequential client):
+sequential client). Run from `firmware/`: like the layout checker, the runner
+discovers profiles and flashes relative to the current directory, so it needs no
+knowledge of where this repository is.
 
 ```sh
-PYTHONPATH=host-python uv run --with numpy --python 3.12 \
-  python firmware/tools/rt_regression.py --rig cbc
+cd firmware
+helic-rt-regression --rig cbc
 ```
 
 Use `--rig whirl` or `--rig pico2w --host <DHCP-address>` for the other
@@ -415,12 +415,9 @@ the network): capture all 15 sources for 8000 records and `adc0,out` for
 60000 records:
 
 ```sh
-PYTHONPATH=host-python uv run --with numpy --python 3.12 \
-  python firmware/tools/rt_regression.py --rig cbc \
-  --capture-sources all --capture-samples 8000
-PYTHONPATH=host-python uv run --with numpy --python 3.12 \
-  python firmware/tools/rt_regression.py --rig cbc --no-flash \
-  --capture-samples 60000
+cd firmware
+helic-rt-regression --rig cbc --capture-sources all --capture-samples 8000
+helic-rt-regression --rig cbc --no-flash --capture-samples 60000
 ```
 
 The tool asserts contiguous indices and zero loss. The original manual

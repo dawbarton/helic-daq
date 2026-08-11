@@ -39,12 +39,10 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - run: pip install numpy
+      - run: pip install -e .
       - run: PYTHONPATH=.:tests python -m unittest discover -s tests -v
-      - name: Test rig verification profiles
-        run: PYTHONPATH=.:../firmware/tools python -m unittest discover -s ../firmware/tools/tests -v
       - name: Dry-run external regression profile against mock transport
-        run: PYTHONPATH=.:../firmware/tools python -m unittest discover -s ../tests/external-rig -p 'test_*.py' -v
+        run: python -m unittest discover -s ../tests/external-rig -p 'test_*.py' -v
 
   julia:
     name: Host package (HelicDAQ.jl)
@@ -86,10 +84,17 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: firmware -> target
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install the rig verification tools
+        # Installed rather than run from a path, exactly as an out-of-tree rig
+        # consumes them.
+        run: pip install -e ../host-python
       - name: Check crate dependency boundaries
-        run: python3 tools/check_dependencies.py
+        run: helic-deps-check
       - name: Check out-of-workspace dependency policy
-        run: python3 tools/check_dependencies.py --workspace ../tests/external-rig --policy ../tests/external-rig/dependency-policy.toml
+        run: helic-deps-check --workspace ../tests/external-rig --policy ../tests/external-rig/dependency-policy.toml
       - run: cargo fmt --all -- --check
       - run: cargo clippy --release --workspace -- -D warnings
       - run: cargo build --release --workspace
@@ -101,7 +106,7 @@ jobs:
           cargo clippy --manifest-path build/Cargo.toml --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
           cargo test --manifest-path build/Cargo.toml --target x86_64-unknown-linux-gnu
       - name: Check real-time symbols are SRAM-resident
-        run: python3 tools/check_rt_layout.py
+        run: helic-rt-layout
       - name: Build out-of-workspace firmware
         working-directory: tests/external-rig
         run: |
@@ -109,7 +114,7 @@ jobs:
           cargo clippy --release --workspace -- -D warnings
           cargo build --release --workspace
       - name: Check out-of-workspace real-time symbols
-        run: python3 tools/check_rt_layout.py --profile ../tests/external-rig/rig-profile.toml --elf-dir ../tests/external-rig/target/thumbv8m.main-none-eabihf/release
+        run: helic-rt-layout --profile ../tests/external-rig/rig-profile.toml --elf-dir ../tests/external-rig/target/thumbv8m.main-none-eabihf/release
       - name: Build W6100 wired variants
         run: |
           cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100

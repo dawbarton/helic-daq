@@ -11,18 +11,21 @@ that table to exercise released packages unchanged.
 
 From this directory, the complete boundary check is:
 
+The verification tools are installed from the host package rather than run out
+of the platform checkout, which is how a real out-of-tree rig consumes them:
+
 ```sh
+pip install -e ../../host-python   # or: pip install "helic-daq @ git+<url>@<tag>"
 cargo test -p fixture-rig-program --target x86_64-unknown-linux-gnu
 cargo build --release --workspace
-uv run --no-project python ../../firmware/tools/check_dependencies.py \
-  --workspace . --policy dependency-policy.toml
-uv run --no-project python ../../firmware/tools/check_rt_layout.py \
-  --profile rig-profile.toml \
+helic-deps-check --policy dependency-policy.toml
+helic-rt-layout --profile rig-profile.toml \
   --elf-dir target/thumbv8m.main-none-eabihf/release
-PYTHONPATH=../../host-python:../../firmware/tools \
-  uv run --project ../../host-python --python 3.12 python -m unittest \
-  test_regression_profile.py
+python -m unittest test_regression_profile.py
 ```
+
+Each tool resolves its defaults from the current directory, so none of them
+needs to know where the platform checkout is.
 
 The last command uses the fixture's deterministic device and clock; it performs
 no network or hardware operation.

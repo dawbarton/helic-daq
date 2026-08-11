@@ -7,7 +7,9 @@ name = "helic-daq"
 version = "0.1.0"
 description = "Host interface for the HELIC-DAQ real-time control and data acquisition platform"
 readme = "README.md"
-requires-python = ">=3.9"
+# 3.11 is the floor because the rig verification tools read `rig-profile.toml`
+# and `dependency-policy.toml` with the standard-library `tomllib`.
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "David A. W. Barton" }]
 dependencies = ["numpy"]
@@ -17,6 +19,11 @@ plot = ["matplotlib"]
 
 [project.scripts]
 helic-daq = "helic_daq.cli:main"
+# Rig verification gates. These ship with the package so that a rig maintained
+# in its own repository installs them rather than copying them.
+helic-rt-layout = "helic_daq.verify.layout:main"
+helic-rt-regression = "helic_daq.verify.regression:main"
+helic-deps-check = "helic_daq.verify.dependencies:main"
 
 [tool.setuptools.packages.find]
 include = ["helic_daq*"]

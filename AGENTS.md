@@ -200,14 +200,14 @@ experiment in which it was first needed:
   capture sources, acceptance limit and ordered quieting writes. Update that
   profile when the rig or hot-path boundary changes; do not add a rig by
   hard-coding it into the shared tools.
-- `firmware/tools/check_rt_layout.py` is the static hot-path gate. Build the
+- `helic-rt-layout` (`helic_daq.verify.layout`) is the static hot-path gate. Build the
   complete release workspace immediately before running it; it checks all
   three production ELFs and must continue to require `run_hot_loop`, the ARM
   EABI generic/aligned copy and clear helpers and each applicable analogue
   transfer symbol in SRAM. Treat it as a minimum named-symbol guard, not a
   complete call-graph proof. Inspect new compiler-generated calls after
   material tick-path changes.
-- `firmware/tools/rt_regression.py` is the sequential hardware runner. It
+- `helic-rt-regression` (`helic_daq.verify.regression`) is the sequential hardware runner. It
   flashes one profile, checks identity, measures idle/TCP-poll/capture phases,
   verifies counters, rate, wake-phase spread and capture continuity, then
   quiets outputs. CBC additionally gates `loop_time_max <= 60 µs`; the current
@@ -224,10 +224,11 @@ experiment in which it was first needed:
   W6100 paths from software-only status without ordered physical evidence.
 - A separately maintained rig owns its portable programme, firmware crate,
   target configuration, lockfile, exact shared-crate pins, dependency policy
-  and `rig-profile.toml`. It drives `check_dependencies.py`,
-  `check_rt_layout.py --profile ... --elf-dir ...` and
-  `rt_regression.py --profile ... --firmware-dir ...` without editing or
-  copying those tools. Keep `tests/external-rig` passing as the repository-
+  and `rig-profile.toml`. It installs the host package and drives
+  `helic-deps-check --policy ...`, `helic-rt-layout --profile ... --elf-dir ...`
+  and `helic-rt-regression --profile ... --firmware-dir ...` without editing or
+  copying those tools. Every tool resolves its defaults from the current
+  directory, so none of them assumes a checkout of this repository. Keep `tests/external-rig` passing as the repository-
   separation acceptance fixture. Its local `[patch.crates-io]` is only a
   pre-publication checkout substitution, not evidence that the shared crates
   have been released.
@@ -276,15 +277,19 @@ cargo clippy --manifest-path firmware/experiments/whirl-rig/Cargo.toml \
   --lib --target x86_64-unknown-linux-gnu --no-default-features -- -D warnings
 cargo test --manifest-path firmware/experiments/whirl-rig/Cargo.toml \
   --lib --target x86_64-unknown-linux-gnu --no-default-features
+pip install -e host-python   # provides helic-rt-layout and helic-deps-check
 cd firmware
-uv run --no-project python tools/check_dependencies.py
-uv run --no-project python tools/check_dependencies.py \
-  --workspace ../tests/external-rig \
+helic-deps-check
+helic-deps-check --workspace ../tests/external-rig \
   --policy ../tests/external-rig/dependency-policy.toml
 cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings
 cargo build --release --workspace
-uv run --no-project python tools/check_rt_layout.py
+cargo fmt --manifest-path build/Cargo.toml -- --check
+cargo clippy --manifest-path build/Cargo.toml --all-targets \
+  --target x86_64-unknown-linux-gnu -- -D warnings
+cargo test --manifest-path build/Cargo.toml --target x86_64-unknown-linux-gnu
+helic-rt-layout
 cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100
 cargo build --release -p fw-whirl-rig --no-default-features --features board-w6100
 cd ../tests/external-rig
@@ -292,15 +297,12 @@ cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings
 cargo test -p fixture-rig-program --target x86_64-unknown-linux-gnu
 cargo build --release --workspace
-uv run --no-project python ../../firmware/tools/check_rt_layout.py \
-  --profile rig-profile.toml \
+helic-rt-layout --profile rig-profile.toml \
   --elf-dir target/thumbv8m.main-none-eabihf/release
+helic-deps-check --policy dependency-policy.toml
 cd ../../host-python
-PYTHONPATH=.:tests uv run --python 3.12 python -m unittest discover -s tests
-PYTHONPATH=.:../firmware/tools uv run --python 3.12 python -m unittest \
-  discover -s ../firmware/tools/tests
-PYTHONPATH=.:../firmware/tools uv run --python 3.12 python -m unittest \
-  discover -s ../tests/external-rig -p 'test_*.py'
+PYTHONPATH=.:tests python -m unittest discover -s tests
+python -m unittest discover -s ../tests/external-rig -p 'test_*.py'
 cd ../host-julia
 julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 cd ../host-matlab

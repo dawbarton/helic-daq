@@ -11,10 +11,8 @@ from typing import Any
 
 import tomllib
 
-FIRMWARE = Path(__file__).resolve().parents[1]
 
-
-def metadata(workspace: Path = FIRMWARE) -> dict[str, Any]:
+def metadata(workspace: Path) -> dict[str, Any]:
     output = subprocess.check_output(
         ["cargo", "metadata", "--format-version", "1"],
         cwd=workspace,
@@ -66,7 +64,7 @@ def reachable_names(data: dict[str, Any], root_name: str) -> set[str]:
     return {packages[package_id] for package_id in visited}
 
 
-def check_default_policy(data: dict[str, Any]) -> None:
+def check_default_policy(data: dict[str, Any], workspace: Path) -> None:
     packages = {package["name"]: package for package in data["packages"]}
 
     require_exact(packages["helic-core"], {"libm"})
@@ -84,7 +82,7 @@ def check_default_policy(data: dict[str, Any]) -> None:
     direct_rt = normal_dependencies(packages["helic-fw-rt"])
     if overlap := direct_rt & forbidden_rt:
         raise SystemExit(f"helic-fw-rt has forbidden dependencies: {sorted(overlap)}")
-    require_absent_from_sources(FIRMWARE / "rt" / "src", forbidden_rt)
+    require_absent_from_sources(workspace / "rt" / "src", forbidden_rt)
 
     support_reachable = reachable_names(data, "helic-fw-support")
     if "helic-fw-rt" in support_reachable:
@@ -128,13 +126,18 @@ def check_external_policy(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workspace", type=Path, default=FIRMWARE)
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path.cwd(),
+        help="Cargo workspace to inspect (default: the current directory)",
+    )
     parser.add_argument("--policy", type=Path)
     args = parser.parse_args()
 
     data = metadata(args.workspace)
     if args.policy is None:
-        check_default_policy(data)
+        check_default_policy(data, args.workspace)
     else:
         check_external_policy(data, args.workspace, args.policy)
     print("crate dependency rules passed")

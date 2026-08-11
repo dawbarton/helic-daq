@@ -6,11 +6,9 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from rig_profile import ProfileError, RigProfile, load_profiles
+from . import RELEASE_DIR, discover_profiles
+from .profile import ProfileError, RigProfile, load_profiles
 
-FIRMWARE = Path(__file__).resolve().parents[1]
-DEFAULT_ELF_DIR = FIRMWARE / "target" / "thumbv8m.main-none-eabihf" / "release"
-DEFAULT_PROFILE_PATHS = sorted((FIRMWARE / "experiments").glob("*/rig-profile.toml"))
 SRAM_START = 0x2000_0000
 SRAM_END = 0x2008_2000
 
@@ -85,18 +83,30 @@ def check_elf(profile: RigProfile, elf_dir: Path, nm: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--elf-dir", type=Path, default=DEFAULT_ELF_DIR)
+    parser.add_argument(
+        "--elf-dir",
+        type=Path,
+        default=RELEASE_DIR,
+        help="directory holding release ELFs (default: the release directory "
+        "of the workspace in the current directory)",
+    )
     parser.add_argument("--nm", default="nm", help="nm-compatible executable")
     parser.add_argument(
         "--profile",
         action="append",
         type=Path,
-        help="rig profile to check (repeatable; default: production profiles)",
+        help="rig profile to check (repeatable; default: profiles discovered "
+        "below the current directory)",
     )
     args = parser.parse_args()
 
+    paths = args.profile or discover_profiles()
+    if not paths:
+        parser.error(
+            "no rig profile found below the current directory; pass --profile"
+        )
     try:
-        profiles = load_profiles(args.profile or DEFAULT_PROFILE_PATHS)
+        profiles = load_profiles(paths)
     except ProfileError as error:
         parser.error(str(error))
     errors = [
