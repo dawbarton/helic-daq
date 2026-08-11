@@ -10,11 +10,11 @@ use helic_proto::frame::{self, MsgType, HEADER_LEN, MAX_PAYLOAD, TRAILER_LEN};
 use helic_proto::payload;
 use helic_proto::{ErrorCode, MAGIC, VERSION};
 use helic_rt::params::{ParamAction, ParamStore};
-use helic_rt::{source, source_count, Rig, MAX_SOURCES};
+use helic_rt::{source, source_count, Program, Rig, MAX_SOURCES};
 
 use super::STREAM;
 
-pub async fn control_run<R: Rig>(stack: Stack<'static>, mut store: ParamStore) -> ! {
+pub async fn control_run<R: Rig, P: Program>(stack: Stack<'static>, mut store: ParamStore) -> ! {
     let mut rx_buf = [0u8; 2048];
     let mut tx_buf = [0u8; 2048];
     loop {
@@ -24,7 +24,7 @@ pub async fn control_run<R: Rig>(stack: Stack<'static>, mut store: ParamStore) -
             continue;
         }
         info!("control: client connected");
-        serve::<R>(&mut socket, &mut store).await;
+        serve::<R, P>(&mut socket, &mut store).await;
         // Stop streaming when the controlling connection goes away.
         STREAM.lock(|s| s.borrow_mut().enabled = false);
         // Comms-loss quieting: a dropped control connection disarms the output
@@ -38,7 +38,7 @@ pub async fn control_run<R: Rig>(stack: Stack<'static>, mut store: ParamStore) -
 /// Handle framed requests until the connection drops or a framing error
 /// makes resynchronisation impossible (TCP guarantees ordering, so any
 /// framing error means a broken peer).
-async fn serve<R: Rig>(socket: &mut TcpSocket<'_>, store: &mut ParamStore) {
+async fn serve<R: Rig, P: Program>(socket: &mut TcpSocket<'_>, store: &mut ParamStore) {
     let mut frame_buf = [0u8; HEADER_LEN + MAX_PAYLOAD + TRAILER_LEN];
     let mut resp_payload = [0u8; MAX_PAYLOAD];
     let mut resp_frame = [0u8; HEADER_LEN + MAX_PAYLOAD + TRAILER_LEN];
@@ -80,7 +80,7 @@ async fn serve<R: Rig>(socket: &mut TcpSocket<'_>, store: &mut ParamStore) {
         // Dispatch. `handle` returns either a response payload length or an
         // error code to report.
         let mut action = ParamAction::None;
-        let mut result = handle::<R>(ty, payload, store, socket, &mut resp_payload, &mut action);
+        let mut result = handle::<R, P>(ty, payload, store, socket, &mut resp_payload, &mut action);
         let mut reboot_scheduled = false;
         if result.is_ok() && action == ParamAction::Reboot {
             STREAM.lock(|s| s.borrow_mut().enabled = false);
@@ -134,7 +134,7 @@ async fn serve<R: Rig>(socket: &mut TcpSocket<'_>, store: &mut ParamStore) {
     }
 }
 
-fn handle<R: Rig>(
+fn handle<R: Rig, P: Program>(
     ty: u8,
     payload: &[u8],
     store: &mut ParamStore,
@@ -165,8 +165,8 @@ fn handle<R: Rig>(
         }
         MsgType::GetSources => {
             let mut off = 0;
-            for i in 0..source_count::<R>() {
-                let (name, unit) = source::<R>(i).unwrap();
+            for i in 0..source_count::<R, P>() {
+                let (name, unit) = source::<R, P>(i).unwrap();
                 off += payload::encode_source(&mut resp[off..], name, unit)
                     .map_err(|_| ErrorCode::BadLength)?;
             }
@@ -214,7 +214,10 @@ fn handle<R: Rig>(
                 return Err(ErrorCode::BadValue);
             }
             let sources = &payload[7..7 + n];
-            if sources.iter().any(|&s| s as usize >= source_count::<R>()) {
+            if sources
+                .iter()
+                .any(|&s| s as usize >= source_count::<R, P>())
+            {
                 return Err(ErrorCode::BadValue);
             }
             STREAM.lock(|s| {
@@ -265,7 +268,7 @@ fn handle<R: Rig>(
             let parameter_count =
                 u16::try_from(store.count()).expect("validated parameter count fits u16");
             resp[1..3].copy_from_slice(&parameter_count.to_le_bytes());
-            resp[3] = source_count::<R>() as u8;
+            resp[3] = source_count::<R, P>() as u8;
             resp[4..8].copy_from_slice(&store.sample_rate().hz().to_le_bytes());
             let uptime_ms = Instant::now().as_millis() as u32;
             resp[8..12].copy_from_slice(&uptime_ms.to_le_bytes());

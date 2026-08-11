@@ -771,8 +771,6 @@ impl<C: Controller> ParamGroup for ControllerGroup<C> {
     }
 }
 
-pub const PROGRAM_DOMAINS: &[u8] = &[DOMAIN_GENERATOR, DOMAIN_TABLE, DOMAIN_CONTROLLER];
-
 fn checked_output(defs: &[ParamDef], id: u16, out: &[u8]) -> Result<usize, ErrorCode> {
     let def = defs.get(id as usize).ok_or(ErrorCode::BadIndex)?;
     let size = def.ty.size() * def.count as usize;

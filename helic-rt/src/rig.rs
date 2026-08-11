@@ -2,44 +2,47 @@
 
 use helic_core::controller::Controller;
 
+use crate::Program;
+
 pub const MAX_SOURCES: usize = 24;
 const DISCOVERY_HEADROOM: usize = helic_proto::MAX_PAYLOAD * 3 / 4;
 const MAX_SOURCE_REGISTRY_ENCODED_LEN: usize =
     MAX_SOURCES * (helic_proto::payload::MAX_NAME_LEN + helic_proto::payload::MAX_UNIT_LEN + 2);
 const _: () = assert!(MAX_SOURCE_REGISTRY_ENCODED_LEN <= DISCOVERY_HEADROOM);
-pub const GENERATED_SOURCES: &[(&str, &str)] = &[
-    ("target", "V"),
-    ("forcing", "V"),
-    ("table", "V"),
-    ("out", "V"),
-    ("cmd_epoch", "count"),
-];
+const OUTPUT_SOURCE: (&str, &str) = ("out", "V");
+const COMMAND_EPOCH_SOURCE: (&str, &str) = ("cmd_epoch", "count");
 
-pub const fn source_count<R: Rig>() -> usize {
-    R::INPUTS.len() + R::Ctrl::TELEMETRY.len() + GENERATED_SOURCES.len()
+pub fn source_count<R: Rig, P: Program>() -> usize {
+    R::INPUTS.len() + P::signal_count() + 2
 }
 
-pub fn source<R: Rig>(index: usize) -> Option<(&'static str, &'static str)> {
+pub fn source<R: Rig, P: Program>(index: usize) -> Option<(&'static str, &'static str)> {
     if let Some(source) = R::INPUTS.get(index) {
         return Some(*source);
     }
     let index = index - R::INPUTS.len();
-    if let Some(source) = R::Ctrl::TELEMETRY.get(index) {
-        return Some(*source);
+    if let Some(source) = P::signal(index) {
+        return Some(source);
     }
-    GENERATED_SOURCES
-        .get(index - R::Ctrl::TELEMETRY.len())
-        .copied()
+    match index.checked_sub(P::signal_count())? {
+        0 => Some(OUTPUT_SOURCE),
+        1 => Some(COMMAND_EPOCH_SOURCE),
+        _ => None,
+    }
 }
 
-pub fn validate_sources<R: Rig>() {
+pub fn validate_sources<R: Rig, P: Program>() {
     assert!(
-        source_count::<R>() <= MAX_SOURCES,
+        source_count::<R, P>() <= MAX_SOURCES,
         "experiment exposes more stream sources than supported"
     );
+    assert!(
+        P::INPUTS_REQUIRED <= R::INPUTS.len(),
+        "programme requires more inputs than the rig provides"
+    );
     let mut encoded_len = 0;
-    for i in 0..source_count::<R>() {
-        let (name, unit) = source::<R>(i).unwrap();
+    for i in 0..source_count::<R, P>() {
+        let (name, unit) = source::<R, P>(i).unwrap();
         assert!(
             name.len() <= helic_proto::payload::MAX_NAME_LEN
                 && unit.len() <= helic_proto::payload::MAX_UNIT_LEN
@@ -51,7 +54,7 @@ pub fn validate_sources<R: Rig>() {
         for j in 0..i {
             assert_ne!(
                 name,
-                source::<R>(j).unwrap().0,
+                source::<R, P>(j).unwrap().0,
                 "source names must be unique"
             );
         }
@@ -146,4 +149,70 @@ pub trait Rig {
     }
 
     fn set_param(&mut self, _id: u16, _value: f32) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Payload, StepCtx};
+
+    struct TestRig;
+
+    impl Rig for TestRig {
+        const INPUTS: &'static [(&'static str, &'static str)] = &[("input", "V")];
+        type Ctrl = helic_core::controller::PassThrough;
+
+        fn init(&mut self) {}
+        fn measure(&mut self, _values: &mut [f32]) {}
+        fn actuate(&mut self, _out: f32) {}
+        fn prepare_reboot(&mut self, _step: u8) -> bool {
+            true
+        }
+    }
+
+    struct TestProgram;
+
+    impl Program for TestProgram {
+        const OUTPUTS: usize = 1;
+        const INPUTS_REQUIRED: usize = 1;
+        const DOMAINS: &'static [u8] = &[1];
+        const SIGNALS: &'static [(&'static str, &'static str)] = &[("phase", "turn")];
+
+        fn apply(&mut self, _domain: u8, _id: u16, _payload: Payload) {}
+        fn step(&mut self, _inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, _outputs: &mut [f32]) {}
+        fn write_signals(&self, _out: &mut [f32]) {}
+    }
+
+    #[test]
+    fn source_walk_preserves_segment_order() {
+        validate_sources::<TestRig, TestProgram>();
+        assert_eq!(source_count::<TestRig, TestProgram>(), 4);
+        assert_eq!(source::<TestRig, TestProgram>(0), Some(("input", "V")));
+        assert_eq!(source::<TestRig, TestProgram>(1), Some(("phase", "turn")));
+        assert_eq!(source::<TestRig, TestProgram>(2), Some(("out", "V")));
+        assert_eq!(
+            source::<TestRig, TestProgram>(3),
+            Some(("cmd_epoch", "count"))
+        );
+        assert_eq!(source::<TestRig, TestProgram>(4), None);
+    }
+
+    struct TooManyInputs;
+
+    impl Program for TooManyInputs {
+        const OUTPUTS: usize = 1;
+        const INPUTS_REQUIRED: usize = 2;
+        const DOMAINS: &'static [u8] = &[];
+        const SIGNALS: &'static [(&'static str, &'static str)] = &[];
+
+        fn apply(&mut self, _domain: u8, _id: u16, _payload: Payload) {}
+        fn step(&mut self, _inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, _outputs: &mut [f32]) {}
+        fn write_signals(&self, _out: &mut [f32]) {}
+    }
+
+    #[test]
+    #[should_panic(expected = "programme requires more inputs")]
+    fn validation_rejects_insufficient_rig_inputs() {
+        validate_sources::<TestRig, TooManyInputs>();
+    }
 }

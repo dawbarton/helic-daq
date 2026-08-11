@@ -27,6 +27,7 @@ pub const NET_CONFIG: NetConfig = NetConfig::Static {
 pub const MAC_ADDR: [u8; 6] = [0x02, 0x48, 0x4C, 0x00, 0x00, 0x04];
 
 pub type ActiveController = PassThrough;
+pub type ActiveProgram = helic_rt::StandardProgram<ActiveController>;
 
 pub fn make_controller() -> ActiveController {
     PassThrough

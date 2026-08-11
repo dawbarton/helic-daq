@@ -10,16 +10,18 @@ extern crate std;
 
 pub mod channels;
 pub mod params;
+mod program;
 pub mod rig;
 mod sample_rate;
 mod shared;
 
 pub use channels::{
-    command_id, ActiveCoeffs, CoeffStaging, CommandConsumer, CommandProducer, Payload, Record,
-    RecordConsumer, RecordProducer, RtChannels, RtCommand, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN,
-    DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, MAX_FORCE_VALUES, MAX_RT_VALUES,
-    RECORD_QUEUE_LEN,
+    command_id, ActiveCoeffs, ActiveTable, CoeffStaging, CommandConsumer, CommandProducer, Payload,
+    Record, RecordConsumer, RecordProducer, RtChannels, RtCommand, COMMANDS_PER_TICK,
+    COMMAND_QUEUE_LEN, DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE,
+    MAX_FORCE_VALUES, MAX_RT_VALUES, RECORD_QUEUE_LEN,
 };
+pub use program::{Program, StandardProgram, StepCtx};
 pub use rig::{source, source_count, validate_sources, Rig, TickSource, MAX_SOURCES};
 pub use sample_rate::SampleRate;
 pub use shared::{Diagnostics, Live, RebootShared, RtShared, Safety, SafetyInputs};

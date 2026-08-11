@@ -84,6 +84,8 @@ pub const MAC_ADDR: [u8; 6] = [0x02, 0x48, 0x4C, 0x00, 0x00, 0x01];
 /// }
 /// ```
 pub type ActiveController = PassThrough;
+/// Statically selected core-1 programme.
+pub type ActiveProgram = helic_rt::StandardProgram<ActiveController>;
 
 /// Construct the one controller instance which is later moved to core 1.
 ///

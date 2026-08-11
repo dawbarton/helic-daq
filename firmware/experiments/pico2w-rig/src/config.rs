@@ -33,6 +33,7 @@ pub fn wifi_credentials() -> (&'static str, &'static str) {
 
 /// Statically selected controller for the bounded real-time path.
 pub type ActiveController = PassThrough;
+pub type ActiveProgram = helic_rt::StandardProgram<ActiveController>;
 
 /// Construct the controller which will be moved to core 1.
 pub fn make_controller() -> ActiveController {

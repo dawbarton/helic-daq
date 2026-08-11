@@ -25,9 +25,9 @@ use helic_fw_support::net;
 use helic_fw_support::net::cyw43::WifiParts;
 use helic_rt::params::{
     ControllerGroup, GeneratorGroup, ParamStore, PlatformGroup, RigGroup, TableGroup,
-    TelemetryGroup, PROGRAM_DOMAINS,
+    TelemetryGroup,
 };
-use helic_rt::{source_count, RecordConsumer, Rig, RtShared, MAX_SOURCES};
+use helic_rt::{Program, RecordConsumer, Rig, RtShared, StandardProgram};
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -40,8 +40,6 @@ use board::LaserParts;
 use rig::PicoDacRig;
 
 type Store = ParamStore;
-// Reject an over-large discovered source table during compilation.
-const _: () = assert!(source_count::<PicoDacRig>() <= MAX_SOURCES);
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -104,8 +102,15 @@ fn main() -> ! {
     store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, PicoDacRig::INPUTS.len())));
     store.push(RIG_GROUP.init(RigGroup::<PicoDacRig>::new()));
     store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));
-    store.validate(PROGRAM_DOMAINS);
-    helic_rt::validate_sources::<PicoDacRig>();
+    store.validate(<config::ActiveProgram as Program>::DOMAINS);
+    helic_rt::validate_sources::<PicoDacRig, config::ActiveProgram>();
+    let program = StandardProgram::new(
+        controller,
+        channels.target_active,
+        channels.forcing_active,
+        active_table,
+        &RT_SHARED,
+    );
 
     // `move` gives the RT core exclusive ownership of its hardware and state.
     spawn_core1(board.core1, CORE1_STACK.init(CoreStack::new()), move || {
@@ -113,14 +118,11 @@ fn main() -> ! {
         shared_rt::run_rt_loop(
             rig,
             tick,
-            controller,
+            program,
             config::SAMPLE_RATE,
             &RT_SHARED,
             channels.command_rx,
             channels.record_tx,
-            active_table,
-            channels.target_active,
-            channels.forcing_active,
         )
     });
 
@@ -170,7 +172,7 @@ async fn core0_main(spawner: Spawner, wifi: WifiParts, store: Store, records: Re
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
     // `!` is the never type used for a task intended to run indefinitely.
-    comms::tcp::control_run::<PicoDacRig>(stack, store).await
+    comms::tcp::control_run::<PicoDacRig, config::ActiveProgram>(stack, store).await
 }
 
 #[embassy_executor::task]

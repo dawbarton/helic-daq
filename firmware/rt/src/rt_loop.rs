@@ -5,17 +5,13 @@ use core::sync::atomic::Ordering;
 use defmt::info;
 use embassy_rp::pac;
 use heapless::spsc::Queue;
-use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
-use helic_core::phase::PhaseAccumulator;
-use helic_core::table::TablePlayer;
-use helic_core::{ActiveTable, DoubleBuffer};
+use helic_core::DoubleBuffer;
 use helic_rt::{
-    command_id, source_count, ActiveCoeffs, CommandConsumer, Payload, Record, RecordProducer, Rig,
-    RtChannels, RtCommand, RtShared, SampleRate, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN,
-    DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE, HARMONICS, MAX_SOURCES,
-    RECORD_QUEUE_LEN,
+    source_count, CommandConsumer, Payload, Program, Record, RecordProducer, Rig, RtChannels,
+    RtCommand, RtShared, SampleRate, StepCtx, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN,
+    DOMAIN_RIG, HARMONICS, MAX_SOURCES, RECORD_QUEUE_LEN,
 };
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -104,22 +100,17 @@ fn now_us() -> u32 {
 fn run_rt_tick<R: Rig>(
     rig: &mut R,
     shared: &RtShared,
-    controller: &mut R::Ctrl,
+    program: &mut impl Program,
     sample_rate: SampleRate,
     dt: f32,
     commands: &mut CommandConsumer,
     records: &mut RecordProducer,
-    lut: &SinLut,
-    phase: &mut PhaseAccumulator,
-    target_coeffs: &mut ActiveCoeffs,
-    forcing_coeffs: &mut ActiveCoeffs,
+    ctx: &StepCtx<'_>,
     command_epoch: &mut u32,
-    table_player: &mut TablePlayer,
-    active_table: &mut ActiveTable,
     index: &mut u32,
     last_tick: &mut Option<u32>,
     n_inputs: usize,
-    n_telemetry: usize,
+    n_program_signals: usize,
     n_sources: usize,
 ) {
     #[cfg(feature = "diag-skip-record-enqueue")]
@@ -163,65 +154,15 @@ fn run_rt_tick<R: Rig>(
             break;
         };
         commands_applied += 1;
-        match (command.domain, command.id, command.payload) {
-            (DOMAIN_GENERATOR, command_id::generator::SET_INCREMENT, Payload::U32(increment)) => {
-                phase.set_increment(increment)
-            }
-            (DOMAIN_GENERATOR, command_id::generator::SET_TARGET, Payload::Buffer(token)) => {
-                target_coeffs.activate(token);
-            }
-            (DOMAIN_GENERATOR, command_id::generator::SET_FORCING, Payload::Buffer(token)) => {
-                forcing_coeffs.activate(token);
-            }
-            #[cfg(feature = "diag-max-command-burst")]
-            (
-                DOMAIN_GENERATOR,
-                command_id::generator::DIAGNOSTIC_VALUES,
-                Payload::Values { len, data },
-            ) => {
-                debug_assert_eq!(len as usize, 1 + 2 * HARMONICS);
-                // Force every byte of the inline payload to materialise. This
-                // models installing a complete copied force vector without
-                // adding arithmetic that would inflate the copy WCET.
-                core::hint::black_box(data);
-            }
-            (DOMAIN_TABLE, command_id::table::SET_INCREMENT, Payload::U32(increment)) => {
-                table_player.set_increment(increment)
-            }
-            (DOMAIN_TABLE, command_id::table::SET_GAIN, Payload::F32(gain)) => {
-                table_player.set_gain(gain)
-            }
-            (DOMAIN_TABLE, command_id::table::SET_INTERPOLATION, Payload::U32(value)) => {
-                if let Some(interpolation) = helic_core::table::TableInterpolation::from_u32(value)
-                {
-                    table_player.set_interpolation(interpolation);
-                }
-            }
-            (DOMAIN_TABLE, command_id::table::SET_MODE, Payload::U32(value)) => {
-                if let Some(mode) = helic_core::table::TableMode::from_u32(value) {
-                    table_player.set_mode(mode);
-                }
-            }
-            (DOMAIN_TABLE, command_id::table::SET_MULTIPLIER, Payload::U32(multiplier)) => {
-                table_player.set_multiplier(multiplier)
-            }
-            (DOMAIN_TABLE, command_id::table::SET_PHASE, Payload::U32(offset)) => {
-                table_player.set_phase_offset(offset)
-            }
-            (DOMAIN_TABLE, command_id::table::TRIGGER, Payload::Unit) => table_player.trigger(),
-            (DOMAIN_TABLE, command_id::table::ACTIVATE, Payload::Buffer(token)) => {
-                active_table.activate(token);
-                shared
-                    .live
-                    .active_table_len
-                    .store(active_table.get().len() as u32, Ordering::Relaxed);
-            }
-            (DOMAIN_CONTROLLER, command_id::controller::RESET, Payload::Unit) => controller.reset(),
-            (DOMAIN_CONTROLLER, id, Payload::F32(value)) if id != command_id::controller::RESET => {
-                controller.set_param(id - 1, value)
-            }
-            (DOMAIN_RIG, id, Payload::F32(value)) => rig.set_param(id, value),
-            _ => {}
+        let RtCommand {
+            domain,
+            id,
+            payload,
+        } = command;
+        match (domain, payload) {
+            (DOMAIN_RIG, Payload::F32(value)) => rig.set_param(id, value),
+            (DOMAIN_RIG, _) => {}
+            (_, payload) => program.apply(domain, id, payload),
         }
     }
     if commands_applied != 0 {
@@ -243,12 +184,9 @@ fn run_rt_tick<R: Rig>(
     let m0 = now_us();
     rig.measure(&mut values[..n_inputs]);
     let measure_us = now_us().wrapping_sub(m0);
-    let (theta, period_start) = phase.step();
-    let target = target_coeffs.get().evaluate(lut, theta);
-    let forcing = forcing_coeffs.get().evaluate(lut, theta);
-    let controller_out = controller.tick(&values[..n_inputs], target, dt);
-    let table_out = table_player.step(active_table.get(), theta, period_start);
-    let out_cmd = controller_out + forcing + table_out;
+    let mut outputs = [0.0; 1];
+    program.step(&values[..n_inputs], dt, ctx, &mut outputs);
+    let out_cmd = outputs[0];
     // Hard output safety stage. For a non-gated rig this is a compile-time
     // no-op (the const is false), so the summed command is applied verbatim.
     let out = if R::SAFETY_GATED {
@@ -260,13 +198,10 @@ fn run_rt_tick<R: Rig>(
     rig.actuate(out);
     let actuate_us = now_us().wrapping_sub(a0);
 
-    controller.telemetry(&mut values[n_inputs..n_inputs + n_telemetry]);
-    let generated = n_inputs + n_telemetry;
-    values[generated] = target;
-    values[generated + 1] = forcing;
-    values[generated + 2] = table_out;
-    values[generated + 3] = out;
-    values[generated + 4] = *command_epoch as f32;
+    program.write_signals(&mut values[n_inputs..n_inputs + n_program_signals]);
+    let generated = n_inputs + n_program_signals;
+    values[generated] = out;
+    values[generated + 1] = *command_epoch as f32;
     #[cfg(feature = "diag-skip-record-enqueue")]
     let _ = &values;
 
@@ -339,26 +274,21 @@ fn run_reboot_quiesce(shared: &RtShared) -> ! {
     }
 }
 
-struct RtLoopState<R: Rig, T: TickSource> {
+struct RtLoopState<R: Rig, P: Program, T: TickSource> {
     rig: R,
+    program: P,
     shared: &'static RtShared,
     tick: T,
-    controller: R::Ctrl,
     sample_rate: SampleRate,
     dt: f32,
     commands: CommandConsumer,
     records: RecordProducer,
-    lut: &'static SinLut,
-    phase: PhaseAccumulator,
-    target_coeffs: ActiveCoeffs,
-    forcing_coeffs: ActiveCoeffs,
+    ctx: StepCtx<'static>,
     command_epoch: u32,
-    table_player: TablePlayer,
-    active_table: ActiveTable,
     index: u32,
     last_tick: Option<u32>,
     n_inputs: usize,
-    n_telemetry: usize,
+    n_program_signals: usize,
     n_sources: usize,
 }
 
@@ -366,52 +296,49 @@ struct RtLoopState<R: Rig, T: TickSource> {
 /// entering the SRAM hot loop. Keeping this boundary explicit makes it harder
 /// for future initialisation work to become reachable from a sample tick.
 #[allow(clippy::too_many_arguments)]
-pub fn run_rt_loop<R: Rig, T: TickSource>(
+pub fn run_rt_loop<R: Rig, P: Program, T: TickSource>(
     mut rig: R,
     tick: T,
-    controller: R::Ctrl,
+    program: P,
     sample_rate: SampleRate,
     shared: &'static RtShared,
     commands: CommandConsumer,
     records: RecordProducer,
-    active_table: ActiveTable,
-    target_coeffs: ActiveCoeffs,
-    forcing_coeffs: ActiveCoeffs,
 ) -> ! {
     let n_inputs = R::INPUTS.len();
-    let n_telemetry = R::Ctrl::TELEMETRY.len();
-    let n_sources = source_count::<R>();
+    let n_program_signals = P::signal_count();
+    let n_sources = source_count::<R, P>();
     assert!(n_sources <= MAX_SOURCES);
+    assert_eq!(
+        P::OUTPUTS,
+        1,
+        "scalar rig loop requires one programme output"
+    );
+    assert!(P::INPUTS_REQUIRED <= n_inputs);
 
     rig.init();
     let lut = SIN_LUT.init(SinLut::new());
     info!(
-        "core 1: SRAM RT loop running at {} Hz, {} harmonics, {} sources",
+        "core 1: SRAM RT loop running at {} Hz, {} sources",
         sample_rate.hz(),
-        HARMONICS,
         n_sources
     );
 
     run_hot_loop(RtLoopState {
         rig,
+        program,
         shared,
         tick,
-        controller,
         sample_rate,
         dt: sample_rate.dt(),
         commands,
         records,
-        lut,
-        phase: PhaseAccumulator::new(),
-        target_coeffs,
-        forcing_coeffs,
+        ctx: StepCtx { lut, sample_rate },
         command_epoch: 0,
-        table_player: TablePlayer::new(),
-        active_table,
         index: 0,
         last_tick: None,
         n_inputs,
-        n_telemetry,
+        n_program_signals,
         n_sources,
     })
 }
@@ -420,7 +347,7 @@ pub fn run_rt_loop<R: Rig, T: TickSource>(
 /// SRAM and must not use Embassy, logging, allocation, or critical sections.
 #[unsafe(link_section = ".data.ram_func")]
 #[inline(never)]
-fn run_hot_loop<R: Rig, T: TickSource>(mut state: RtLoopState<R, T>) -> ! {
+fn run_hot_loop<R: Rig, P: Program, T: TickSource>(mut state: RtLoopState<R, P, T>) -> ! {
     let mut reboot_step = 0;
     loop {
         if !state.tick.wait() {
@@ -440,22 +367,17 @@ fn run_hot_loop<R: Rig, T: TickSource>(mut state: RtLoopState<R, T>) -> ! {
         run_rt_tick::<R>(
             &mut state.rig,
             state.shared,
-            &mut state.controller,
+            &mut state.program,
             state.sample_rate,
             state.dt,
             &mut state.commands,
             &mut state.records,
-            state.lut,
-            &mut state.phase,
-            &mut state.target_coeffs,
-            &mut state.forcing_coeffs,
+            &state.ctx,
             &mut state.command_epoch,
-            &mut state.table_player,
-            &mut state.active_table,
             &mut state.index,
             &mut state.last_tick,
             state.n_inputs,
-            state.n_telemetry,
+            state.n_program_signals,
             state.n_sources,
         );
     }

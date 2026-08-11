@@ -13,7 +13,6 @@ mod groups;
 
 pub use groups::{
     ControllerGroup, GeneratorGroup, PlatformGroup, RigGroup, TableGroup, TelemetryGroup,
-    PROGRAM_DOMAINS,
 };
 
 /// Serialized size of the current standard coefficient set.
@@ -577,7 +576,7 @@ mod tests {
         ))));
         store.push(Box::leak(Box::new(RigGroup::<TestRig>::new())));
         store.push(Box::leak(Box::new(TelemetryGroup::new(EXTRAS))));
-        store.validate(PROGRAM_DOMAINS);
+        store.validate(<crate::StandardProgram<PassThrough> as crate::Program>::DOMAINS);
         (store, consumer, active_table, active_target)
     }
 

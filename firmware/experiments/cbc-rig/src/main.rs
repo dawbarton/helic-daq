@@ -35,9 +35,9 @@ use helic_fw_support::net;
 use helic_fw_support::net::wiznet::EthernetParts;
 use helic_rt::params::{
     ControllerGroup, GeneratorGroup, ParamStore, PlatformGroup, RigGroup, TableGroup,
-    TelemetryGroup, PROGRAM_DOMAINS,
+    TelemetryGroup,
 };
-use helic_rt::{source_count, RecordConsumer, Rig, RtShared, MAX_SOURCES};
+use helic_rt::{Program, RecordConsumer, Rig, RtShared, StandardProgram};
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -50,9 +50,6 @@ use board::LaserParts;
 use rig::CbcRig;
 
 type Store = ParamStore;
-// This unnamed compile-time assertion fails the build if the chosen rig and
-// controller would overflow the fixed protocol source table.
-const _: () = assert!(source_count::<CbcRig>() <= MAX_SOURCES);
 
 /// RP2350 boot image definition, required in flash for the boot ROM.
 #[unsafe(link_section = ".start_block")]
@@ -122,10 +119,17 @@ fn main() -> ! {
     store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, CbcRig::INPUTS.len())));
     store.push(RIG_GROUP.init(RigGroup::<CbcRig>::new()));
     store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));
-    store.validate(PROGRAM_DOMAINS);
-    helic_rt::validate_sources::<CbcRig>();
+    store.validate(<config::ActiveProgram as Program>::DOMAINS);
+    helic_rt::validate_sources::<CbcRig, config::ActiveProgram>();
+    let program = StandardProgram::new(
+        controller,
+        channels.target_active,
+        channels.forcing_active,
+        active_table,
+        &RT_SHARED,
+    );
 
-    // `move` transfers ownership of the analogue peripherals, controller and
+    // `move` transfers ownership of the analogue peripherals, programme and
     // queue endpoints into core 1. Core 0 cannot use them afterwards, which
     // enforces the architecture at compile time.
     // Core 1 runs the loop directly with no executor, so nothing on the core
@@ -135,14 +139,11 @@ fn main() -> ! {
         shared_rt::run_rt_loop(
             rig,
             tick,
-            controller,
+            program,
             config::SAMPLE_RATE,
             &RT_SHARED,
             channels.command_rx,
             channels.record_tx,
-            active_table,
-            channels.target_active,
-            channels.forcing_active,
         )
     });
 
@@ -197,7 +198,7 @@ async fn core0_main(spawner: Spawner, eth: EthernetParts, store: Store, records:
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
     // `-> !` is Rust's never type: a server task is expected to run forever.
-    comms::tcp::control_run::<CbcRig>(stack, store).await
+    comms::tcp::control_run::<CbcRig, config::ActiveProgram>(stack, store).await
 }
 
 /// Core 0: heartbeat LED.

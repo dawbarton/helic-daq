@@ -23,9 +23,9 @@ use helic_fw_support::net;
 use helic_fw_support::net::wiznet::EthernetParts;
 use helic_rt::params::{
     ControllerGroup, GeneratorGroup, ParamStore, PlatformGroup, RigGroup, TableGroup,
-    TelemetryGroup, PROGRAM_DOMAINS,
+    TelemetryGroup,
 };
-use helic_rt::{source_count, RecordConsumer, Rig, RtShared, MAX_SOURCES};
+use helic_rt::{Program, RecordConsumer, Rig, RtShared, StandardProgram};
 use panic_probe as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -37,7 +37,6 @@ mod telemetry;
 use rig::WhirlRig;
 
 type Store = ParamStore;
-const _: () = assert!(source_count::<WhirlRig>() <= MAX_SOURCES);
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -89,22 +88,26 @@ fn main() -> ! {
     store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, WhirlRig::INPUTS.len())));
     store.push(RIG_GROUP.init(RigGroup::<WhirlRig>::new()));
     store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));
-    store.validate(PROGRAM_DOMAINS);
-    helic_rt::validate_sources::<WhirlRig>();
+    store.validate(<config::ActiveProgram as Program>::DOMAINS);
+    helic_rt::validate_sources::<WhirlRig, config::ActiveProgram>();
+    let program = StandardProgram::new(
+        controller,
+        channels.target_active,
+        channels.forcing_active,
+        active_table,
+        &RT_SHARED,
+    );
 
     spawn_core1(b.core1, CORE1_STACK.init(CoreStack::new()), move || {
         let (rig, tick) = b.rt.build(config::SAMPLE_RATE);
         shared_rt::run_rt_loop(
             rig,
             tick,
-            controller,
+            program,
             config::SAMPLE_RATE,
             &RT_SHARED,
             channels.command_rx,
             channels.record_tx,
-            active_table,
-            channels.target_active,
-            channels.forcing_active,
         )
     });
 
@@ -137,7 +140,7 @@ async fn core0_main(spawner: Spawner, eth: EthernetParts, store: Store, records:
 
 #[embassy_executor::task]
 async fn control_task(stack: embassy_net::Stack<'static>, store: Store) -> ! {
-    comms::tcp::control_run::<WhirlRig>(stack, store).await
+    comms::tcp::control_run::<WhirlRig, config::ActiveProgram>(stack, store).await
 }
 
 #[embassy_executor::task]
