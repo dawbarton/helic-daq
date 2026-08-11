@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–8 completed 2026-08-11. Revision
-13. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–9 completed 2026-08-11. Revision
+14. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1607,7 +1607,15 @@ production rigs here and treats the crate boundary as the contract that
    phase and no timing faults, drops, loss, or gaps. The production ELFs and
    both W6100 wired variants have fresh software evidence; only the CBC W5500
    was flashed.
-9. **`RpmEstimator` moves** to `whirl-rig-program`.
+9. **Completed 2026-08-11: `RpmEstimator` moved** to the new host-testable,
+   dependency-free `whirl-rig-program` crate. Its six behavioural tests moved
+   unchanged, and `fw-whirl-rig` enables the crate's `rt-sram` feature. Release
+   inspection found no standalone estimator call target: `observe` and `tick`
+   remain inlined into the SRAM-resident whirl hot loop. All root tests, the
+   crate dependency gate, every production release ELF, the SRAM layout gate,
+   and both W6100 variants pass. No whirl hardware was attached, so this is
+   host, cross-build, and ELF evidence only; the accepted CBC W5500 image was
+   not reflashed.
 10. **`Pll` into `helic-core`** with its state machine and bounds.
 11. **Layout gate and `rt-sram` features** extended to the new hot-path symbols.
 12. **Decouple the safety and regression tooling.** `check_rt_layout.py` keys
@@ -1773,6 +1781,13 @@ wake phase is the baseline.
    Stage-10 implementation produces contrary compiler evidence.
 
 ## Revision history
+
+**Revision 14** records the single-consumer RPM estimator move. The estimator
+and its six tests now live in a dependency-free, host-testable
+`whirl-rig-program` crate rather than expanding `helic-core`'s shared API. The
+whirl firmware enables SRAM placement, and release symbol inspection confirms
+the methods inline into the existing SRAM hot loop. This is deliberately
+software-only evidence because no whirl hardware was attached.
 
 **Revision 13** records the completed capacity generalisation. Waveform table
 capacity and Fourier harmonic count are now const generics carried through the

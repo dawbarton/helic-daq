@@ -78,6 +78,7 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 |---|---|---|
 | `helic-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
 | `helic-rt/` | Portable rig/tick contracts, cross-core types and state, source assembly, and parameter registry | host + firmware (`no_std`, no Embassy) |
+| `whirl-rig-program/` | Whirl-specific portable computation, currently optical-period RPM estimation | host + firmware (`no_std`, no alloc) |
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `helic-broker/` | Loopback multi-client broker, recent history and optional HDF5 recording | host |
@@ -94,11 +95,13 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 The split exists so that **everything with logic in it can be unit-tested on
 the host** (`cargo test` at the root plus the language-specific suites in
 `host-python/`, `host-julia/`, and `host-matlab/`).
-The experiment crates are deliberately thin: pin wiring, task plumbing and
-glue. A module belongs in `helic-fw-support` only when it runs on core 0 and
-every production rig uses it; non-universal services belong in a separate
-integration crate. `tools/check_dependencies.py` enforces the critical crate
-boundaries in CI.
+The experiment crates are deliberately thin: pin wiring, task plumbing, and
+glue. Portable computation specific to one rig lives in a host-testable
+`<rig>-program` crate; an algorithm moves into `helic-core` once it has two
+actual consumers. A module belongs in `helic-fw-support` only when it runs on
+core 0 and every production rig uses it; non-universal services belong in a
+separate integration crate. `tools/check_dependencies.py` enforces the critical
+crate boundaries in CI.
 
 ## Host broker architecture
 
@@ -172,14 +175,15 @@ PWM-wrap tick and omit the ADC read.
 
 The component-ownership refactor in
 [rig_decoupling_proposal.md](rig_decoupling_proposal.md) is being implemented
-in explicit regression-gated stages. Stages 0–7 have moved the cross-core
+in explicit regression-gated stages. Stages 0–9 have moved the cross-core
 state and portable contracts into `helic-rt`, split firmware support by
 execution domain, replaced the global waveform buffers with owner-checked
 endpoints, composed component-owned parameter groups, and moved the standard
 target/forcing/controller/table graph behind the statically selected
 `Program`, and generalised the rig/program boundary to a bounded actuator
-vector. The common loop now owns timing, command dispatch, vector safety, and
-record assembly.
+vector. Table and harmonic capacities are experiment-selected const generics,
+and the single-consumer RPM estimator now lives in `whirl-rig-program`. The
+common loop owns timing, command dispatch, vector safety, and record assembly.
 
 ```
 core 1 (real-time)                       core 0 (everything else)
@@ -529,10 +533,11 @@ closest. An experiment crate has a deliberately predictable anatomy:
    substitutes for stream records.
 6. In `main.rs`, bind only owned interrupts, move the complete RT parts bundle
    to core 1, and compose the common TCP, stream, beacon, laser and RT runners.
-   Put reusable algorithms in `helic-core`, portable device logic in
-   `helic-drivers`, mandatory core-1 RP2350 mechanisms in `firmware/rt`, and
-   universal core-0 services in `firmware/support`. Put optional hardware
-   services in a focused crate under `firmware/integrations`.
+   Put algorithms with two actual consumers in `helic-core`, rig-specific
+   portable computation in a host-tested `<rig>-program` crate, portable device
+   logic in `helic-drivers`, mandatory core-1 RP2350 mechanisms in
+   `firmware/rt`, and universal core-0 services in `firmware/support`. Put
+   optional hardware services in a focused crate under `firmware/integrations`.
 
 The statically selected programme owns controller telemetry and appends it
 after rig inputs, followed by `target`, `forcing`, `table`, and coherent master

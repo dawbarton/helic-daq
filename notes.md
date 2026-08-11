@@ -738,3 +738,21 @@ evidence:
   zero target and forcing coefficients, `safety = 0b1010`, and clean timing
   counters. The laser and actuator supplies remained down, so no powered-path
   evidence was obtained.
+
+## 2026-08-11T15:19+00:00 Rig-decoupling implementation stage 9
+
+- The single-consumer `RpmEstimator` moved from `helic-core` into a new
+  dependency-free, `no_std` `whirl-rig-program` crate. Its six host tests moved
+  unchanged, preserving raw-period reporting, time-normalised EWMA, glitch
+  rejection, stale invalidation, and the 2000–6000 rpm operating range. The
+  firmware dependency enables `rt-sram`, and the CI dependency gate now pins
+  the programme crate's empty normal-dependency set.
+- All 166 root Rust tests plus four doctests pass; the six RPM tests moved from
+  the 52-test `helic-core` suite into their own crate rather than disappearing.
+  The committed source passed release firmware clippy and build, all three
+  production ELFs passed the SRAM layout gate, and both W6100 wired variants
+  cross-built. Release `nm` inspection found no standalone RPM symbol, so
+  `observe` and `tick` remain inlined into the SRAM-resident whirl hot loop.
+- No whirl hardware was attached, so Stage 9 has host, cross-build, and ELF
+  evidence only. The CBC W5500 was not reflashed and remains on accepted Stage
+  8 firmware `0.1.0 57d8de7`, disarmed and quiet. W6100 was not flashed.
