@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–7 completed 2026-08-11. Revision
-12. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–8 completed 2026-08-11. Revision
+13. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1589,14 +1589,24 @@ production rigs here and treats the crate boundary as the contract that
    and no faults, loss, drops, or gaps. Only CBC W5500 hardware was available;
    all production ELFs and both W6100 wired variants have fresh software
    evidence, but no additional physical evidence.
-8. **In progress: const generics** for `HARMONICS` and `MAX_TABLE_LEN`.
+8. **Completed 2026-08-11: const generics** for `HARMONICS` and
+   `MAX_TABLE_LEN`.
    `WaveTable<const N: usize = 4096>`, its double-buffer endpoints,
    `TablePlayer`, `TableGroup`, and `StandardProgram` now propagate a selected
    table capacity. Each production experiment owns `TABLE_CAPACITY` in
    `config.rs`; all retain 4096, so their registries and SRAM use are unchanged.
-   Host tests exercise an eight-entry table and discovery bound. Moving the
-   harmonic count into the programme, coefficient buffers, and generator group
-   remains before this stage is complete.
+   `StandardProgram<C, H, N>`, `GeneratorGroup<H>`, and their double-buffer
+   endpoints likewise propagate a selected harmonic count no greater than the
+   reviewed maximum of 16. Coefficient storage moved into each experiment;
+   all production rigs select `HARMONICS = 16`. Host tests exercise an
+   eight-entry table, a four-harmonic programme, and three-harmonic discovery.
+   Exact W5500 firmware `0.1.0 57d8de7` retained 42 parameters, 15 sources,
+   and 33-float coefficient arrays. A focused multiharmonic capture matched the
+   streamed phase to 1.39e-6 maximum absolute error with zero applied output.
+   The all-source and sustained gates measured 35–36 us with fixed 36 us wake
+   phase and no timing faults, drops, loss, or gaps. The production ELFs and
+   both W6100 wired variants have fresh software evidence; only the CBC W5500
+   was flashed.
 9. **`RpmEstimator` moves** to `whirl-rig-program`.
 10. **`Pll` into `helic-core`** with its state machine and bounds.
 11. **Layout gate and `rt-sram` features** extended to the new hot-path symbols.
@@ -1763,6 +1773,16 @@ wake phase is the baseline.
    Stage-10 implementation produces contrary compiler evidence.
 
 ## Revision history
+
+**Revision 13** records the completed capacity generalisation. Waveform table
+capacity and Fourier harmonic count are now const generics carried through the
+programme, parameter groups, and owner-checked double-buffer endpoints. Each
+experiment owns both capacity selections and their backing storage, while the
+production values remain 4096 samples and 16 harmonics. Small-capacity host
+tests prove type-level propagation and wire discovery. Exact CBC W5500 hardware
+retained its registry, reproduced a multiharmonic series from streamed phase,
+and passed both continuity gates at 35–36 us. W6100 evidence remains
+software-only.
 
 **Revision 12** records the bounded actuator and safety generalisation. Rigs
 declare actuator names, programmes fill an equal-length output prefix bounded

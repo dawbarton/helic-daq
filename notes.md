@@ -706,3 +706,35 @@ evidence:
   not flashed; the attached CBC W5500 remains on the accepted Stage 7 image
   `0.1.0 9714464`, disarmed and quiet. Harmonic-count genericity remains the
   unfinished half of Stage 8.
+
+## 2026-08-11T15:14+00:00 Rig-decoupling implementation stage 8, completed
+
+- `StandardProgram<C, H, N>`, `GeneratorGroup<H>`, and the coefficient staging
+  and active endpoints now propagate an experiment-selected harmonic count.
+  The target and forcing double-buffer statics moved from shared firmware into
+  each experiment beside its table banks, so a rig pays for its own capacity.
+  The reviewed maximum remains 16, and all three production experiments select
+  `HARMONICS = 16`; their wire registries and SRAM use are therefore unchanged.
+  Host tests exercise a four-harmonic programme, three-harmonic discovery, and
+  the earlier eight-entry table path.
+- Exact clean CBC W5500 firmware `0.1.0 57d8de7` reported protocol 3, 42
+  parameters, 15 sources, 8000 Hz, and 33-float target and forcing arrays. A
+  focused 512-record, 137 Hz multiharmonic target matched the series evaluated
+  from streamed `phase` to 1.39e-6 maximum absolute error. Constant forcing was
+  exactly 0.125 V, applied `out` remained exactly zero while disarmed, capture
+  loss and drops were zero, and safety remained `0b1010`.
+- The 8000-record all-15-source regression measured idle, TCP-poll, and capture
+  maxima of 35, 35, and 36 us. The 60000-record `adc0,out` regression measured
+  35, 36, and 35 us. Both held wake phase at 36/36 us and had zero jitter,
+  overruns, tick timeouts, source or capture drops, UDP loss, and index gaps.
+  The first automatic post-flash connection timed out; reflashing the identical
+  W5500 image under the debugger showed normal IPv4 configuration and link-up,
+  after which both acceptance runs passed.
+- Root formatting, clippy, and all 166 Rust tests plus four doctests passed.
+  The committed production firmware workspace passed release clippy, build,
+  and the SRAM layout gate; CBC and whirl W6100 variants cross-built but were
+  not flashed. Python passed 65 tests, Julia passed 89 checks, and MATLAB was
+  unavailable. Final W5500 state is `arm = 0`, `table_mode = 0`, `freq = 0`,
+  zero target and forcing coefficients, `safety = 0b1010`, and clean timing
+  counters. The laser and actuator supplies remained down, so no powered-path
+  evidence was obtained.

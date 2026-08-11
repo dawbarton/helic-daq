@@ -441,14 +441,17 @@ the `cbc-rig` defaults:
 |---|---|---|
 | Sample rate | `SAMPLE_RATE` | 8 kHz |
 | Controller | `ActiveController` + `make_controller()` | pass-through |
+| Fourier harmonics | `HARMONICS` | 16 |
+| Waveform-table capacity | `TABLE_CAPACITY` | 4096 samples |
 | Output channel | `OUTPUT_CHANNEL` | 0 |
 | Network | `NET_CONFIG` | static 192.168.1.235/24 |
 | Laser range | `LASER_RANGE_MM` | 50 mm |
 
-`HARMONICS` is a platform-wide constant in `helic-rt/src/lib.rs`, not
-an experiment setting. Changing it also changes the Fourier coefficient array
-size exposed by the protocol and must be checked against payload and real-time
-budgets.
+`HARMONICS` and `TABLE_CAPACITY` are const-generic experiment settings, so each
+rig pays for its own coefficient and table banks. The current reviewed maximum
+is 16 harmonics. Changing either value changes a wire-discovered array or blob
+bound and the rig's SRAM use; re-run the software, layout, and hardware timing
+checks before using the resulting image.
 
 ## Health monitoring
 
