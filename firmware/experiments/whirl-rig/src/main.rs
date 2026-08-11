@@ -85,11 +85,7 @@ fn main() -> ! {
         channels.forcing_staging,
         config::SAMPLE_RATE,
     )));
-    store.push(TABLE_GROUP.init(TableGroup::new(
-        &RT_SHARED,
-        table_staging,
-        config::SAMPLE_RATE,
-    )));
+    store.push(TABLE_GROUP.init(TableGroup::new(table_staging, config::SAMPLE_RATE)));
     store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, WhirlRig::INPUTS.len())));
     store.push(RIG_GROUP.init(RigGroup::<WhirlRig>::new()));
     store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));

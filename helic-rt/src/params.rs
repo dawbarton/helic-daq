@@ -173,11 +173,6 @@ pub trait ParamGroup {
     /// [`reject`](Self::reject) when staging itself fails.
     fn stage(&mut self, id: u16, data: &[u8]) -> Result<Staged, ErrorCode>;
 
-    /// Map the group-local registry id to its component-local command id.
-    fn command_id(&self, id: u16) -> u16 {
-        id
-    }
-
     fn accept(&mut self, id: u16);
     fn reject(&mut self, id: u16, returned: Option<Payload>);
 
@@ -389,7 +384,7 @@ impl ParamStore {
                 };
                 let command = RtCommand {
                     domain,
-                    id: self.entries[group].group.command_id(id),
+                    id,
                     payload,
                 };
                 match self.commands.enqueue(command) {
@@ -505,7 +500,7 @@ mod tests {
     use std::boxed::Box;
 
     use heapless::spsc::Queue;
-    use helic_core::controller::PassThrough;
+    use helic_core::controller::{Controller, PassThrough};
     use helic_core::generator::FourierCoeffs;
     use helic_core::{DoubleBuffer, TableBuffer};
 
@@ -573,7 +568,6 @@ mod tests {
             SampleRate::Hz8000,
         ))));
         store.push(Box::leak(Box::new(TableGroup::new(
-            shared,
             table,
             SampleRate::Hz8000,
         ))));
@@ -654,6 +648,70 @@ mod tests {
         let mut out = [0; 4];
         store.get(frequency, &mut out).unwrap();
         assert_eq!(f32::from_le_bytes(out), 20.0);
+    }
+
+    #[test]
+    fn table_group_local_ids_are_wire_command_ids() {
+        let (mut store, mut commands, _table, _target) = store();
+        let frequency = index(&store, "table_freq");
+        store.set(frequency, &20.0_f32.to_le_bytes()).unwrap();
+        assert!(matches!(
+            commands.dequeue(),
+            Some(RtCommand {
+                domain: crate::DOMAIN_TABLE,
+                id: crate::command_id::table::SET_INCREMENT,
+                payload: Payload::U32(_),
+            })
+        ));
+    }
+
+    struct AdjustableController;
+
+    impl Controller for AdjustableController {
+        fn tick(&mut self, _inputs: &[f32], reference: f32, _dt: f32) -> f32 {
+            reference
+        }
+
+        fn param_names() -> &'static [&'static str] {
+            &["adjustment"]
+        }
+
+        fn param_value(&self, id: u16) -> Option<f32> {
+            (id == 0).then_some(1.0)
+        }
+    }
+
+    #[test]
+    fn controller_group_local_ids_are_wire_command_ids() {
+        let queue = Box::leak(Box::new(Queue::<RtCommand, COMMAND_QUEUE_LEN>::new()));
+        let (producer, mut consumer) = queue.split();
+        let shared = Box::leak(Box::new(RtShared::new()));
+        let mut store = ParamStore::new(producer, shared, SampleRate::Hz8000);
+        store.push(Box::leak(Box::new(ControllerGroup::new(
+            &AdjustableController,
+            1,
+        ))));
+        store.validate(&[crate::DOMAIN_CONTROLLER]);
+
+        store.set(0, &1_u32.to_le_bytes()).unwrap();
+        assert!(matches!(
+            consumer.dequeue(),
+            Some(RtCommand {
+                domain: crate::DOMAIN_CONTROLLER,
+                id: crate::command_id::controller::RESET,
+                payload: Payload::Unit,
+            })
+        ));
+
+        store.set(1, &2.0_f32.to_le_bytes()).unwrap();
+        assert!(matches!(
+            consumer.dequeue(),
+            Some(RtCommand {
+                domain: crate::DOMAIN_CONTROLLER,
+                id: 1,
+                payload: Payload::F32(2.0),
+            })
+        ));
     }
 
     #[test]

@@ -16,8 +16,8 @@ use super::{
     MAX_CTRL_PARAMS, MAX_EXTRA_PARAMS, MAX_RIG_PARAMS,
 };
 use crate::{
-    command_id, CoeffStaging, Payload, Rig, RtShared, SampleRate, DOMAIN_CONTROLLER,
-    DOMAIN_GENERATOR, DOMAIN_TABLE, HARMONICS,
+    CoeffStaging, Payload, Rig, RtShared, SampleRate, DOMAIN_CONTROLLER, DOMAIN_GENERATOR,
+    DOMAIN_TABLE, HARMONICS,
 };
 
 const PLATFORM_PARAMS: &[ParamDef] = &[
@@ -41,11 +41,13 @@ const PLATFORM_PARAMS: &[ParamDef] = &[
     ParamDef::writable("arm", ParamType::U32, 1),
     ParamDef::read_only("safety", ParamType::U32, 1),
     ParamDef::writable("mcu_reboot", ParamType::U32, 1),
+    ParamDef::read_only("table_len", ParamType::U16, 1),
 ];
 
 const PLATFORM_DIAG_RESET: u16 = 15;
 const PLATFORM_ARM: u16 = 17;
 const PLATFORM_MCU_REBOOT: u16 = 19;
+const PLATFORM_TABLE_LEN: u16 = 20;
 
 #[derive(Clone, Copy)]
 enum PlatformPending {
@@ -173,6 +175,9 @@ impl ParamGroup for PlatformGroup {
             ),
             PLATFORM_ARM => write_u32(out, self.shared.safety.load_inputs().armed as u32),
             18 => write_u32(out, self.shared.safety.flags(&self.shared.diagnostics)),
+            PLATFORM_TABLE_LEN => out.copy_from_slice(
+                &(self.shared.live.active_table_len.load(Ordering::Relaxed) as u16).to_le_bytes(),
+            ),
             _ => return Err(ErrorCode::BadIndex),
         }
         Ok(size)
@@ -340,7 +345,6 @@ const TABLE_PARAMS: &[ParamDef] = &[
         MAX_TABLE_LEN as u16,
         MAX_TABLE_LEN as u32,
     ),
-    ParamDef::read_only("table_len", ParamType::U16, 1),
     ParamDef::writable("table_freq", ParamType::F32, 1),
     ParamDef::writable("table_gain", ParamType::F32, 1),
     ParamDef::writable("table_interp", ParamType::U32, 1),
@@ -363,7 +367,6 @@ enum TablePending {
 
 /// Waveform-table upload state and scalar playback shadow.
 pub struct TableGroup {
-    shared: &'static RtShared,
     staging: TableStaging,
     sample_rate: SampleRate,
     frequency: f32,
@@ -376,13 +379,8 @@ pub struct TableGroup {
 }
 
 impl TableGroup {
-    pub const fn new(
-        shared: &'static RtShared,
-        staging: TableStaging,
-        sample_rate: SampleRate,
-    ) -> Self {
+    pub const fn new(staging: TableStaging, sample_rate: SampleRate) -> Self {
         Self {
-            shared,
             staging,
             sample_rate,
             frequency: 0.0,
@@ -410,16 +408,13 @@ impl ParamGroup for TableGroup {
         let out = &mut out[..size];
         match id {
             0 => return Err(ErrorCode::BadLength),
-            1 => out.copy_from_slice(
-                &(self.shared.live.active_table_len.load(Ordering::Relaxed) as u16).to_le_bytes(),
-            ),
-            2 => out.copy_from_slice(&self.frequency.to_le_bytes()),
-            3 => out.copy_from_slice(&self.gain.to_le_bytes()),
-            4 => write_u32(out, self.interpolation),
-            5 => write_u32(out, self.mode),
-            6 => write_u32(out, self.multiplier),
-            7 => out.copy_from_slice(&self.phase.to_le_bytes()),
-            8 => write_u32(out, 0),
+            1 => out.copy_from_slice(&self.frequency.to_le_bytes()),
+            2 => out.copy_from_slice(&self.gain.to_le_bytes()),
+            3 => write_u32(out, self.interpolation),
+            4 => write_u32(out, self.mode),
+            5 => write_u32(out, self.multiplier),
+            6 => out.copy_from_slice(&self.phase.to_le_bytes()),
+            7 => write_u32(out, 0),
             _ => return Err(ErrorCode::BadIndex),
         }
         Ok(size)
@@ -428,7 +423,7 @@ impl ParamGroup for TableGroup {
     fn stage(&mut self, id: u16, data: &[u8]) -> Result<Staged, ErrorCode> {
         match id {
             0 => Err(ErrorCode::BadLength),
-            2 => {
+            1 => {
                 let frequency = read_f32(data)?;
                 if !(0.0..self.sample_rate.hz() / 2.0).contains(&frequency) {
                     return Err(ErrorCode::BadValue);
@@ -439,7 +434,7 @@ impl ParamGroup for TableGroup {
                     self.sample_rate.hz() as f64,
                 ))))
             }
-            3 => {
+            2 => {
                 let gain = read_f32(data)?;
                 if !gain.is_finite() {
                     return Err(ErrorCode::BadValue);
@@ -447,19 +442,19 @@ impl ParamGroup for TableGroup {
                 self.pending = TablePending::Gain(gain);
                 Ok(Staged::Rt(Payload::F32(gain)))
             }
-            4 => {
+            3 => {
                 let interpolation = read_u32(data)?;
                 TableInterpolation::from_u32(interpolation).ok_or(ErrorCode::BadValue)?;
                 self.pending = TablePending::Interpolation(interpolation);
                 Ok(Staged::Rt(Payload::U32(interpolation)))
             }
-            5 => {
+            4 => {
                 let mode = read_u32(data)?;
                 TableMode::from_u32(mode).ok_or(ErrorCode::BadValue)?;
                 self.pending = TablePending::Mode(mode);
                 Ok(Staged::Rt(Payload::U32(mode)))
             }
-            6 => {
+            5 => {
                 let multiplier = read_u32(data)?;
                 if multiplier == 0 {
                     return Err(ErrorCode::BadValue);
@@ -467,7 +462,7 @@ impl ParamGroup for TableGroup {
                 self.pending = TablePending::Multiplier(multiplier);
                 Ok(Staged::Rt(Payload::U32(multiplier)))
             }
-            7 => {
+            6 => {
                 let phase = read_f32(data)?;
                 if !(0.0..1.0).contains(&phase) {
                     return Err(ErrorCode::BadValue);
@@ -477,7 +472,7 @@ impl ParamGroup for TableGroup {
                     (phase as f64 * 4_294_967_296.0) as u32,
                 )))
             }
-            8 => {
+            7 => {
                 if read_u32(data)? == 0 {
                     Ok(Staged::Local(ParamAction::None))
                 } else {
@@ -485,20 +480,6 @@ impl ParamGroup for TableGroup {
                 }
             }
             _ => Err(ErrorCode::BadIndex),
-        }
-    }
-
-    fn command_id(&self, id: u16) -> u16 {
-        match id {
-            0 => command_id::table::ACTIVATE,
-            2 => command_id::table::SET_INCREMENT,
-            3 => command_id::table::SET_GAIN,
-            4 => command_id::table::SET_INTERPOLATION,
-            5 => command_id::table::SET_MODE,
-            6 => command_id::table::SET_MULTIPLIER,
-            7 => command_id::table::SET_PHASE,
-            8 => command_id::table::TRIGGER,
-            _ => id,
         }
     }
 
@@ -775,14 +756,6 @@ impl<C: Controller> ParamGroup for ControllerGroup<C> {
             .ok_or(ErrorCode::BadValue)?;
         self.pending = Some((id as usize, value));
         Ok(Staged::Rt(Payload::F32(value)))
-    }
-
-    fn command_id(&self, id: u16) -> u16 {
-        if id == 0 {
-            command_id::controller::RESET
-        } else {
-            id - 1
-        }
     }
 
     fn accept(&mut self, _id: u16) {

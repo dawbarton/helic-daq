@@ -217,7 +217,9 @@ fn run_rt_tick<R: Rig>(
                     .store(active_table.get().len() as u32, Ordering::Relaxed);
             }
             (DOMAIN_CONTROLLER, command_id::controller::RESET, Payload::Unit) => controller.reset(),
-            (DOMAIN_CONTROLLER, id, Payload::F32(value)) => controller.set_param(id, value),
+            (DOMAIN_CONTROLLER, id, Payload::F32(value)) if id != command_id::controller::RESET => {
+                controller.set_param(id - 1, value)
+            }
             (DOMAIN_RIG, id, Payload::F32(value)) => rig.set_param(id, value),
             _ => {}
         }

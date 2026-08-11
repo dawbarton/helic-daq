@@ -50,9 +50,10 @@ pub mod command_id {
     }
 
     pub mod controller {
-        /// Controller parameter identifiers occupy their natural `u16` range;
-        /// reset therefore uses the otherwise unreachable terminal value.
-        pub const RESET: u16 = u16::MAX;
+        /// Reset is the controller group's first parameter. Controller-specific
+        /// parameters follow it and are translated to zero-based trait ids by
+        /// the programme's core-1 adapter.
+        pub const RESET: u16 = 0;
     }
 }
 
