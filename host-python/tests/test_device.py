@@ -162,13 +162,13 @@ class TestDevice(unittest.TestCase):
         status = self.dev.status()
         self.assertEqual(status["sample_rate"], 8000.0)
         self.assertEqual(status["n_params"], len(self.sim.params))
-        self.assertEqual(status["n_sources"], 14)
+        self.assertEqual(status["n_sources"], 15)
         self.assertGreaterEqual(status["uptime_s"], 0.0)
 
     def test_stream_setup_and_start(self):
         names = self.dev.stream_setup(["adc0", "out"], decimation=4, count=0)
         self.assertEqual(names, ["adc0", "out"])
-        self.assertEqual(self.sim.stream_setup, (4, 0, [0, 12]))
+        self.assertEqual(self.sim.stream_setup, (4, 0, [0, 13]))
         self.dev.stream_start(2351)
         self.assertEqual(self.sim.stream_target, ("127.0.0.1", 2351))
         self.dev.stream_stop()
@@ -182,6 +182,10 @@ class TestDevice(unittest.TestCase):
 
     def test_source_discovery(self):
         self.assertEqual((self.dev.sources[8].name, self.dev.sources[8].unit), ("laser", "mm"))
+        self.assertEqual(
+            (self.dev.sources[12].name, self.dev.sources[12].unit),
+            ("phase", "turn"),
+        )
         self.assertEqual(
             (self.dev.sources[-1].name, self.dev.sources[-1].unit),
             ("cmd_epoch", "count"),

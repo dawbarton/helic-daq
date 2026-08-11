@@ -61,6 +61,18 @@ class TestSimulator(unittest.TestCase):
         self.assertGreater(np.ptp(data["forcing"]), 0.1)
         np.testing.assert_allclose(data["forcing"], data["out"], atol=1e-6)
 
+    def test_phase_is_coherent_with_generated_signals(self):
+        coefficients = [0.0] * 33
+        coefficients[17] = 1.0
+        self.dev.set("freq", 1000.0)
+        self.dev.set("forcing_coeffs", coefficients)
+        data = self.dev.capture(["phase", "forcing"], samples=16, port=0)
+        np.testing.assert_allclose(
+            data["forcing"],
+            np.sin(2.0 * np.pi * data["phase"]),
+            atol=1e-6,
+        )
+
     def test_command_epoch_tracks_rt_commands_and_wraps_exactly(self):
         initial = self.dev.capture(["cmd_epoch"], samples=1, port=0)
         self.assertEqual(initial["cmd_epoch"][0], 0.0)

@@ -95,6 +95,7 @@ def default_sources() -> list[tuple[str, str]]:
         ("target", "V"),
         ("forcing", "V"),
         ("table", "V"),
+        ("phase", "turn"),
         ("out", "V"),
         ("cmd_epoch", "count"),
     ]
@@ -505,11 +506,12 @@ class Simulator:
             forcing = self._fourier(self._by_name["forcing_coeffs"].value, theta)
             table = self._table_value(t)
             out = target + forcing + table
+            phase = (self._by_name["freq"].value * t) % 1.0
             inputs = [out + rng.gauss(0.0, self.noise) for _ in range(8)]
             laser = 25.0 + 0.1 * math.sin(theta) + rng.gauss(0.0, self.noise)
             self._by_name["laser"].value = laser
             command_epoch = self._cmd_epoch
-        return inputs + [laser, target, forcing, table, out, float(command_epoch)]
+        return inputs + [laser, target, forcing, table, phase, out, float(command_epoch)]
 
     def _stream(self, generation: int) -> None:
         with self._lock:

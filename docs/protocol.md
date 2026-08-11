@@ -233,8 +233,9 @@ GetSources returns the source table. A source id is its zero-based position
 in this table. The table is assembled as:
 
 1. experiment inputs;
-2. controller telemetry;
-3. `target`, `forcing`, `table`, and `out`, all in volts;
+2. programme signals: controller telemetry, then `target`, `forcing`, and
+   `table` in volts, and `phase` in turns for the standard programme;
+3. applied output `out`, in volts;
 4. `cmd_epoch`, in counts.
 
 Names are unique ASCII strings of at most 15 bytes; units are at most 7
@@ -251,6 +252,12 @@ Operations that do not enter the command queue, including `SetBlock` and
 `diag_reset`, do not advance it; a table `Commit` does. Decimation or record
 loss can bound an update between observed records but cannot recover an
 omitted effective sample index.
+
+`phase` is the master phase used to produce that record's target, forcing, and
+locked-table values. It is a `u32` turn accumulator converted to `f32`; the
+worst-case absolute conversion error is 2⁻²⁵ turn. Hosts must use this source
+rather than reconstructing phase from sample indices when frequency commands
+can take effect at an unknown sample boundary.
 
 ## Stream channel (UDP :2351)
 

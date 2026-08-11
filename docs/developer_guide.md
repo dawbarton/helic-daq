@@ -357,7 +357,7 @@ tick; a non-zero maximum is not a timing failure, but persistent `Busy` replies
 or a maximum near the queue capacity indicates an undersized control path.
 
 **3. Streaming-heavy check** (when the change touches records, streaming or
-the network): capture all 14 sources for 8000 records and `adc0,out` for
+the network): capture all 15 sources for 8000 records and `adc0,out` for
 60000 records:
 
 ```sh
@@ -523,8 +523,9 @@ closest. An experiment crate has a deliberately predictable anatomy:
    universal core-0 services in `firmware/support`. Put optional hardware
    services in a focused crate under `firmware/integrations`.
 
-Controller telemetry is appended after rig inputs, and the common loop then
-appends `target`, `forcing`, `table`, `out` and `cmd_epoch`; no experiment
+The statically selected programme owns controller telemetry and appends it
+after rig inputs, followed by `target`, `forcing`, `table`, and coherent master
+`phase`; the common loop then appends `out` and `cmd_epoch`. No experiment
 assigns those indices. The streamed `out` is the **applied** command — for a
 safety-gated rig this is after the clamp/quiet stage, not the raw sum. Fourier
 and table parameters also arrive automatically through the common registry, as
@@ -618,10 +619,10 @@ mode, then record:
 helic-daq get loop_time_last loop_time_max overruns tick_timeouts records_dropped
 helic-daq sources
 helic-daq capture \
-  --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,target,forcing,table,out,cmd_epoch \
+  --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,target,forcing,table,phase,out,cmd_epoch \
   --seconds 30
 helic-daq --host 192.168.1.238 capture \
-  --sources pitch,yaw,rev_period,rpm,rev_pulse,rpm_valid,target,forcing,table,out,cmd_epoch \
+  --sources pitch,yaw,rev_period,rpm,rev_pulse,rpm_valid,target,forcing,table,phase,out,cmd_epoch \
   --seconds 30
 ```
 
@@ -648,11 +649,12 @@ experiment merely to make it look used.
 ### Adding a stream source
 
 Experiment inputs are declared by `Rig::INPUTS`; write their values in the
-same order from `Rig::measure`. Controller-internal signals are declared by
-`Controller::TELEMETRY` and filled by `telemetry`. The common loop appends
-`target`, `forcing`, `table`, `out` and the wrapping `cmd_epoch`, so neither
-rigs nor controllers manage numeric slots. Protocol-v3 source discovery
-exposes this assembled table to the host at every connection.
+same order from `Rig::measure`. `Program::signal` declares programme-owned
+signals, and `write_signals` fills them; `StandardProgram` prepends controller
+telemetry, then `target`, `forcing`, `table`, and master `phase`. The common
+loop appends applied `out` and the wrapping `cmd_epoch`, so neither rigs nor
+programmes manage global numeric slots. Protocol-v3 source discovery exposes
+this assembled table to the host at every connection.
 
 ## Hardware bring-up notes
 

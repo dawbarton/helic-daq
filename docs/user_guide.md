@@ -337,6 +337,11 @@ The raw `mcu_reboot` parameter accepts only `0x52454254`. This conspicuous
 value prevents casual or mistyped writes, but it is not authentication. The
 control service should only be reachable on a trusted laboratory network.
 
+The standard programme exposes `phase`, in turns, as the exact master phase
+used for each record. Use it for host-side demodulation when frequency may
+change; integrating a requested frequency from sample indices cannot recover
+the boundary at which a queued update took effect.
+
 Every experiment also exposes the `cmd_epoch` stream source. It starts at zero
 and increments once for each queued parameter command applied by the real-time
 core. The first full-rate record with a changed epoch is therefore the first
