@@ -81,13 +81,15 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `helic-broker/` | Loopback multi-client broker, recent history and optional HDF5 recording | host |
+| `firmware/build/` | Build-script helpers shared by every application: build identity and the RP2350 linker layout | host only (build dependency) |
 | `firmware/rt/` | Mandatory core-1 RP2350 mechanisms; no executor, time, network or core-0 support dependency | `thumbv8m.main-none-eabihf` only |
 | `firmware/support/` | Universal core-0 communication, network, identity, status and watchdog services | `thumbv8m.main-none-eabihf` only |
 | `firmware/integrations/optoncdt/` | Optional optoNCDT UART integration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/whirl-rig/` | Dual RMB20 SSI encoders, optical period capture and a dependency-free RPM library target | host library + `thumbv8m.main-none-eabihf` firmware |
 | `firmware/experiments/pico2w-rig/` | Pico 2W Wi-Fi signal generator, DAC and laser logger | `thumbv8m.main-none-eabihf` only |
-| `host-python/` | Python package `helic_daq` + `helic-daq` CLI | host |
+| `host-python/` | Python package `helic_daq` + `helic-daq` CLI, and the `helic_daq.verify` rig gates installed by out-of-tree rigs | host |
+| `tests/external-rig/` | Independent workspace proving out-of-workspace composition, with one real-time-only and one core-0 firmware member | host tests + `thumbv8m.main-none-eabihf` |
 | `host-julia/` | Julia package `HelicDAQ` + Tables.jl capture interface | host |
 | `host-matlab/` | MATLAB package `helicdaq` + native table capture interface | host |
 
@@ -377,13 +379,19 @@ one profile because the control service is single-client and hardware runs must
 remain sequential.
 
 The independent [external-rig fixture](../tests/external-rig/README.md) is the
-repository-boundary acceptance test. It owns a programme, firmware workspace,
-lockfile, verification profile, and dependency policy, and CI builds and tests
-it separately from both HELIC-DAQ Cargo workspaces. Its exact `=0.1.0`
-dependencies are locally patched to this checkout until the shared crates are
-published; removing that patch is the release-consumer test. The mocked
-regression proves tool composition only, and cannot replace physical validation
-when a rig is promoted to production support.
+repository-boundary acceptance test. It owns a programme, controller, two
+firmware members, a lockfile, verification profiles, and a dependency policy,
+and CI builds and tests it separately from both HELIC-DAQ Cargo workspaces. The
+two members cover opposite halves of the platform on purpose: `fw-fixture-rig`
+links no `helic-fw-support`, proving the real-time platform stands alone, while
+`fw-fixture-service-rig` composes the core-0 services every production rig uses.
+Keep both. The first cannot see defects in the half it excludes, which is how a
+rig-owned identity defect survived in `helic-fw-support` until an out-of-tree
+rig was actually planned. Its exact `=0.1.0` dependencies are locally patched to
+this checkout until the shared crates are published; removing that patch is the
+release-consumer test. The mocked regression proves tool composition only, and
+cannot replace physical validation when a rig is promoted to production
+support.
 
 **2. Hardware check — production regression** (device + probe attached, one
 sequential client). Run from `firmware/`: like the layout checker, the runner
@@ -591,6 +599,164 @@ through the common registry, as do the `arm` (writable) and `safety` (read-only
 bitfield) safety params. Logic must remain in a host-testable crate: an
 experiment that grows algorithms rather than pin glue is the signal to move
 code out.
+
+### Adding a rig in its own repository
+
+Everything above assumes the rig lives under `firmware/experiments/`. A rig may
+instead be maintained in its own repository, which is worth doing when its
+maintainers should not have write access here, or when the rig needs to pin a
+platform version and upgrade deliberately rather than track `main`. The crate
+boundary is the contract that permits this; `tests/external-rig` is the
+acceptance fixture that keeps it working, and is the worked example to copy.
+
+Nothing is vendored. The shared crates are consumed as dependencies, so the
+only files a rig repository duplicates are its own configuration.
+
+#### What the rig repository owns
+
+| File | Purpose |
+|---|---|
+| `Cargo.toml` | Workspace root, with `[workspace.dependencies]` pinning the platform crates and the Embassy versions |
+| `Cargo.lock` | Committed; the rig owns its resolution |
+| `.cargo/config.toml` | `thumbv8m.main-none-eabihf` target, `probe-rs` runner, `--nmagic`/`link.x`/`defmt.x` link args, `DEFMT_LOG` |
+| `rust-toolchain.toml` | Toolchain channel, `rustfmt`/`clippy`, and the ARM target |
+| `build.rs` | Two calls into `helic-fw-build` (see below) |
+| `rig-profile.toml` | Static and hardware verification contract, exactly as an in-tree experiment owns one |
+| `dependency-policy.toml` | The rig's own crate-layering rules for `helic-deps-check` |
+| CI workflow | The gates listed below |
+
+The rig does **not** own `memory.x`, build identity logic, or copies of the
+verification tools. All three come from the platform.
+
+#### Pinning the shared crates
+
+The crates are not published, so pin them by git revision or tag. Cargo locates
+packages anywhere in the repository, including `firmware/rt` and
+`firmware/support`, which are outside the root workspace:
+
+```toml
+[workspace.dependencies]
+helic-core = { git = "https://github.com/dawbarton/helic-daq", tag = "v0.1.0" }
+helic-rt = { git = "https://github.com/dawbarton/helic-daq", tag = "v0.1.0" }
+helic-drivers = { git = "https://github.com/dawbarton/helic-daq", tag = "v0.1.0" }
+helic-fw-build = { git = "https://github.com/dawbarton/helic-daq", tag = "v0.1.0" }
+helic-fw-rt = { git = "https://github.com/dawbarton/helic-daq", tag = "v0.1.0", features = ["rt-sram"] }
+helic-fw-support = { git = "https://github.com/dawbarton/helic-daq", tag = "v0.1.0", default-features = false }
+```
+
+Take only the crates the rig uses: `helic-core`, `helic-rt` and `helic-fw-rt`
+are the mandatory real-time set, `helic-fw-support` adds the core-0 services,
+`helic-drivers` supplies portable device logic, and `helic-fw-build` is a build
+dependency. `helic-proto` is pulled in transitively and is only needed
+directly by a rig that touches the wire format.
+
+Pin a **tag**, not a branch. Upgrading is then a deliberate edit, which is the
+main reason to keep a rig in its own repository at all. Treat signature
+changes, non-defaulted trait additions, wire-visible name or semantic changes
+and capacity changes as major-version changes; additive types and defaulted
+trait methods are minor.
+
+`tests/external-rig` instead declares exact `=0.1.0` versions with a
+`[patch.crates-io]` table pointing at this checkout. That is a pre-publication
+substitution which lets the fixture exercise versioned consumer declarations
+before the crates are released; it is not a pattern for a real rig, and it is
+not evidence that anything has been published. If a rig ever needs a platform
+change it cannot wait for, a temporary `[patch]` is the honest mechanism, but
+record why and remove it once the change lands upstream: a patched fork that
+outlives its reason is how these arrangements silently diverge.
+
+#### Embassy versions must match the platform
+
+This is the one pin that fails confusingly rather than cleanly. `embassy-rp`
+types cross the crate boundary in both directions: `Peri<'_, T>`, `Pio`,
+`Stack<'static>`, `Spi`, the peripherals a board map hands out, and the handlers
+named in `bind_interrupts!`. If the rig resolves a different `embassy-rp`,
+`embassy-net`, `embassy-executor`, `embassy-sync` or `embassy-time` from the one
+`helic-fw-rt` and `helic-fw-support` were built against, the result is a wall of
+type mismatches on identically named types, not a version error. Copy the
+versions and feature sets from `firmware/Cargo.toml` for the tag being pinned,
+and re-check them at every platform upgrade.
+
+#### Build script
+
+```rust
+fn main() {
+    helic_fw_build::emit_identity();
+    helic_fw_build::emit_memory_x();
+}
+```
+
+`emit_identity` finds the repository containing the calling crate and exports
+`HELIC_GIT_DESCRIBE` and `HELIC_FIRMWARE_ID` from **the rig's** package version
+and revision. `emit_memory_x` puts the shared 2 MiB-flash RP2350 layout on the
+linker search path; a board with a different flash size keeps its own
+`memory.x`, copies it in the build script, and does not call this.
+
+In `main.rs`, materialise the identity in the application crate and thread it
+through the services that publish it:
+
+```rust
+const IDENTITY: Identity = helic_fw_support::firmware_identity!();
+```
+
+Pass `IDENTITY.version` to `PlatformGroup::new` and `beacon_task`. Do not
+reintroduce a platform constant for this: expanded in the application, every
+value describes the rig and its repository, which is the whole point. A rig
+that skips the build script gets a compile error rather than a wrong identity.
+
+#### Feature plumbing
+
+Two feature paths cross the boundary and are easy to get subtly wrong:
+
+- **Network backend.** The rig's `board-w5500`/`board-w6100` features must
+  forward to `helic-fw-support/net-wiznet-w5500` or `net-wiznet-w6100`, with
+  `default-features = false` on `helic-fw-support` so the wired default does
+  not fight the selection. Wi-Fi rigs select `net-cyw43` instead.
+- **SRAM placement.** The portable crates must not name an embedded linker
+  section in host builds, so `rt-sram` is enabled centrally through
+  `helic-fw-rt`, which forwards it to `helic-core`, `helic-drivers` and
+  `helic-rt`. A rig enables it via its board features, exactly as the in-tree
+  experiments do. A rig-local library target tested on the host must leave it
+  off.
+
+#### Verification
+
+Install the tools from the host package and run the gates. They resolve
+defaults from the current directory, so none of them needs to know where the
+platform checkout is, and none of them is edited or copied:
+
+```sh
+pip install "helic-daq @ git+https://github.com/dawbarton/helic-daq@v0.1.0"
+
+cargo fmt --all -- --check
+cargo clippy --release --workspace -- -D warnings
+cargo test -p <rig>-program --target x86_64-unknown-linux-gnu   # host-testable computation
+cargo build --release --workspace
+helic-deps-check --policy dependency-policy.toml
+helic-rt-layout --profile rig-profile.toml \
+  --elf-dir target/thumbv8m.main-none-eabihf/release
+helic-rt-regression --profile rig-profile.toml --firmware-dir .   # hardware
+```
+
+Pin the tool version to the same tag as the crates: a gate from a different
+platform version checks the wrong contract. The layout checker is a minimum
+named-symbol guard rather than a call-graph proof, so a rig still inspects new
+compiler-generated calls after material tick-path changes, and the regression
+runner still requires real hardware and a sequential client.
+
+#### What the platform no longer checks for you
+
+An in-tree rig is rebuilt and layout-gated by this repository's CI on every
+platform change. An out-of-tree rig is not: a shared-crate change that pushes
+its hot path out of SRAM, or breaks its composition, surfaces only when the rig
+next builds. That is the cost of the split, and it is the reason
+`tests/external-rig` carries both a real-time-only and a core-0 member, so the
+platform keeps testing both halves of its own surface regardless of who
+maintains which rig.
+
+A rig repository should add a scheduled CI job building against the platform's
+`main` in addition to its pinned tag. Drift then surfaces within a day, as a
+failure in the rig's own CI, rather than at the start of the next bring-up.
 
 #### Output safety gate
 
