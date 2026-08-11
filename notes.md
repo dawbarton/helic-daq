@@ -687,3 +687,22 @@ evidence:
   `arm = 0`, `table_mode = 0`, `freq = 0`, zero target/forcing coefficients,
   `safety = 0b1010`, and clean timing counters. The laser and actuator supplies
   remained down, so no powered-path evidence was obtained.
+
+## 2026-08-11T15:00+00:00 Rig-decoupling implementation stage 8, in progress
+
+- `WaveTable<const N: usize = 4096>` now owns capacity at the type level;
+  `TableBuffer`, `ActiveTable`, and `TablePlayer` propagate it. Construction
+  rejects capacities outside the table's two-to-`u16::MAX` representable
+  range. Eight-entry host tests cover maximum upload length, block boundaries,
+  active length, interpolation, and playback.
+- `StandardProgram<C, N>` and `TableGroup<N>` carry the same capacity through
+  core-1 playback and wire discovery. A host test proves an eight-entry group
+  advertises `count = maximum = 8`. CBC, whirl, and Pico 2W now each select
+  `TABLE_CAPACITY = 4096` in `config.rs`, preserving the current registry and
+  memory layout while allowing a separately composed rig to select less.
+- Root tests and clippy passed, including 58 `helic-core` and 37 `helic-rt`
+  tests. The complete release firmware workspace passed clippy and build, and
+  all three production ELFs passed the SRAM layout gate. This partial stage was
+  not flashed; the attached CBC W5500 remains on the accepted Stage 7 image
+  `0.1.0 9714464`, disarmed and quiet. Harmonic-count genericity remains the
+  unfinished half of Stage 8.

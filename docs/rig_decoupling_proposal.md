@@ -1589,7 +1589,14 @@ production rigs here and treats the crate boundary as the contract that
    and no faults, loss, drops, or gaps. Only CBC W5500 hardware was available;
    all production ELFs and both W6100 wired variants have fresh software
    evidence, but no additional physical evidence.
-8. **Const generics** for `HARMONICS` and `MAX_TABLE_LEN`.
+8. **In progress: const generics** for `HARMONICS` and `MAX_TABLE_LEN`.
+   `WaveTable<const N: usize = 4096>`, its double-buffer endpoints,
+   `TablePlayer`, `TableGroup`, and `StandardProgram` now propagate a selected
+   table capacity. Each production experiment owns `TABLE_CAPACITY` in
+   `config.rs`; all retain 4096, so their registries and SRAM use are unchanged.
+   Host tests exercise an eight-entry table and discovery bound. Moving the
+   harmonic count into the programme, coefficient buffers, and generator group
+   remains before this stage is complete.
 9. **`RpmEstimator` moves** to `whirl-rig-program`.
 10. **`Pll` into `helic-core`** with its state machine and bounds.
 11. **Layout gate and `rt-sram` features** extended to the new hot-path symbols.
