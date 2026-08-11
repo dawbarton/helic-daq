@@ -512,9 +512,10 @@ closest. An experiment crate has a deliberately predictable anatomy:
    alias/factory and rig-specific constants. Experiment names, parameter names
    and source names must fit their protocol limits.
 4. In `rig.rs`, assemble core-1 parts and implement `Rig`. `INPUTS` and
-   `measure` must use the same order; choose a `TickSource`, implement `actuate`, and expose
-   rig controls through `param_names`, `param_defaults`, `normalise_param`
-   and `set_param`. A rig that drives a hazardous actuator sets
+   `measure` must use the same order; `ACTUATORS` and the output slice passed to
+   `actuate` must use the same order. Choose a `TickSource`, and expose rig
+   controls through `param_names`, `param_defaults`, `normalise_param`, and
+   `set_param`. A rig that drives a hazardous actuator sets
    `const SAFETY_GATED = true` and implements `clamp_output` (hard amplitude
    limit), `safe_output` (zero-drive value) and `output_fault` (latching fault
    condition); the shared gate then enforces the clamp, the `arm` flag and the
@@ -532,28 +533,33 @@ closest. An experiment crate has a deliberately predictable anatomy:
 
 The statically selected programme owns controller telemetry and appends it
 after rig inputs, followed by `target`, `forcing`, `table`, and coherent master
-`phase`; the common loop then appends `out` and `cmd_epoch`. No experiment
-assigns those indices. The streamed `out` is the **applied** command — for a
-safety-gated rig this is after the clamp/quiet stage, not the raw sum. Fourier
-and table parameters also arrive automatically through the common registry, as
-do the `arm` (writable) and `safety` (read-only bitfield) safety params. Logic
-must remain in a host-testable crate: an experiment that grows algorithms rather
-than pin glue is the signal to move code out.
+`phase`; the common loop then appends every `Rig::ACTUATORS` entry and
+`cmd_epoch`. No experiment assigns those indices. Streamed actuator values are
+the **applied** commands: for a safety-gated rig these are after the clamp/quiet
+stage, not the raw programme outputs. The current production rigs each retain
+the single source `out`. Fourier and table parameters also arrive automatically
+through the common registry, as do the `arm` (writable) and `safety` (read-only
+bitfield) safety params. Logic must remain in a host-testable crate: an
+experiment that grows algorithms rather than pin glue is the signal to move
+code out.
 
 #### Output safety gate
 
-`rt_loop::safety_gate` runs on core 1 after the controller/forcing/table sum and
-before `actuate`, but only for a rig with `SAFETY_GATED = true` (otherwise it is
-compiled out and the summed command is applied verbatim). It calls the
-role-restricted `RtShared::safety` interface to latch a trip when `output_fault`
-fires; holds the actuator at `safe_output` while disarmed or tripped; and
-otherwise passes the command through `clamp_output`. Safety starts disarmed
-after flash; the host writes the `arm` param to arm (clearing a stale trip) or
-disarm, and a dropped TCP control connection disarms (comms-loss quieting).
-Clamp/quiet tick counts are in `RtShared::diagnostics` and the status log; the
-`safety` param packs armed/tripped/
-clamped/quieted into one word. The pure, host-tested pieces (the channel-window
-clamp and the stale-counter guard) live in `helic-core::safety`.
+`rt_loop::safety_gate` runs on core 1 after programme evaluation and before
+`actuate`, but only for a rig with `SAFETY_GATED = true` (otherwise it is
+compiled out and the complete vector is applied verbatim). The pure
+`helic_rt::safety_decide` combines rig faults, `Program::fault`, and non-finite
+commands, quiets every actuator on a fault, disarm, or existing trip, and
+otherwise applies `clamp_output` per actuator. The firmware wrapper may only
+load state and monotonically latch a trip through the role-restricted
+`RtShared::safety` interface. Safety starts disarmed after flash; the host
+writes the `arm` param to arm (clearing a stale trip) or disarm, and a dropped
+TCP control connection disarms (comms-loss quieting). Clamp/quiet tick counts
+are per tick in `RtShared::diagnostics` and the status log; the `safety` param
+packs armed/tripped/
+clamped/quieted into one word. The pure vector decision lives in
+`helic-rt`; the reusable channel-window clamp and stale-counter guard live in
+`helic-core::safety`.
 
 Verify with the root host tests, a release build and clippy of the complete
 firmware workspace, and all host-language suites. Then flash the single new
@@ -659,9 +665,10 @@ Experiment inputs are declared by `Rig::INPUTS`; write their values in the
 same order from `Rig::measure`. `Program::signal` declares programme-owned
 signals, and `write_signals` fills them; `StandardProgram` prepends controller
 telemetry, then `target`, `forcing`, `table`, and master `phase`. The common
-loop appends applied `out` and the wrapping `cmd_epoch`, so neither rigs nor
-programmes manage global numeric slots. Protocol-v3 source discovery exposes
-this assembled table to the host at every connection.
+loop appends applied actuator values in `Rig::ACTUATORS` order and the wrapping
+`cmd_epoch`, so neither rigs nor programmes manage global numeric slots.
+Protocol-v3 source discovery exposes this assembled table to the host at every
+connection.
 
 ## Hardware bring-up notes
 

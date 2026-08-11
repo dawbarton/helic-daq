@@ -16,7 +16,7 @@ use helic_rt::{Rig, SampleRate};
 
 use crate::board::WhirlParts;
 use crate::config::{
-    ActiveController, ENCODER_BITS, ENCODER_BIT_RATE_HZ, ENCODER_COUNTS_PER_REV, PULSE_COUNTER_HZ,
+    ENCODER_BITS, ENCODER_BIT_RATE_HZ, ENCODER_COUNTS_PER_REV, PULSE_COUNTER_HZ,
     PULSE_COUNTER_OFFSET_TICKS, RPM_MIN_PERIOD_S, RPM_STALE_AFTER_S, RPM_TAU_S,
 };
 use crate::telemetry::{
@@ -90,8 +90,7 @@ impl Rig for WhirlRig {
         ("rev_pulse", "bool"),
         ("rpm_valid", "bool"),
     ];
-
-    type Ctrl = ActiveController;
+    const ACTUATORS: &'static [(&'static str, &'static str)] = &[("out", "V")];
 
     fn init(&mut self) {
         if !self.encoders.start() {
@@ -158,7 +157,7 @@ impl Rig for WhirlRig {
     }
 
     #[unsafe(link_section = ".data.ram_func")]
-    fn actuate(&mut self, _out: f32) {}
+    fn actuate(&mut self, _outputs: &[f32]) {}
 
     #[unsafe(link_section = ".data.ram_func")]
     fn prepare_reboot(&mut self, _step: u8) -> bool {

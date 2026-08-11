@@ -16,7 +16,7 @@ use helic_fw_rt::rig::PwmWrapSpinTick;
 use helic_rt::{Rig, SampleRate};
 
 use crate::board::PicoDacParts;
-use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
+use crate::config::{LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};
 use crate::telemetry::{LASER_RANGE_MM, LASER_VALUE};
 
 const DAC_VREF: f32 = 4.096;
@@ -75,8 +75,7 @@ impl PicoDacParts {
 
 impl Rig for PicoDacRig {
     const INPUTS: &'static [(&'static str, &'static str)] = &[("laser", "mm")];
-
-    type Ctrl = ActiveController;
+    const ACTUATORS: &'static [(&'static str, &'static str)] = &[("out", "V")];
 
     fn init(&mut self) {
         if self
@@ -94,8 +93,8 @@ impl Rig for PicoDacRig {
     }
 
     #[unsafe(link_section = ".data.ram_func")]
-    fn actuate(&mut self, out: f32) {
-        self.dac_raw.write_volts(self.output_channel, out);
+    fn actuate(&mut self, outputs: &[f32]) {
+        self.dac_raw.write_volts(self.output_channel, outputs[0]);
     }
 
     #[unsafe(link_section = ".data.ram_func")]

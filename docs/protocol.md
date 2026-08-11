@@ -235,7 +235,8 @@ in this table. The table is assembled as:
 1. experiment inputs;
 2. programme signals: controller telemetry, then `target`, `forcing`, and
    `table` in volts, and `phase` in turns for the standard programme;
-3. applied output `out`, in volts;
+3. experiment actuator outputs declared by `Rig::ACTUATORS`, after the safety
+   gate; the current production rigs each declare one `out` in volts;
 4. `cmd_epoch`, in counts.
 
 Names are unique ASCII strings of at most 15 bytes; units are at most 7

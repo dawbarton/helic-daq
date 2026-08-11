@@ -12,6 +12,7 @@ pub mod channels;
 pub mod params;
 mod program;
 pub mod rig;
+mod safety;
 mod sample_rate;
 mod shared;
 
@@ -22,7 +23,10 @@ pub use channels::{
     MAX_FORCE_VALUES, MAX_RT_VALUES, RECORD_QUEUE_LEN,
 };
 pub use program::{Program, StandardProgram, StepCtx};
-pub use rig::{source, source_count, validate_sources, Rig, TickSource, MAX_SOURCES};
+pub use rig::{
+    source, source_count, validate_sources, Rig, TickSource, MAX_ACTUATORS, MAX_SOURCES,
+};
+pub use safety::{safety_decide, SafetyOutcome};
 pub use sample_rate::SampleRate;
 pub use shared::{Diagnostics, Live, RebootShared, RtShared, Safety, SafetyInputs};
 

@@ -517,11 +517,11 @@ mod tests {
 
     impl Rig for TestRig {
         const INPUTS: &'static [(&'static str, &'static str)] = &[("adc0", "V")];
-        type Ctrl = PassThrough;
+        const ACTUATORS: &'static [(&'static str, &'static str)] = &[("out", "V")];
 
         fn init(&mut self) {}
         fn measure(&mut self, _values: &mut [f32]) {}
-        fn actuate(&mut self, _out: f32) {}
+        fn actuate(&mut self, _outputs: &[f32]) {}
         fn prepare_reboot(&mut self, _step: u8) -> bool {
             true
         }

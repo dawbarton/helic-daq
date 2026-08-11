@@ -23,7 +23,7 @@ use static_cell::StaticCell;
 
 use crate::board::CbcParts;
 use crate::config::{
-    ActiveController, DAC_OUT_CEILING_V, DAC_OUT_FLOOR_V, DISPLACEMENT_MAX_MM, DISPLACEMENT_MIN_MM,
+    DAC_OUT_CEILING_V, DAC_OUT_FLOOR_V, DISPLACEMENT_MAX_MM, DISPLACEMENT_MIN_MM,
     LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, LASER_STALE_AFTER_S, OUTPUT_CHANNEL,
 };
 use crate::telemetry::{LASER_FRAMES_RECEIVED, LASER_RANGE_MM, LASER_VALUE};
@@ -162,12 +162,11 @@ impl Rig for CbcRig {
         ("adc7", "V"),
         ("laser", "mm"),
     ];
+    const ACTUATORS: &'static [(&'static str, &'static str)] = &[("out", "V")];
 
     // The exciter is driven through a feedback path that can go unstable, so
     // this rig opts into the shared per-tick output safety gate.
     const SAFETY_GATED: bool = true;
-
-    type Ctrl = ActiveController;
 
     fn init(&mut self) {
         // Slow reset delays and fail-safe zeroing happen before the sample
@@ -218,7 +217,8 @@ impl Rig for CbcRig {
     }
 
     #[unsafe(link_section = ".data.ram_func")]
-    fn actuate(&mut self, out: f32) {
+    fn actuate(&mut self, outputs: &[f32]) {
+        let out = outputs[0];
         #[cfg(feature = "diag-skip-dac")]
         let _ = out;
         // Bias the logical command onto the common-mode reference so `out` is
@@ -250,7 +250,8 @@ impl Rig for CbcRig {
 
     #[inline]
     #[unsafe(link_section = ".data.ram_func")]
-    fn clamp_output(&self, out: f32) -> f32 {
+    fn clamp_output(&self, actuator: usize, out: f32) -> f32 {
+        debug_assert_eq!(actuator, 0);
         // Hard amplitude ceiling: clamp the logical differential command so
         // the driven channel voltage `MID_RAIL + out` stays inside the safe
         // DAC window. Applied after the controller/forcing/table sum, so no
@@ -260,7 +261,9 @@ impl Rig for CbcRig {
     }
 
     #[inline]
-    fn safe_output(&self) -> f32 {
+    #[unsafe(link_section = ".data.ram_func")]
+    fn safe_output(&self, actuator: usize) -> f32 {
+        debug_assert_eq!(actuator, 0);
         // Logical zero → channel A at MID_RAIL → zero differential drive.
         0.0
     }

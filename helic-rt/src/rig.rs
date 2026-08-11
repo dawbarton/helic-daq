@@ -1,19 +1,17 @@
 //! Portable per-experiment hardware and sample-clock contracts.
 
-use helic_core::controller::Controller;
-
 use crate::Program;
 
 pub const MAX_SOURCES: usize = 24;
+pub const MAX_ACTUATORS: usize = 4;
 const DISCOVERY_HEADROOM: usize = helic_proto::MAX_PAYLOAD * 3 / 4;
 const MAX_SOURCE_REGISTRY_ENCODED_LEN: usize =
     MAX_SOURCES * (helic_proto::payload::MAX_NAME_LEN + helic_proto::payload::MAX_UNIT_LEN + 2);
 const _: () = assert!(MAX_SOURCE_REGISTRY_ENCODED_LEN <= DISCOVERY_HEADROOM);
-const OUTPUT_SOURCE: (&str, &str) = ("out", "V");
 const COMMAND_EPOCH_SOURCE: (&str, &str) = ("cmd_epoch", "count");
 
 pub fn source_count<R: Rig, P: Program>() -> usize {
-    R::INPUTS.len() + P::signal_count() + 2
+    R::INPUTS.len() + P::signal_count() + R::ACTUATORS.len() + 1
 }
 
 pub fn source<R: Rig, P: Program>(index: usize) -> Option<(&'static str, &'static str)> {
@@ -24,9 +22,12 @@ pub fn source<R: Rig, P: Program>(index: usize) -> Option<(&'static str, &'stati
     if let Some(source) = P::signal(index) {
         return Some(source);
     }
-    match index.checked_sub(P::signal_count())? {
-        0 => Some(OUTPUT_SOURCE),
-        1 => Some(COMMAND_EPOCH_SOURCE),
+    let index = index.checked_sub(P::signal_count())?;
+    if let Some(source) = R::ACTUATORS.get(index) {
+        return Some(*source);
+    }
+    match index.checked_sub(R::ACTUATORS.len())? {
+        0 => Some(COMMAND_EPOCH_SOURCE),
         _ => None,
     }
 }
@@ -39,6 +40,15 @@ pub fn validate_sources<R: Rig, P: Program>() {
     assert!(
         P::INPUTS_REQUIRED <= R::INPUTS.len(),
         "programme requires more inputs than the rig provides"
+    );
+    assert_eq!(
+        P::OUTPUTS,
+        R::ACTUATORS.len(),
+        "programme output count does not match rig actuators"
+    );
+    assert!(
+        P::OUTPUTS <= MAX_ACTUATORS,
+        "programme exposes more outputs than supported"
     );
     let mut encoded_len = 0;
     for i in 0..source_count::<R, P>() {
@@ -80,18 +90,17 @@ pub trait TickSource {
 /// Statically dispatched physical experiment contract.
 pub trait Rig {
     const INPUTS: &'static [(&'static str, &'static str)];
+    const ACTUATORS: &'static [(&'static str, &'static str)];
 
     /// Opt in to the shared per-tick safety gate. When `false` (the default),
-    /// the summed actuator command is applied verbatim and the gate compiles
-    /// away. A rig setting this to `true` must implement meaningful limits and
-    /// a safe state through the hooks below.
+    /// the programme output vector is applied verbatim and the gate compiles
+    /// away. A rig setting this to `true` must implement meaningful
+    /// per-actuator limits and safe states through the hooks below.
     const SAFETY_GATED: bool = false;
-
-    type Ctrl: Controller;
 
     fn init(&mut self);
     fn measure(&mut self, values: &mut [f32]);
-    fn actuate(&mut self, out: f32);
+    fn actuate(&mut self, outputs: &[f32]);
 
     /// Perform one bounded step towards the experiment's reboot-safe hardware
     /// state, returning `true` when no further steps are required.
@@ -102,18 +111,24 @@ pub trait Rig {
 
     /// Hard output limit applied after signal summation and before actuation.
     /// A buggy or unstable controller cannot drive beyond what this returns.
-    fn clamp_output(&self, out: f32) -> f32 {
-        out
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
+    fn clamp_output(&self, _actuator: usize, output: f32) -> f32 {
+        output
     }
 
     /// Value actuated while disarmed or after a fault has latched. It should
     /// correspond to zero drive for the fitted output stage.
-    fn safe_output(&self) -> f32 {
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
+    fn safe_output(&self, _actuator: usize) -> f32 {
         0.0
     }
 
     /// Latching fault condition evaluated on this tick's measured inputs.
     /// `&mut self` permits per-tick staleness or other fault state.
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn output_fault(&mut self, _inputs: &[f32]) -> bool {
         false
     }
@@ -160,11 +175,11 @@ mod tests {
 
     impl Rig for TestRig {
         const INPUTS: &'static [(&'static str, &'static str)] = &[("input", "V")];
-        type Ctrl = helic_core::controller::PassThrough;
+        const ACTUATORS: &'static [(&'static str, &'static str)] = &[("left", "V"), ("right", "V")];
 
         fn init(&mut self) {}
         fn measure(&mut self, _values: &mut [f32]) {}
-        fn actuate(&mut self, _out: f32) {}
+        fn actuate(&mut self, _outputs: &[f32]) {}
         fn prepare_reboot(&mut self, _step: u8) -> bool {
             true
         }
@@ -173,7 +188,7 @@ mod tests {
     struct TestProgram;
 
     impl Program for TestProgram {
-        const OUTPUTS: usize = 1;
+        const OUTPUTS: usize = 2;
         const INPUTS_REQUIRED: usize = 1;
         const DOMAINS: &'static [u8] = &[1];
         const SIGNALS: &'static [(&'static str, &'static str)] = &[("phase", "turn")];
@@ -186,21 +201,22 @@ mod tests {
     #[test]
     fn source_walk_preserves_segment_order() {
         validate_sources::<TestRig, TestProgram>();
-        assert_eq!(source_count::<TestRig, TestProgram>(), 4);
+        assert_eq!(source_count::<TestRig, TestProgram>(), 5);
         assert_eq!(source::<TestRig, TestProgram>(0), Some(("input", "V")));
         assert_eq!(source::<TestRig, TestProgram>(1), Some(("phase", "turn")));
-        assert_eq!(source::<TestRig, TestProgram>(2), Some(("out", "V")));
+        assert_eq!(source::<TestRig, TestProgram>(2), Some(("left", "V")));
+        assert_eq!(source::<TestRig, TestProgram>(3), Some(("right", "V")));
         assert_eq!(
-            source::<TestRig, TestProgram>(3),
+            source::<TestRig, TestProgram>(4),
             Some(("cmd_epoch", "count"))
         );
-        assert_eq!(source::<TestRig, TestProgram>(4), None);
+        assert_eq!(source::<TestRig, TestProgram>(5), None);
     }
 
     struct TooManyInputs;
 
     impl Program for TooManyInputs {
-        const OUTPUTS: usize = 1;
+        const OUTPUTS: usize = 2;
         const INPUTS_REQUIRED: usize = 2;
         const DOMAINS: &'static [u8] = &[];
         const SIGNALS: &'static [(&'static str, &'static str)] = &[];
@@ -214,5 +230,63 @@ mod tests {
     #[should_panic(expected = "programme requires more inputs")]
     fn validation_rejects_insufficient_rig_inputs() {
         validate_sources::<TestRig, TooManyInputs>();
+    }
+
+    struct OutputMismatch;
+
+    impl Program for OutputMismatch {
+        const OUTPUTS: usize = 1;
+        const INPUTS_REQUIRED: usize = 0;
+        const DOMAINS: &'static [u8] = &[];
+        const SIGNALS: &'static [(&'static str, &'static str)] = &[];
+
+        fn apply(&mut self, _domain: u8, _id: u16, _payload: Payload) {}
+        fn step(&mut self, _inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, _outputs: &mut [f32]) {}
+        fn write_signals(&self, _out: &mut [f32]) {}
+    }
+
+    #[test]
+    #[should_panic(expected = "output count does not match")]
+    fn validation_rejects_programme_rig_output_mismatch() {
+        validate_sources::<TestRig, OutputMismatch>();
+    }
+
+    struct TooManyActuators;
+
+    impl Rig for TooManyActuators {
+        const INPUTS: &'static [(&'static str, &'static str)] = &[];
+        const ACTUATORS: &'static [(&'static str, &'static str)] = &[
+            ("out0", "V"),
+            ("out1", "V"),
+            ("out2", "V"),
+            ("out3", "V"),
+            ("out4", "V"),
+        ];
+
+        fn init(&mut self) {}
+        fn measure(&mut self, _values: &mut [f32]) {}
+        fn actuate(&mut self, _outputs: &[f32]) {}
+        fn prepare_reboot(&mut self, _step: u8) -> bool {
+            true
+        }
+    }
+
+    struct FiveOutputs;
+
+    impl Program for FiveOutputs {
+        const OUTPUTS: usize = 5;
+        const INPUTS_REQUIRED: usize = 0;
+        const DOMAINS: &'static [u8] = &[];
+        const SIGNALS: &'static [(&'static str, &'static str)] = &[];
+
+        fn apply(&mut self, _domain: u8, _id: u16, _payload: Payload) {}
+        fn step(&mut self, _inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, _outputs: &mut [f32]) {}
+        fn write_signals(&self, _out: &mut [f32]) {}
+    }
+
+    #[test]
+    #[should_panic(expected = "more outputs than supported")]
+    fn validation_rejects_too_many_actuators() {
+        validate_sources::<TooManyActuators, FiveOutputs>();
     }
 }

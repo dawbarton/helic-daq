@@ -9,9 +9,9 @@ use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
 use helic_core::DoubleBuffer;
 use helic_rt::{
-    source_count, CommandConsumer, Payload, Program, Record, RecordProducer, Rig, RtChannels,
-    RtCommand, RtShared, SampleRate, StepCtx, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN,
-    DOMAIN_RIG, HARMONICS, MAX_SOURCES, RECORD_QUEUE_LEN,
+    safety_decide, source_count, CommandConsumer, Payload, Program, Record, RecordProducer, Rig,
+    RtChannels, RtCommand, RtShared, SampleRate, StepCtx, TickSource, COMMANDS_PER_TICK,
+    COMMAND_QUEUE_LEN, DOMAIN_RIG, HARMONICS, MAX_ACTUATORS, MAX_SOURCES, RECORD_QUEUE_LEN,
 };
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -54,34 +54,38 @@ pub fn init_channels() -> RtChannels {
 }
 
 /// Per-tick output safety gate: decide what is actually driven from the
-/// summed actuator command. Runs on core 1 inside the tick, before `actuate`,
+/// complete actuator command. Runs on core 1 inside the tick, before `actuate`,
 /// only for a rig with `Rig::SAFETY_GATED` set.
 ///
-/// - a fault reported by the rig latches `SAFETY_TRIPPED`;
-/// - while tripped or disarmed the actuator is held at the rig's safe output;
-/// - otherwise the command is passed through the rig's hard clamp.
+/// Rig and programme faults, and non-finite commands, latch `SAFETY_TRIPPED`;
+/// while tripped or disarmed every actuator is held at its safe output;
+/// otherwise each command is passed through its actuator-specific hard clamp.
 #[unsafe(link_section = ".data.ram_func")]
 #[inline]
-fn safety_gate<R: Rig>(rig: &mut R, shared: &RtShared, inputs: &[f32], out_cmd: f32) -> f32 {
-    if rig.output_fault(inputs) {
+fn safety_gate<R: Rig>(
+    rig: &mut R,
+    shared: &RtShared,
+    inputs: &[f32],
+    program_fault: bool,
+    commanded: &[f32],
+    applied: &mut [f32],
+) {
+    let fault = rig.output_fault(inputs) || program_fault;
+    let outcome = safety_decide(rig, shared.safety.load_inputs(), fault, commanded, applied);
+    if outcome.newly_tripped {
         shared.safety.latch_trip();
     }
-    let safety = shared.safety.load_inputs();
-    if safety.tripped || !safety.armed {
+    if outcome.quieted {
         shared
             .diagnostics
             .safety_quiet_ticks
             .fetch_add(1, Ordering::Relaxed);
-        rig.safe_output()
-    } else {
-        let applied = rig.clamp_output(out_cmd);
-        if applied != out_cmd {
-            shared
-                .diagnostics
-                .safety_clamp_ticks
-                .fetch_add(1, Ordering::Relaxed);
-        }
-        applied
+    }
+    if outcome.clamped {
+        shared
+            .diagnostics
+            .safety_clamp_ticks
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -111,6 +115,7 @@ fn run_rt_tick<R: Rig>(
     last_tick: &mut Option<u32>,
     n_inputs: usize,
     n_program_signals: usize,
+    n_actuators: usize,
     n_sources: usize,
 ) {
     #[cfg(feature = "diag-skip-record-enqueue")]
@@ -184,24 +189,31 @@ fn run_rt_tick<R: Rig>(
     let m0 = now_us();
     rig.measure(&mut values[..n_inputs]);
     let measure_us = now_us().wrapping_sub(m0);
-    let mut outputs = [0.0; 1];
-    program.step(&values[..n_inputs], dt, ctx, &mut outputs);
-    let out_cmd = outputs[0];
+    let mut commanded = [0.0; MAX_ACTUATORS];
+    program.step(&values[..n_inputs], dt, ctx, &mut commanded[..n_actuators]);
+    let mut applied = [0.0; MAX_ACTUATORS];
     // Hard output safety stage. For a non-gated rig this is a compile-time
-    // no-op (the const is false), so the summed command is applied verbatim.
-    let out = if R::SAFETY_GATED {
-        safety_gate::<R>(rig, shared, &values[..n_inputs], out_cmd)
+    // no-op (the const is false), so every command is applied verbatim.
+    if R::SAFETY_GATED {
+        safety_gate::<R>(
+            rig,
+            shared,
+            &values[..n_inputs],
+            program.fault(),
+            &commanded[..n_actuators],
+            &mut applied[..n_actuators],
+        );
     } else {
-        out_cmd
-    };
+        applied[..n_actuators].copy_from_slice(&commanded[..n_actuators]);
+    }
     let a0 = now_us();
-    rig.actuate(out);
+    rig.actuate(&applied[..n_actuators]);
     let actuate_us = now_us().wrapping_sub(a0);
 
     program.write_signals(&mut values[n_inputs..n_inputs + n_program_signals]);
     let generated = n_inputs + n_program_signals;
-    values[generated] = out;
-    values[generated + 1] = *command_epoch as f32;
+    values[generated..generated + n_actuators].copy_from_slice(&applied[..n_actuators]);
+    values[generated + n_actuators] = *command_epoch as f32;
     #[cfg(feature = "diag-skip-record-enqueue")]
     let _ = &values;
 
@@ -289,6 +301,7 @@ struct RtLoopState<R: Rig, P: Program, T: TickSource> {
     last_tick: Option<u32>,
     n_inputs: usize,
     n_program_signals: usize,
+    n_actuators: usize,
     n_sources: usize,
 }
 
@@ -307,13 +320,11 @@ pub fn run_rt_loop<R: Rig, P: Program, T: TickSource>(
 ) -> ! {
     let n_inputs = R::INPUTS.len();
     let n_program_signals = P::signal_count();
+    let n_actuators = R::ACTUATORS.len();
     let n_sources = source_count::<R, P>();
     assert!(n_sources <= MAX_SOURCES);
-    assert_eq!(
-        P::OUTPUTS,
-        1,
-        "scalar rig loop requires one programme output"
-    );
+    assert_eq!(P::OUTPUTS, n_actuators);
+    assert!(n_actuators <= MAX_ACTUATORS);
     assert!(P::INPUTS_REQUIRED <= n_inputs);
 
     rig.init();
@@ -339,6 +350,7 @@ pub fn run_rt_loop<R: Rig, P: Program, T: TickSource>(
         last_tick: None,
         n_inputs,
         n_program_signals,
+        n_actuators,
         n_sources,
     })
 }
@@ -378,6 +390,7 @@ fn run_hot_loop<R: Rig, P: Program, T: TickSource>(mut state: RtLoopState<R, P, 
             &mut state.last_tick,
             state.n_inputs,
             state.n_program_signals,
+            state.n_actuators,
             state.n_sources,
         );
     }
