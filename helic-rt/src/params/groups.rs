@@ -8,7 +8,7 @@ use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableInterpolation, TableMode};
-use helic_core::{BufferError, Staging as TableStaging, MAX_TABLE_LEN};
+use helic_core::{BufferError, Staging as TableStaging, WaveTable, MAX_TABLE_LEN};
 use helic_proto::{ErrorCode, ParamType};
 
 use super::{
@@ -338,21 +338,18 @@ impl ParamGroup for GeneratorGroup {
     }
 }
 
-const TABLE_PARAMS: &[ParamDef] = &[
-    ParamDef::blob(
-        "table",
-        ParamType::F32,
-        MAX_TABLE_LEN as u16,
-        MAX_TABLE_LEN as u32,
-    ),
-    ParamDef::writable("table_freq", ParamType::F32, 1),
-    ParamDef::writable("table_gain", ParamType::F32, 1),
-    ParamDef::writable("table_interp", ParamType::U32, 1),
-    ParamDef::writable("table_mode", ParamType::U32, 1),
-    ParamDef::writable("table_mult", ParamType::U32, 1),
-    ParamDef::writable("table_phase", ParamType::F32, 1),
-    ParamDef::writable("table_trigger", ParamType::U32, 1),
-];
+const fn table_params<const N: usize>() -> [ParamDef; 8] {
+    [
+        ParamDef::blob("table", ParamType::F32, N as u16, N as u32),
+        ParamDef::writable("table_freq", ParamType::F32, 1),
+        ParamDef::writable("table_gain", ParamType::F32, 1),
+        ParamDef::writable("table_interp", ParamType::U32, 1),
+        ParamDef::writable("table_mode", ParamType::U32, 1),
+        ParamDef::writable("table_mult", ParamType::U32, 1),
+        ParamDef::writable("table_phase", ParamType::F32, 1),
+        ParamDef::writable("table_trigger", ParamType::U32, 1),
+    ]
+}
 
 #[derive(Clone, Copy)]
 enum TablePending {
@@ -366,8 +363,9 @@ enum TablePending {
 }
 
 /// Waveform-table upload state and scalar playback shadow.
-pub struct TableGroup {
-    staging: TableStaging,
+pub struct TableGroup<const N: usize = MAX_TABLE_LEN> {
+    staging: TableStaging<WaveTable<N>>,
+    defs: [ParamDef; 8],
     sample_rate: SampleRate,
     frequency: f32,
     gain: f32,
@@ -378,10 +376,11 @@ pub struct TableGroup {
     pending: TablePending,
 }
 
-impl TableGroup {
-    pub const fn new(staging: TableStaging, sample_rate: SampleRate) -> Self {
+impl<const N: usize> TableGroup<N> {
+    pub const fn new(staging: TableStaging<WaveTable<N>>, sample_rate: SampleRate) -> Self {
         Self {
             staging,
+            defs: table_params::<N>(),
             sample_rate,
             frequency: 0.0,
             gain: 1.0,
@@ -394,17 +393,17 @@ impl TableGroup {
     }
 }
 
-impl ParamGroup for TableGroup {
+impl<const N: usize> ParamGroup for TableGroup<N> {
     fn target(&self) -> CommandTarget {
         CommandTarget::Program(DOMAIN_TABLE)
     }
 
     fn params(&self) -> &[ParamDef] {
-        TABLE_PARAMS
+        &self.defs
     }
 
     fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode> {
-        let size = checked_output(TABLE_PARAMS, id, out)?;
+        let size = checked_output(&self.defs, id, out)?;
         let out = &mut out[..size];
         match id {
             0 => return Err(ErrorCode::BadLength),
@@ -513,10 +512,7 @@ impl ParamGroup for TableGroup {
         }
         let offset = offset as usize;
         let count = data.len() / 4;
-        if offset
-            .checked_add(count)
-            .is_none_or(|end| end > MAX_TABLE_LEN)
-        {
+        if offset.checked_add(count).is_none_or(|end| end > N) {
             return Err(ErrorCode::BadLength);
         }
         let staging = self.staging.buffer().map_err(map_buffer_error)?;
@@ -533,7 +529,7 @@ impl ParamGroup for TableGroup {
             return Err(ErrorCode::BadIndex);
         }
         let len = len as usize;
-        if !(2..=MAX_TABLE_LEN).contains(&len) {
+        if !(2..=N).contains(&len) {
             return Err(ErrorCode::BadValue);
         }
         {

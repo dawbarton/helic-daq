@@ -98,7 +98,8 @@ pub type CommandProducer = Producer<'static, RtCommand>;
 pub type CommandConsumer = Consumer<'static, RtCommand>;
 pub type CoeffStaging = Staging<FourierCoeffs<HARMONICS>>;
 pub type ActiveCoeffs = Active<FourierCoeffs<HARMONICS>>;
-pub type ActiveTable = Active<helic_core::WaveTable>;
+pub type ActiveTable<const N: usize = { helic_core::MAX_TABLE_LEN }> =
+    Active<helic_core::WaveTable<N>>;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Record {

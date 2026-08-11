@@ -1025,4 +1025,12 @@ mod tests {
         })));
         store.validate(&[]);
     }
+
+    #[test]
+    fn table_group_discovers_its_const_generic_capacity() {
+        let (staging, _active) = Box::leak(Box::new(helic_core::TableBuffer::<8>::new())).split();
+        let group = TableGroup::<8>::new(staging, SampleRate::Hz8000);
+        assert_eq!(group.params()[0].count, 8);
+        assert_eq!(group.params()[0].kind, ParamKind::Blob(8));
+    }
 }

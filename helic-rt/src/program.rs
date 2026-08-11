@@ -6,6 +6,7 @@ use helic_core::controller::Controller;
 use helic_core::lut::SinLut;
 use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableInterpolation, TableMode, TablePlayer};
+use helic_core::MAX_TABLE_LEN;
 
 use crate::{
     command_id, ActiveCoeffs, ActiveTable, Payload, RtShared, SampleRate, DOMAIN_CONTROLLER,
@@ -65,13 +66,13 @@ fn phase_turns(phase: u32) -> f32 {
 }
 
 /// Current controller, Fourier generator, and waveform-table programme.
-pub struct StandardProgram<C: Controller> {
+pub struct StandardProgram<C: Controller, const N: usize = MAX_TABLE_LEN> {
     controller: C,
     phase: PhaseAccumulator,
     target_coeffs: ActiveCoeffs,
     forcing_coeffs: ActiveCoeffs,
     table_player: TablePlayer,
-    active_table: ActiveTable,
+    active_table: ActiveTable<N>,
     shared: &'static RtShared,
     target: f32,
     forcing: f32,
@@ -79,12 +80,12 @@ pub struct StandardProgram<C: Controller> {
     phase_turns: f32,
 }
 
-impl<C: Controller> StandardProgram<C> {
+impl<C: Controller, const N: usize> StandardProgram<C, N> {
     pub fn new(
         controller: C,
         target_coeffs: ActiveCoeffs,
         forcing_coeffs: ActiveCoeffs,
-        active_table: ActiveTable,
+        active_table: ActiveTable<N>,
         shared: &'static RtShared,
     ) -> Self {
         Self {
@@ -103,7 +104,7 @@ impl<C: Controller> StandardProgram<C> {
     }
 }
 
-impl<C: Controller> Program for StandardProgram<C> {
+impl<C: Controller, const N: usize> Program for StandardProgram<C, N> {
     const OUTPUTS: usize = 1;
     const INPUTS_REQUIRED: usize = 0;
     const DOMAINS: &'static [u8] = &[DOMAIN_GENERATOR, DOMAIN_TABLE, DOMAIN_CONTROLLER];
@@ -243,10 +244,10 @@ mod tests {
     }
 
     fn program() -> (
-        StandardProgram<TestController>,
+        StandardProgram<TestController, 8>,
         crate::CoeffStaging,
         crate::CoeffStaging,
-        helic_core::Staging<helic_core::WaveTable>,
+        helic_core::Staging<helic_core::WaveTable<8>>,
         &'static RtShared,
     ) {
         let (target_staging, target_active) = Box::leak(Box::new(DoubleBuffer::from_banks(
@@ -259,7 +260,7 @@ mod tests {
             FourierCoeffs::<HARMONICS>::zero(),
         )))
         .split();
-        let (table_staging, active_table) = Box::leak(Box::new(TableBuffer::new())).split();
+        let (table_staging, active_table) = Box::leak(Box::new(TableBuffer::<8>::new())).split();
         let shared = Box::leak(Box::new(RtShared::new()));
         (
             StandardProgram::new(
@@ -332,13 +333,13 @@ mod tests {
         program.write_signals(&mut signals);
         assert_eq!(signals, [2.0, 0.25, 0.125, 1.0, 0.25]);
         assert_eq!(shared.live.active_table_len.load(Ordering::Relaxed), 2);
-        assert_eq!(StandardProgram::<TestController>::signal_count(), 5);
+        assert_eq!(StandardProgram::<TestController, 8>::signal_count(), 5);
         assert_eq!(
-            StandardProgram::<TestController>::signal(0),
+            StandardProgram::<TestController, 8>::signal(0),
             Some(("observed", "V"))
         );
         assert_eq!(
-            StandardProgram::<TestController>::signal(4),
+            StandardProgram::<TestController, 8>::signal(4),
             Some(("phase", "turn"))
         );
     }
