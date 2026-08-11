@@ -186,6 +186,13 @@ experiment in which it was first needed:
   semantic changes and capacity changes as major-version changes. Additive
   types and defaulted trait methods may be minor changes. External rigs pin a
   major version and upgrade deliberately.
+- Releases are annotated git tags `vMAJOR.MINOR.PATCH` on `main`, taken only
+  when the complete check set passes. An out-of-tree rig pins that tag for both
+  its crate dependencies and its `helic-daq` tool installation; a gate from a
+  different platform version checks the wrong contract. Do not retag, and do
+  not move a tag: a rig that has pinned it has no way to notice. Record what
+  changed for consumers in the tag message, and raise the crate versions in the
+  same commit as the tag so a pinned checkout reports the version it claims.
 - Target and forcing coefficients, waveform tables and future large force
   vectors use `helic_core::DoubleBuffer<T>` with its one-time split and linear,
   owner-checked token. Do not widen copied command payloads or introduce a raw
