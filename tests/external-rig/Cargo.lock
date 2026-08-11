@@ -856,25 +856,25 @@ dependencies = [
 
 [[package]]
 name = "helic-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "helic-drivers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "embedded-hal 1.0.0",
 ]
 
 [[package]]
 name = "helic-fw-build"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "helic-fw-rt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "defmt 1.1.1",
  "embassy-rp",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "helic-fw-support"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "defmt 1.1.1",
  "embassy-executor",
@@ -909,11 +909,11 @@ dependencies = [
 
 [[package]]
 name = "helic-proto"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "helic-rt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "heapless",
  "helic-core",
