@@ -21,6 +21,7 @@ use embassy_time::Timer;
 use helic_core::{DoubleBuffer, FourierCoeffs, TableBuffer};
 use helic_fw_rt::rt_loop as shared_rt;
 use helic_fw_support::comms;
+use helic_fw_support::identity::Identity;
 use helic_fw_support::net;
 use helic_fw_support::net::cyw43::WifiParts;
 use helic_rt::params::{
@@ -40,6 +41,9 @@ use board::LaserParts;
 use rig::PicoDacRig;
 
 type Store = ParamStore;
+
+/// Build identity of this application, not of the shared platform crates.
+const IDENTITY: Identity = helic_fw_support::firmware_identity!();
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -86,11 +90,7 @@ fn main() -> ! {
         config::LASER_RANGE_MM.to_bits(),
         core::sync::atomic::Ordering::Relaxed,
     );
-    info!(
-        "helic-daq {} boot: {}",
-        config::EXPERIMENT,
-        helic_fw_support::identity::FIRMWARE_BANNER
-    );
+    info!("boot: {} (platform {})", IDENTITY.banner, IDENTITY.platform);
 
     let board = board::Board::new(p);
     // Commands flow to core 1; non-blocking sample records flow back to core 0.
@@ -101,7 +101,7 @@ fn main() -> ! {
     store.push(PLATFORM_GROUP.init(PlatformGroup::new(
         &RT_SHARED,
         config::SAMPLE_RATE,
-        helic_fw_support::identity::FIRMWARE_VERSION,
+        IDENTITY.version,
         config::EXPERIMENT,
     )));
     store.push(GENERATOR_GROUP.init(GeneratorGroup::new(
@@ -177,6 +177,7 @@ async fn core0_main(spawner: Spawner, wifi: WifiParts, store: Store, records: Re
         stack,
         mac,
         config::EXPERIMENT,
+        IDENTITY.version,
     )));
 }
 

@@ -1,17 +1,20 @@
-//! Cargo build script which exposes the RP2350 `memory.x` to the linker.
+//! Cargo build script for the embedded linker layout and build identity.
 //!
-//! This program runs on the development computer, so it uses `std` even
-//! though the resulting firmware is `no_std`.
+//! Build scripts run on the development computer using `std`, before the
+//! `no_std` firmware is compiled. Identity is emitted here, in the application
+//! crate, so that it describes this rig's repository rather than the shared
+//! platform crates.
 
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    // Copy into Cargo's generated output directory, then add it to link search.
+    helic_fw_build::emit_identity();
+
+    // OUT_DIR is Cargo-managed and unique to this package/build profile.
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     fs::copy("memory.x", out.join("memory.x")).unwrap();
     println!("cargo:rustc-link-search={}", out.display());
-    // Tell Cargo when this build-script result becomes stale.
     println!("cargo:rerun-if-changed=memory.x");
 }

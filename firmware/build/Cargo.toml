@@ -1,0 +1,10 @@
+[package]
+name = "helic-fw-build"
+description = "Build-script helpers shared by every HELIC-DAQ firmware application"
+# This crate is excluded from the firmware workspace so that `--workspace` does
+# not cross-compile it for the ARM target, so it cannot inherit workspace
+# package metadata and states it directly. Keep the version in step with the
+# other firmware crates.
+version = "0.1.0"
+edition = "2021"
+license = "MIT"

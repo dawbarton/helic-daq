@@ -93,6 +93,13 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --release --workspace -- -D warnings
       - run: cargo build --release --workspace
+      - name: Check host build-script helpers
+        # Excluded from the workspace so that `--workspace` does not
+        # cross-compile it, so it needs its own host-target checks.
+        run: |
+          cargo fmt --manifest-path build/Cargo.toml -- --check
+          cargo clippy --manifest-path build/Cargo.toml --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+          cargo test --manifest-path build/Cargo.toml --target x86_64-unknown-linux-gnu
       - name: Check real-time symbols are SRAM-resident
         run: python3 tools/check_rt_layout.py
       - name: Build out-of-workspace firmware

@@ -5,7 +5,12 @@ use embassy_net::Stack;
 use helic_proto::beacon::{BeaconResponse, REQUEST, RESPONSE_LEN};
 
 #[embassy_executor::task]
-pub async fn beacon_task(stack: Stack<'static>, mac: [u8; 6], experiment: &'static str) -> ! {
+pub async fn beacon_task(
+    stack: Stack<'static>,
+    mac: [u8; 6],
+    experiment: &'static str,
+    firmware: &'static str,
+) -> ! {
     let mut rx_meta = [PacketMetadata::EMPTY; 2];
     let mut rx_buffer = [0; 64];
     let mut tx_meta = [PacketMetadata::EMPTY; 2];
@@ -21,7 +26,7 @@ pub async fn beacon_task(stack: Stack<'static>, mac: [u8; 6], experiment: &'stat
         .bind(helic_proto::DISCOVERY_PORT)
         .expect("discovery UDP bind failed");
 
-    let response = BeaconResponse::new(mac, experiment, crate::identity::FIRMWARE_VERSION);
+    let response = BeaconResponse::new(mac, experiment, firmware);
     let mut encoded = [0; RESPONSE_LEN];
     response.encode(&mut encoded);
     let mut request = [0; 64];

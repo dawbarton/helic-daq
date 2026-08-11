@@ -923,6 +923,7 @@ dependencies = [
  "heapless",
  "helic-core",
  "helic-drivers",
+ "helic-fw-build",
  "helic-fw-optoncdt",
  "helic-fw-rt",
  "helic-fw-support",
@@ -950,6 +951,7 @@ dependencies = [
  "heapless",
  "helic-core",
  "helic-drivers",
+ "helic-fw-build",
  "helic-fw-optoncdt",
  "helic-fw-rt",
  "helic-fw-support",
@@ -974,6 +976,7 @@ dependencies = [
  "heapless",
  "helic-core",
  "helic-drivers",
+ "helic-fw-build",
  "helic-fw-rt",
  "helic-fw-support",
  "helic-proto",
@@ -1057,6 +1060,10 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal 1.0.0",
 ]
+
+[[package]]
+name = "helic-fw-build"
+version = "0.1.0"
 
 [[package]]
 name = "helic-fw-optoncdt"

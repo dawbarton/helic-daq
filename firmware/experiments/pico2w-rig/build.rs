@@ -1,18 +1,20 @@
-//! Cargo build script which copies the RP2350 memory map for the linker.
+//! Cargo build script for the embedded linker layout and build identity.
 //!
-//! It runs on the host before the `no_std` target firmware is compiled.
+//! Build scripts run on the development computer using `std`, before the
+//! `no_std` firmware is compiled. Identity is emitted here, in the application
+//! crate, so that it describes this rig's repository rather than the shared
+//! platform crates.
 
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    // OUT_DIR is Cargo's package- and profile-specific generated directory.
+    helic_fw_build::emit_identity();
+
+    // OUT_DIR is Cargo-managed and unique to this package/build profile.
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     fs::copy("memory.x", out.join("memory.x")).unwrap();
     println!("cargo:rustc-link-search={}", out.display());
-    // Re-run only if the checked-in memory map changes.
     println!("cargo:rerun-if-changed=memory.x");
-    println!("cargo:rerun-if-env-changed=HELIC_WIFI_SSID");
-    println!("cargo:rerun-if-env-changed=HELIC_WIFI_PASSWORD");
 }

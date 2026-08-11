@@ -19,6 +19,7 @@ use embassy_time::Timer;
 use helic_core::{DoubleBuffer, FourierCoeffs, TableBuffer};
 use helic_fw_rt::rt_loop as shared_rt;
 use helic_fw_support::comms;
+use helic_fw_support::identity::Identity;
 use helic_fw_support::net;
 use helic_fw_support::net::wiznet::EthernetParts;
 use helic_rt::params::{
@@ -37,6 +38,9 @@ mod telemetry;
 use rig::WhirlRig;
 
 type Store = ParamStore;
+
+/// Build identity of this application, not of the shared platform crates.
+const IDENTITY: Identity = helic_fw_support::firmware_identity!();
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -74,10 +78,7 @@ static TELEMETRY_GROUP: StaticCell<TelemetryGroup> = StaticCell::new();
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let p = embassy_rp::init(Default::default());
-    info!(
-        "helic-daq firmware boot: {}",
-        helic_fw_support::identity::FIRMWARE_BANNER
-    );
+    info!("boot: {} (platform {})", IDENTITY.banner, IDENTITY.platform);
     let b = board::Board::new(p);
 
     let channels = shared_rt::init_channels(TARGET_COEFFS.take(), FORCING_COEFFS.take());
@@ -87,7 +88,7 @@ fn main() -> ! {
     store.push(PLATFORM_GROUP.init(PlatformGroup::new(
         &RT_SHARED,
         config::SAMPLE_RATE,
-        helic_fw_support::identity::FIRMWARE_VERSION,
+        IDENTITY.version,
         config::EXPERIMENT,
     )));
     store.push(GENERATOR_GROUP.init(GeneratorGroup::new(
@@ -146,6 +147,7 @@ async fn core0_main(spawner: Spawner, eth: EthernetParts, store: Store, records:
         stack,
         config::MAC_ADDR,
         config::EXPERIMENT,
+        IDENTITY.version,
     )));
 }
 

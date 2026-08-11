@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[build-dependencies]
+helic-fw-build.workspace = true
+
 [dependencies]
 # This experiment deliberately disables the common crate's wired default and
 # selects the CYW43439 backend. Application tasks still use embassy-net.

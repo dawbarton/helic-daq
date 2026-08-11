@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[build-dependencies]
+helic-fw-build.workspace = true
+
 [features]
 # Select exactly one physical WIZnet chip. Features configure common network
 # plumbing at compile time and do not create run-time transport dispatch.
