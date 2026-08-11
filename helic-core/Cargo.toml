@@ -12,3 +12,4 @@ rt-sram = []
 libm = "0.2.16"
 
 [dev-dependencies]
+static_cell = "2.1.1"

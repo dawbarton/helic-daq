@@ -16,6 +16,7 @@ pub mod pid;
 pub mod rpm;
 pub mod safety;
 pub mod table;
+mod table_buffer;
 
 pub use controller::{Controller, PassThrough, PidController};
 pub use filter::{BiquadCoeffs, SosFilter};
@@ -26,3 +27,4 @@ pub use phase::PhaseAccumulator;
 pub use pid::{Pid, PidConfig};
 pub use safety::{clamp_channel_command, StaleCounter};
 pub use table::{TableInterpolation, TableMode, TablePlayer, WaveTable, MAX_TABLE_LEN};
+pub use table_buffer::{Active as ActiveTable, BufferError, CommitToken, Staging, TableBuffer};
