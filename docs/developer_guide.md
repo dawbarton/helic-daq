@@ -375,6 +375,15 @@ PYTHONPATH=host-python uv run --with numpy --python 3.12 \
 one profile because the control service is single-client and hardware runs must
 remain sequential.
 
+The independent [external-rig fixture](../tests/external-rig/README.md) is the
+repository-boundary acceptance test. It owns a programme, firmware workspace,
+lockfile, verification profile, and dependency policy, and CI builds and tests
+it separately from both HELIC-DAQ Cargo workspaces. Its exact `=0.1.0`
+dependencies are locally patched to this checkout until the shared crates are
+published; removing that patch is the release-consumer test. The mocked
+regression proves tool composition only, and cannot replace physical validation
+when a rig is promoted to production support.
+
 **2. Hardware check — production regression** (device + probe attached, one
 sequential client):
 

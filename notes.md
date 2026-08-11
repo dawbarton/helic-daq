@@ -837,3 +837,29 @@ evidence:
   manifest-defined sequence. W6100 was not flashed, and no whirl or Pico 2W
   hardware evidence was obtained. The laser and actuator supplies remained
   down.
+
+## 2026-08-11T16:01+00:00 Rig-decoupling implementation stage 13
+
+- `tests/external-rig` is an independent Cargo workspace, outside both
+  HELIC-DAQ workspaces, with its own lockfile, RP2350 target and linker setup,
+  programme, firmware, verification profile, and dependency policy. Its
+  manifests consume exact `=0.1.0` HELIC packages; `[patch.crates-io]` points to
+  this checkout only because the packages are not yet published.
+- The fixture programme passed its host test. Its production-shaped firmware
+  instantiates the shared real-time loop with local `Program`, `Rig`, and
+  `TickSource` implementations, passed release clippy and build, and passed the
+  shared layout checker against its local ELF/profile. The generic dependency
+  checker accepted its exact direct dependencies, forbidden source imports, and
+  exclusion of `helic-fw-support` from its graph.
+- A fixture-owned deterministic device and clock drove the unmodified hardware
+  regression runner from the local profile. Identity, ordered quieting, idle,
+  polling, capture continuity, rate, phase spread, and loop limit all passed
+  without network or hardware access. CI now repeats all four repository-boundary
+  checks; this is composition evidence, not electrical evidence.
+- Final exact-commit verification passed all 175 root Rust tests plus four
+  compile-fail doctests, production and fixture release clippy/build/layout
+  gates, both wired W6100 cross-builds, 65 host-Python tests, seven profile-tool
+  tests, the external mocked regression, and 89 Julia checks. MATLAB was
+  unavailable. No firmware was flashed during Stage 13; the attached CBC
+  W5500 remains on accepted firmware `0.1.0 a21d762`, disarmed and quiet. The
+  W6100 was cross-built only, and the laser and actuator supplies remained down.

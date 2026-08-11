@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–12 completed 2026-08-11. Revision
-17. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation completed; stages 0–13 completed 2026-08-11. Revision
+18. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1663,23 +1663,29 @@ production rigs here and treats the crate boundary as the contract that
     8000-record all-source W5500 run at 36/37/37 us with no timing faults, loss,
     drops, or gaps; name-based profile discovery also passed a focused hardware
     run. No firmware change or W6100 flash was involved.
-13. **Out-of-workspace test rig** as the final architectural acceptance test. It
-    must demonstrate all four of:
+13. **Completed 2026-08-11: out-of-workspace composition fixture.** The
+    independent `tests/external-rig` Cargo workspace is not a member of either
+    HELIC-DAQ workspace and owns its programme, RP2350 firmware, target setup,
+    lockfile, verification profile, and dependency policy. It demonstrates all
+    four required boundaries:
     - building against released or pinned shared crates;
     - running the layout checker over its own ELF from a rig-local profile;
     - defining a hardware-regression profile locally and having the runner
       **load and dry-run it against a mocked transport**;
     - running the dependency-rule CI check,
 
-    each **without editing or copying anything in this repository**.
+    each by driving the shared tools without editing or copying them.
 
-    This fixture tests the *repository boundary*, not the rig, so it
-    deliberately does not require real hardware: a dry run proves the profile
-    loads and the runner drives it. Actual hardware regression remains mandatory
-    when a rig becomes production-supported, and is covered by the normal
-    sequential suite. Until the four criteria hold, the Rust composition is
-    decoupled but a fully supported rig still needs shared-repository changes,
-    and the repository-separation claim is only partly realised.
+    Its manifests request exact `=0.1.0` shared-crate versions; a root Cargo
+    patch substitutes this checkout only because those packages are not yet
+    published. The local programme passes its host test, the release firmware
+    passes clippy, build and the external-profile SRAM gate, and its exact
+    dependency policy passes the generic checker. A deterministic fixture-owned
+    device and clock drive the unmodified regression runner through identity,
+    ordered quieting, idle, polling, capture and acceptance with no network or
+    hardware access. CI repeats all four checks. This validates the repository
+    boundary, not electrical behaviour; a new production rig still requires
+    its normal sequential hardware regression.
 
 Stages 1 to 5 are worth doing regardless of MIMO: they remove the offset
 arithmetic and the bespoke unsafe module without changing externally visible
@@ -1818,6 +1824,15 @@ wake phase is the baseline.
    Stage-10 implementation produces contrary compiler evidence.
 
 ## Revision history
+
+**Revision 18** closes the migration with an independent composition fixture.
+The versioned consumer workspace owns a local programme and RP2350 firmware,
+builds a real shared hot-loop instantiation, checks its ELF using its local
+profile, enforces its local dependency policy through the generic checker, and
+dry-runs its hardware profile against a deterministic mock through the shared
+runner. CI exercises the complete boundary. The local Cargo patch is an
+explicit substitute for not-yet-published 0.1.0 crates, not evidence of a
+release. No new hardware claim is made.
 
 **Revision 17** records the tooling boundary. Static-layout and hardware-test
 contracts now live in schema-versioned TOML beside each experiment rather than
