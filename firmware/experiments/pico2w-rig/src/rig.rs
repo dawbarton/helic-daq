@@ -12,8 +12,8 @@ use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
 use helic_fw_common::analog_spi::{HotSpiConfig, RawSpiDevice, SramAd5064};
-use helic_fw_common::rig::{PwmWrapSpinTick, Rig};
-use helic_fw_common::SampleRate;
+use helic_fw_common::rig::PwmWrapSpinTick;
+use helic_rt::{Rig, SampleRate};
 
 use crate::board::PicoDacParts;
 use crate::config::{ActiveController, LASER_RANGE_MM as DEFAULT_LASER_RANGE_MM, OUTPUT_CHANNEL};

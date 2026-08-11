@@ -1088,6 +1088,11 @@ version = "0.1.0"
 [[package]]
 name = "helic-rt"
 version = "0.1.0"
+dependencies = [
+ "heapless",
+ "helic-core",
+ "helic-proto",
+]
 
 [[package]]
 name = "ident_case"

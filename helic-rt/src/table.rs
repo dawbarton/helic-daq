@@ -1,4 +1,4 @@
-//! Cross-core double buffer for uploaded waveform tables.
+//! Legacy cross-core double buffer for uploaded waveform tables.
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU8, Ordering};

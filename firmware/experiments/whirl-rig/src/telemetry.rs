@@ -2,7 +2,7 @@
 
 use core::sync::atomic::AtomicU32;
 
-use helic_fw_common::params::ExtraParam;
+use helic_rt::params::ExtraParam;
 
 pub static PITCH_VALUE: AtomicU32 = AtomicU32::new(0);
 pub static YAW_VALUE: AtomicU32 = AtomicU32::new(0);

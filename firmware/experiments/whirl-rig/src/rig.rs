@@ -10,9 +10,9 @@ use embassy_rp::pwm::Slice;
 use helic_core::rpm::RpmEstimator;
 use helic_drivers::ssi::{deinterleave_pair, SsiFormat, SsiScale};
 use helic_fw_common::pulse_pio::PulsePeriodReader;
-use helic_fw_common::rig::{PwmWrapSpinTick, Rig};
+use helic_fw_common::rig::PwmWrapSpinTick;
 use helic_fw_common::ssi_pio::DualSsiReader;
-use helic_fw_common::SampleRate;
+use helic_rt::{Rig, SampleRate};
 
 use crate::board::WhirlParts;
 use crate::config::{

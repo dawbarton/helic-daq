@@ -5,70 +5,26 @@ use core::sync::atomic::Ordering;
 use defmt::info;
 use embassy_rp::pac;
 use embassy_time::{Duration, Ticker};
-use heapless::spsc::{Consumer, Producer, Queue};
+use heapless::spsc::Queue;
 use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::lut::SinLut;
 use helic_core::phase::PhaseAccumulator;
-use helic_core::table::{TableInterpolation, TableMode, TablePlayer, WaveTable};
-use helic_rt::RtShared;
+use helic_core::table::{TablePlayer, WaveTable};
+use helic_rt::{
+    source_count, CommandConsumer, Record, RecordProducer, Rig, RtChannels, RtCommand, RtShared,
+    SampleRate, TickSource, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN, HARMONICS, MAX_SOURCES,
+    RECORD_QUEUE_LEN,
+};
 use static_cell::StaticCell;
 
-use crate::rig::{source_count, Rig, TickSource, MAX_SOURCES};
-use crate::table;
-use crate::{SampleRate, HARMONICS};
+use helic_rt::table;
 
-#[derive(Clone, Copy, Debug)]
-pub enum RtCommand {
-    SetIncrement(u32),
-    SetTargetCoeffs(FourierCoeffs<HARMONICS>),
-    SetForcingCoeffs(FourierCoeffs<HARMONICS>),
-    SetTableIncrement(u32),
-    SetTableGain(f32),
-    SetTableInterpolation(TableInterpolation),
-    SetTableMode(TableMode),
-    SetTableMultiplier(u32),
-    SetTablePhase(u32),
-    TriggerTable,
-    UseTable(u8),
-    ResetController,
-    SetCtrlParam(u16, f32),
-    SetRigParam(u16, f32),
-}
-
-pub const COMMAND_QUEUE_LEN: usize = 32;
-/// Maximum number of host commands applied at one sample boundary.
-///
-/// A finite queue alone is not a useful 125 µs WCET bound: draining a burst of
-/// coefficient sets could consume the whole period. Remaining commands stay in
-/// FIFO order for the next tick and are observable through the backlog maximum.
-pub const COMMANDS_PER_TICK: usize = 2;
 /// Mask for a command epoch that remains exactly representable as `f32`.
 const COMMAND_EPOCH_MASK: u32 = (1 << 24) - 1;
-pub type CommandProducer = Producer<'static, RtCommand>;
-pub type CommandConsumer = Consumer<'static, RtCommand>;
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Record {
-    pub index: u32,
-    pub n: u8,
-    pub values: [f32; MAX_SOURCES],
-}
-
-pub const RECORD_QUEUE_LEN: usize = 256;
-pub type RecordProducer = Producer<'static, Record>;
-pub type RecordConsumer = Consumer<'static, Record>;
 
 static COMMAND_QUEUE: StaticCell<Queue<RtCommand, COMMAND_QUEUE_LEN>> = StaticCell::new();
 static RECORD_QUEUE: StaticCell<Queue<Record, RECORD_QUEUE_LEN>> = StaticCell::new();
-
-/// The four uniquely owned queue endpoints connecting the two cores.
-pub struct RtChannels {
-    pub command_tx: CommandProducer,
-    pub command_rx: CommandConsumer,
-    pub record_tx: RecordProducer,
-    pub record_rx: RecordConsumer,
-}
 
 /// Initialise the platform's single pair of cross-core queues.
 ///

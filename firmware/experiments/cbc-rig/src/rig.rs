@@ -17,8 +17,8 @@ use helic_core::safety::{clamp_channel_command, StaleCounter};
 use helic_drivers::ad5064::{Ad5064, ChannelPolarity};
 use helic_drivers::ad7609::Ad7609;
 use helic_fw_common::analog_spi::{HotSpiConfig, RawSpiDevice, SramAd5064};
-use helic_fw_common::rig::{BusyEdgeSpinTick, Rig};
-use helic_fw_common::SampleRate;
+use helic_fw_common::rig::BusyEdgeSpinTick;
+use helic_rt::{Rig, SampleRate};
 use static_cell::StaticCell;
 
 use crate::board::CbcParts;

@@ -30,9 +30,9 @@ use embassy_time::Timer;
 use helic_fw_common::comms;
 use helic_fw_common::net;
 use helic_fw_common::net::wiznet::EthernetParts;
-use helic_fw_common::params::{self, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
-use helic_rt::RtShared;
+use helic_rt::params::ParamStore;
+use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -47,8 +47,7 @@ use rig::CbcRig;
 type Store = ParamStore<config::ActiveController, CbcRig>;
 // This unnamed compile-time assertion fails the build if the chosen rig and
 // controller would overflow the fixed protocol source table.
-const _: () =
-    assert!(helic_fw_common::rig::source_count::<CbcRig>() <= helic_fw_common::rig::MAX_SOURCES);
+const _: () = assert!(source_count::<CbcRig>() <= MAX_SOURCES);
 
 /// RP2350 boot image definition, required in flash for the boot ROM.
 #[unsafe(link_section = ".start_block")]
@@ -82,7 +81,10 @@ fn main() -> ! {
         config::LASER_RANGE_MM.to_bits(),
         core::sync::atomic::Ordering::Relaxed,
     );
-    info!("helic-daq firmware boot: {}", params::FIRMWARE_BANNER);
+    info!(
+        "helic-daq firmware boot: {}",
+        helic_fw_common::identity::FIRMWARE_BANNER
+    );
 
     let b = board::Board::new(p);
 
@@ -95,6 +97,7 @@ fn main() -> ! {
         channels.command_tx,
         &RT_SHARED,
         config::SAMPLE_RATE,
+        helic_fw_common::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
         &controller,
@@ -149,12 +152,7 @@ fn main() -> ! {
 /// Embassy task functions cannot be generic, hence this concrete wrapper
 /// around the reusable WIZnet and communications functions.
 #[embassy_executor::task]
-async fn core0_main(
-    spawner: Spawner,
-    eth: EthernetParts,
-    store: Store,
-    records: shared_rt::RecordConsumer,
-) {
+async fn core0_main(spawner: Spawner, eth: EthernetParts, store: Store, records: RecordConsumer) {
     info!("core0_main: task started");
     // `.await` yields core 0 while the network initialises; it does not block
     // the independent real-time executor running on core 1.

@@ -11,7 +11,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use heapless::Vec;
 
-use crate::rig::MAX_SOURCES;
+use helic_rt::MAX_SOURCES;
 
 /// Stream session state shared between the TCP server (writer) and the UDP
 /// streamer (reader). Both tasks live on core 0.

@@ -459,3 +459,20 @@ evidence:
   through the `rt-sram` feature. This is static software evidence only. The
   attached CBC hardware has not yet been flashed, and timing remains at the
   previously verified baseline until the stage-2 measurement gate.
+
+## 2026-08-11T12:22+00:00 Rig-decoupling implementation stage 1
+
+- Existing portable runtime contracts, command/record queue types, source
+  assembly, and parameter storage now live in the host-testable `helic-rt`
+  crate. Golden host tests pin the 33-entry platform registry and current
+  source-segment order.
+- The reviewed migration list named `ParamGroup` and `Program` in stage 1 even
+  though neither exists in the pre-migration implementation; introducing them
+  remains part of stages 5 and 6. The legacy table module moved mechanically
+  with `ParamStore` only to avoid a reverse dependency and is still scheduled
+  for replacement by `TableBuffer` in stage 3.
+- Firmware identity was not moved into the shared runtime: firmware support
+  generates it and injects it into `ParamStore`, so a separately versioned rig
+  will report its own build. All production release ELFs cross-built and passed
+  the SRAM layout gate. This stage adds no hardware evidence; timing measurement
+  remains the stage-2 gate.

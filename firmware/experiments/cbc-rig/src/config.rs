@@ -9,7 +9,7 @@
 
 use helic_core::controller::PassThrough;
 use helic_fw_common::net::NetConfig;
-pub use helic_fw_common::SampleRate;
+pub use helic_rt::SampleRate;
 
 /// Name advertised during discovery. Protocol names are short ASCII strings.
 pub const EXPERIMENT: &str = "cbc-rig";

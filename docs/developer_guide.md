@@ -75,7 +75,7 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | Path | What | Builds for |
 |---|---|---|
 | `helic-core/` | DSP: phase accumulator, sine LUT, generators, filters, PID, controller trait, Fourier estimator | host + firmware (`no_std`, no alloc) |
-| `helic-rt/` | Portable real-time contracts and the injected atomic state shared between firmware cores | host + firmware (`no_std`, no Embassy) |
+| `helic-rt/` | Portable rig/tick contracts, cross-core types and state, source assembly, and parameter registry | host + firmware (`no_std`, no Embassy) |
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
 | `helic-broker/` | Loopback multi-client broker, recent history and optional HDF5 recording | host |
@@ -189,7 +189,7 @@ core 1 (real-time)                       core 0 (everything else)
 The AD7609's CONVST pin is driven by **PWM slice 4** as a free-running
 output. The sampling instant is therefore crystal-timed; software load
 cannot move it. Sample-rate presets map to exact divider/wrap pairs from
-the 150 MHz system clock (`helic_fw_common::SampleRate::pwm_params`,
+the 150 MHz system clock (`helic_rt::SampleRate::pwm_params`,
 re-exported through each experiment's `config.rs`).
 
 The software pipeline is edge-triggered on the BUSY falling edge
@@ -445,7 +445,7 @@ Three transport-independent server tasks:
 
 rtc-style discoverable registry: the host reads names/types/sizes in bounded
 pages at connect and uses indices thereafter, so **adding a parameter is a
-firmware-only change**. `helic_fw_common::params::ParamStore` serves reads from
+firmware-only change**. `helic_rt::params::ParamStore` serves reads from
 RT-loop atomics or from the shadow copies of writable values, and turns writes
 into `RtCommand`s. Direct core-0 actions return a `ParamAction`; the TCP server
 uses the reboot action to wait briefly for core-1 quiescence and invoke the
@@ -453,11 +453,15 @@ RP2350 ROM only after the parameter value has been fully validated. Pagination
 keeps the complete registry independent of the 1 KiB control-frame limit; each
 definition still fits wholly within one page.
 
-The fixed schema and parameter-count assertions live in `params/schema.rs`;
-mutable shadow state and command translation remain in `params.rs`. To add a
-platform parameter, use the typed read-only/writable constructors in
-`BASE_PARAMS`, add its index constant, and handle it in `get` (and `set` if
-writable). Experiment
+Firmware identity remains application-owned and is injected when the store is
+constructed. A separately versioned rig must report its own build, not the
+version of the shared `helic-rt` crate.
+
+The fixed schema and parameter-count assertions live in
+`helic-rt/src/params/schema.rs`; mutable shadow state and command translation
+remain in `helic-rt/src/params.rs`. To add a platform parameter, use the typed
+read-only/writable constructors in `BASE_PARAMS`, add its index constant, and
+handle it in `get` (and `set` if writable). Experiment
 telemetry uses `ExtraParam::f32`/`u32`, which always describes a read-only scalar
 whose definition matches its atomic storage. Controller parameters need no
 registry work at all; see below.

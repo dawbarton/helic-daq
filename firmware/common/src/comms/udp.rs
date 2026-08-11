@@ -9,10 +9,9 @@ use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{Duration, Ticker};
 use helic_proto::stream::{StreamHeader, STREAM_HEADER_LEN};
-use helic_rt::RtShared;
+use helic_rt::{Record, RecordConsumer, RtShared};
 
 use super::STREAM;
-use crate::rt_loop::{Record, RecordConsumer};
 
 /// Payload budget: fits an unfragmented packet in a standard 1500 MTU.
 const MAX_PACKET: usize = 1472;

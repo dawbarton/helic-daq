@@ -21,7 +21,7 @@ pub async fn beacon_task(stack: Stack<'static>, mac: [u8; 6], experiment: &'stat
         .bind(helic_proto::DISCOVERY_PORT)
         .expect("discovery UDP bind failed");
 
-    let response = BeaconResponse::new(mac, experiment, crate::params::FIRMWARE_VERSION);
+    let response = BeaconResponse::new(mac, experiment, crate::identity::FIRMWARE_VERSION);
     let mut encoded = [0; RESPONSE_LEN];
     response.encode(&mut encoded);
     let mut request = [0; 64];

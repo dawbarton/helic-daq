@@ -10,10 +10,10 @@ use helic_core::controller::Controller;
 use helic_proto::frame::{self, MsgType, HEADER_LEN, MAX_PAYLOAD, TRAILER_LEN};
 use helic_proto::payload;
 use helic_proto::{ErrorCode, MAGIC, VERSION};
+use helic_rt::params::{ParamAction, ParamStore};
+use helic_rt::{source, source_count, Rig, MAX_SOURCES};
 
 use super::STREAM;
-use crate::params::{ParamAction, ParamStore};
-use crate::rig::{source, source_count, Rig, MAX_SOURCES};
 
 pub async fn control_run<C: Controller, R: Rig>(
     stack: Stack<'static>,

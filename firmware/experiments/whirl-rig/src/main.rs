@@ -19,9 +19,9 @@ use embassy_time::Timer;
 use helic_fw_common::comms;
 use helic_fw_common::net;
 use helic_fw_common::net::wiznet::EthernetParts;
-use helic_fw_common::params::{self, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
-use helic_rt::RtShared;
+use helic_rt::params::ParamStore;
+use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -33,8 +33,7 @@ mod telemetry;
 use rig::WhirlRig;
 
 type Store = ParamStore<config::ActiveController, WhirlRig>;
-const _: () =
-    assert!(helic_fw_common::rig::source_count::<WhirlRig>() <= helic_fw_common::rig::MAX_SOURCES);
+const _: () = assert!(source_count::<WhirlRig>() <= MAX_SOURCES);
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -54,7 +53,10 @@ static RT_SHARED: RtShared = RtShared::new();
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let p = embassy_rp::init(Default::default());
-    info!("helic-daq firmware boot: {}", params::FIRMWARE_BANNER);
+    info!(
+        "helic-daq firmware boot: {}",
+        helic_fw_common::identity::FIRMWARE_BANNER
+    );
     let b = board::Board::new(p);
 
     let channels = shared_rt::init_channels();
@@ -63,6 +65,7 @@ fn main() -> ! {
         channels.command_tx,
         &RT_SHARED,
         config::SAMPLE_RATE,
+        helic_fw_common::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
         &controller,
@@ -97,12 +100,7 @@ fn main() -> ! {
 }
 
 #[embassy_executor::task]
-async fn core0_main(
-    spawner: Spawner,
-    eth: EthernetParts,
-    store: Store,
-    records: shared_rt::RecordConsumer,
-) {
+async fn core0_main(spawner: Spawner, eth: EthernetParts, store: Store, records: RecordConsumer) {
     let stack = net::wiznet::init(spawner, eth, config::MAC_ADDR, config::NET_CONFIG).await;
     spawner.spawn(unwrap!(control_task(stack, store)));
     spawner.spawn(unwrap!(comms::udp::stream_task(stack, records, &RT_SHARED)));

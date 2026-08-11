@@ -21,9 +21,9 @@ use embassy_time::Timer;
 use helic_fw_common::comms;
 use helic_fw_common::net;
 use helic_fw_common::net::cyw43::WifiParts;
-use helic_fw_common::params::{self, ParamStore};
 use helic_fw_common::rt_loop as shared_rt;
-use helic_rt::RtShared;
+use helic_rt::params::ParamStore;
+use helic_rt::{source_count, RecordConsumer, RtShared, MAX_SOURCES};
 use panic_probe as _;
 use static_cell::StaticCell;
 
@@ -37,9 +37,7 @@ use rig::PicoDacRig;
 
 type Store = ParamStore<config::ActiveController, PicoDacRig>;
 // Reject an over-large discovered source table during compilation.
-const _: () = assert!(
-    helic_fw_common::rig::source_count::<PicoDacRig>() <= helic_fw_common::rig::MAX_SOURCES
-);
+const _: () = assert!(source_count::<PicoDacRig>() <= MAX_SOURCES);
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -71,7 +69,7 @@ fn main() -> ! {
     info!(
         "helic-daq {} boot: {}",
         config::EXPERIMENT,
-        params::FIRMWARE_BANNER
+        helic_fw_common::identity::FIRMWARE_BANNER
     );
 
     let board = board::Board::new(p);
@@ -82,6 +80,7 @@ fn main() -> ! {
         channels.command_tx,
         &RT_SHARED,
         config::SAMPLE_RATE,
+        helic_fw_common::identity::FIRMWARE_VERSION,
         config::EXPERIMENT,
         telemetry::EXTRA_PARAMS,
         &controller,
@@ -120,12 +119,7 @@ fn main() -> ! {
 }
 
 #[embassy_executor::task]
-async fn core0_main(
-    spawner: Spawner,
-    wifi: WifiParts,
-    store: Store,
-    records: shared_rt::RecordConsumer,
-) {
+async fn core0_main(spawner: Spawner, wifi: WifiParts, store: Store, records: RecordConsumer) {
     // Radio initialisation joins the access point and returns the same network
     // stack abstraction used by wired experiments, plus LED control and MAC.
     let (ssid, password) = config::wifi_credentials();

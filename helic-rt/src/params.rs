@@ -11,31 +11,19 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::RtShared;
 use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableInterpolation, TableMode};
 use helic_proto::{ErrorCode, ParamType};
-use helic_rt::RtShared;
 
-use crate::rig::Rig;
-use crate::rt_loop::{CommandProducer, RtCommand};
-use crate::table;
-use crate::{SampleRate, HARMONICS};
+use crate::{table, validate_sources, CommandProducer, Rig, RtCommand, SampleRate, HARMONICS};
 
 mod schema;
 
 pub use schema::BASE_PARAMS;
 use schema::*;
-
-/// Firmware identification string, padded/truncated to 16 chars on the wire.
-pub const FIRMWARE_BANNER: &str = concat!(
-    "helic-daq ",
-    env!("CARGO_PKG_VERSION"),
-    " ",
-    env!("HELIC_GIT_DESCRIBE")
-);
-pub const FIRMWARE_VERSION: &str = env!("HELIC_FIRMWARE_ID");
 
 /// Serialized size of a coefficient set: mean + a[K] + b[K].
 pub const COEFF_COUNT: u16 = (1 + 2 * HARMONICS) as u16;
@@ -173,6 +161,7 @@ pub struct ParamStore<C: Controller, R: Rig> {
     commands: CommandProducer,
     shared: &'static RtShared,
     sample_rate: SampleRate,
+    firmware_version: &'static str,
     experiment: &'static str,
     extras: &'static [ExtraParam],
     freq_hz: f32,
@@ -194,6 +183,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         commands: CommandProducer,
         shared: &'static RtShared,
         sample_rate: SampleRate,
+        firmware_version: &'static str,
         experiment: &'static str,
         extras: &'static [ExtraParam],
         controller: &C,
@@ -230,6 +220,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             commands,
             shared,
             sample_rate,
+            firmware_version,
             experiment,
             extras,
             freq_hz: 0.0,
@@ -246,13 +237,13 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
             types: PhantomData,
         };
         store.validate_registry();
-        crate::rig::validate_sources::<R>();
+        validate_sources::<R>();
         store
     }
 
     /// Shared state used by the control server for connection-loss quieting
     /// and the ordered reboot handshake.
-    pub(crate) fn shared(&self) -> &'static RtShared {
+    pub fn shared(&self) -> &'static RtShared {
         self.shared
     }
 
@@ -332,9 +323,7 @@ impl<C: Controller, R: Rig> ParamStore<C, R> {
         }
         let out = &mut out[..size];
         match index {
-            0 => {
-                write_string(out, FIRMWARE_VERSION);
-            }
+            0 => write_string(out, self.firmware_version),
             1 => write_string(out, self.experiment),
             2 => out.copy_from_slice(&self.sample_rate.hz().to_le_bytes()),
             3 => out.copy_from_slice(&self.shared.live.ticks.load(Ordering::Relaxed).to_le_bytes()),
@@ -751,5 +740,147 @@ fn deserialize_coeffs(data: &[u8]) -> Result<FourierCoeffs<HARMONICS>, ErrorCode
         Ok(c)
     } else {
         Err(ErrorCode::BadValue)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::AtomicU32;
+    use std::boxed::Box;
+
+    use heapless::spsc::Queue;
+    use helic_core::controller::PassThrough;
+
+    use super::*;
+    use crate::{source, source_count, RtCommand, COMMAND_QUEUE_LEN};
+
+    static EXTRA_VALUE: AtomicU32 = AtomicU32::new(0);
+    static EXTRAS: &[ExtraParam] = &[ExtraParam::f32("extra", &EXTRA_VALUE)];
+
+    struct TestRig;
+
+    impl Rig for TestRig {
+        const INPUTS: &'static [(&'static str, &'static str)] = &[("adc0", "V")];
+        type Ctrl = PassThrough;
+
+        fn init(&mut self) {}
+        fn measure(&mut self, _values: &mut [f32]) {}
+        fn actuate(&mut self, _out: f32) {}
+        fn prepare_reboot(&mut self, _step: u8) -> bool {
+            true
+        }
+
+        fn param_names() -> &'static [&'static str] {
+            &["rig_gain"]
+        }
+
+        fn param_defaults() -> &'static [f32] {
+            &[1.0]
+        }
+    }
+
+    fn store() -> (ParamStore<PassThrough, TestRig>, crate::CommandConsumer) {
+        let queue = Box::leak(Box::new(Queue::<RtCommand, COMMAND_QUEUE_LEN>::new()));
+        let (tx, rx) = queue.split();
+        let shared = Box::leak(Box::new(RtShared::new()));
+        (
+            ParamStore::new(
+                tx,
+                shared,
+                SampleRate::Hz8000,
+                "0.1.0 test",
+                "test-rig",
+                EXTRAS,
+                &PassThrough,
+            ),
+            rx,
+        )
+    }
+
+    #[test]
+    fn platform_registry_is_wire_stable_after_relocation() {
+        let expected = [
+            ("firmware", ParamType::Char, 16, false),
+            ("experiment", ParamType::Char, 16, false),
+            ("sample_freq", ParamType::F32, 1, false),
+            ("ticks", ParamType::U32, 1, false),
+            ("loop_time_last", ParamType::U32, 1, false),
+            ("loop_time_max", ParamType::U32, 1, false),
+            ("clock_jitter", ParamType::U32, 1, false),
+            ("overruns", ParamType::U32, 1, false),
+            ("tick_timeouts", ParamType::U32, 1, false),
+            ("records_dropped", ParamType::U32, 1, false),
+            ("freq", ParamType::F32, 1, true),
+            ("target_coeffs", ParamType::F32, COEFF_COUNT, true),
+            ("forcing_coeffs", ParamType::F32, COEFF_COUNT, true),
+            ("ctrl_reset", ParamType::U32, 1, true),
+            (
+                "table",
+                ParamType::F32,
+                helic_core::table::MAX_TABLE_LEN as u16,
+                true,
+            ),
+            ("table_len", ParamType::U16, 1, false),
+            ("table_freq", ParamType::F32, 1, true),
+            ("table_gain", ParamType::F32, 1, true),
+            ("table_interp", ParamType::U32, 1, true),
+            ("table_mode", ParamType::U32, 1, true),
+            ("table_mult", ParamType::U32, 1, true),
+            ("table_phase", ParamType::F32, 1, true),
+            ("table_trigger", ParamType::U32, 1, true),
+            ("wake_phase_min", ParamType::U32, 1, false),
+            ("wake_phase_max", ParamType::U32, 1, false),
+            ("t_measure_max", ParamType::U32, 1, false),
+            ("t_actuate_max", ParamType::U32, 1, false),
+            ("t_rest_max", ParamType::U32, 1, false),
+            ("diag_reset", ParamType::U32, 1, true),
+            ("cmd_backlog_max", ParamType::U32, 1, false),
+            ("arm", ParamType::U32, 1, true),
+            ("safety", ParamType::U32, 1, false),
+            ("mcu_reboot", ParamType::U32, 1, true),
+        ];
+        assert_eq!(BASE_PARAMS.len(), expected.len());
+        for (definition, expected) in BASE_PARAMS.iter().zip(expected) {
+            assert_eq!(
+                (
+                    definition.name,
+                    definition.ty,
+                    definition.count,
+                    definition.writable,
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn registry_and_sources_preserve_segment_order() {
+        let (store, _rx) = store();
+        assert_eq!(store.count(), BASE_PARAMS.len() + 2);
+        assert_eq!(store.def(BASE_PARAMS.len()).unwrap().name, "extra");
+        assert_eq!(store.def(BASE_PARAMS.len() + 1).unwrap().name, "rig_gain");
+
+        let sources: std::vec::Vec<_> = (0..source_count::<TestRig>())
+            .map(source::<TestRig>)
+            .collect();
+        assert_eq!(
+            sources,
+            [
+                Some(("adc0", "V")),
+                Some(("target", "V")),
+                Some(("forcing", "V")),
+                Some(("table", "V")),
+                Some(("out", "V")),
+                Some(("cmd_epoch", "count")),
+            ]
+        );
+    }
+
+    #[test]
+    fn host_tested_store_still_enqueues_sample_boundary_commands() {
+        let (mut store, mut rx) = store();
+        store.set(IDX_FREQ, &20.0f32.to_le_bytes()).unwrap();
+        let expected = PhaseAccumulator::increment_for(20.0, 8000.0);
+        assert!(matches!(rx.dequeue(), Some(RtCommand::SetIncrement(value)) if value == expected));
     }
 }

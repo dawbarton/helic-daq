@@ -1,6 +1,6 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stage 0 completed 2026-08-11. Revision
+Status: implementation in progress; stages 0–1 completed 2026-08-11. Revision
 8.1. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
@@ -1492,9 +1492,18 @@ production rigs here and treats the crate boundary as the contract that
    handshake. Release ELFs pass the real-time layout gate. Hardware timing is
    deliberately deferred to the stage-2 measurement gate, where the complete
    firmware crate split will have landed.
-1. **Move the remaining runtime types** — `Rig`, `TickSource`, `SampleRate`,
-   `Program`, `ParamGroup`, `ParamStore`, and the parameter types — out of
-   `helic-fw-common` into `helic-rt`, unchanged.
+1. **Completed 2026-08-11: move the existing portable runtime types** — `Rig`,
+   `TickSource`, `SampleRate`, the command and record types, queue endpoints,
+   source assembly, `ParamStore`, and the parameter types — out of
+   `helic-fw-common` into `helic-rt`, unchanged. The legacy table module moved
+   mechanically with `ParamStore` to avoid a reverse dependency; stage 3 still
+   replaces it with the reviewed `TableBuffer` contract. The earlier wording
+   also listed `Program` and `ParamGroup` here, but neither exists in the
+   pre-migration code: `ParamGroup` remains deliberately introduced in stage
+   5, and `Program` in stage 6. Firmware identity remains in firmware support
+   and is injected into `ParamStore`, so an external rig does not inherit the
+   shared runtime crate's identity. Host golden tests now pin the fixed
+   parameter schema and current source-segment order.
 2. **`helic-fw-common` split** into `helic-fw-rt` and `helic-fw-support`,
    dependency rules added to CI, and the membership rule written into
    `helic-fw-support`'s crate documentation. Verify by ELF inspection and a

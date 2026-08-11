@@ -5,6 +5,23 @@
 
 #![no_std]
 
-mod shared;
+#[cfg(test)]
+extern crate std;
 
+pub mod channels;
+pub mod params;
+pub mod rig;
+mod sample_rate;
+mod shared;
+pub mod table;
+
+pub use channels::{
+    CommandConsumer, CommandProducer, Record, RecordConsumer, RecordProducer, RtChannels,
+    RtCommand, COMMANDS_PER_TICK, COMMAND_QUEUE_LEN, RECORD_QUEUE_LEN,
+};
+pub use rig::{source, source_count, validate_sources, Rig, TickSource, MAX_SOURCES};
+pub use sample_rate::SampleRate;
 pub use shared::{Diagnostics, Live, RebootShared, RtShared, Safety, SafetyInputs};
+
+/// Number of harmonics in the current periodic target and forcing generators.
+pub const HARMONICS: usize = 16;
