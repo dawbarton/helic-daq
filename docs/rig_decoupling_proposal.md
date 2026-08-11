@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–6 completed 2026-08-11. Revision
-11. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–7 completed 2026-08-11. Revision
+12. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -1575,9 +1575,20 @@ production rigs here and treats the crate boundary as the contract that
    faults, loss, drops, or gaps. Only CBC W5500 hardware was available; the
    other production ELFs and both wired W6100 variants have software evidence,
    not new physical evidence.
-7. **Bounded output vector**, `Rig::ACTUATORS`, slice `actuate`, `safety_decide`
-   plus its atomic wrapper, `Program::fault`, the non-finite trip, and generic
-   source assembly. Migrate all three rigs together.
+7. **Completed 2026-08-11: bounded output vector**, `Rig::ACTUATORS`, slice
+   `actuate`, `safety_decide` plus its atomic wrapper, `Program::fault`, the
+   non-finite trip, and generic source assembly. All three production rigs now
+   declare their actuator sources, and setup proves programme/rig output-count
+   equality and the four-actuator bound. The pure decision applies per-channel
+   clamps, globally quiets on rig, programme, or non-finite faults, and keeps a
+   persistent trip request so a concurrent core-0 re-arm cannot mask a present
+   fault. CBC retains its one `out` source and therefore remains at 15 sources.
+   Exact W5500 firmware `0.1.0 9714464` passed focused trip/re-latch and quiet
+   output checks, the 8000-record all-source regression at 35–36 us, and the
+   60000-record sustained regression at 34–35 us, with fixed 36 us wake phase
+   and no faults, loss, drops, or gaps. Only CBC W5500 hardware was available;
+   all production ELFs and both W6100 wired variants have fresh software
+   evidence, but no additional physical evidence.
 8. **Const generics** for `HARMONICS` and `MAX_TABLE_LEN`.
 9. **`RpmEstimator` moves** to `whirl-rig-program`.
 10. **`Pll` into `helic-core`** with its state machine and bounds.
@@ -1721,7 +1732,12 @@ wake phase is the baseline.
    displacement, which binds at low frequency. Rig `output_fault` on measured
    displacement, or a gate-level rate/DC hook? The one open question with a
    physical hazard attached; settle before any shaker rig is built.
-2. **Per-actuator trip** remains deferred; confirm the deferral explicitly.
+2. **Resolved at Stage 7: per-actuator trip remains deferred.** A rig or
+   programme fault is deliberately global and quiets the complete actuator
+   vector. This matches coupled multi-shaker experiments, where continuing a
+   partial force pattern after one channel faults is not a safe default. A
+   future independently safe rig may propose a separate policy contract rather
+   than weakening this one.
 3. **`MAX_ACTUATORS = 4`** derives from the AD5064's channel count, not the
    application.
 4. **`MAX_GROUPS = 8`** unjustified; current usage is five.
@@ -1740,6 +1756,18 @@ wake phase is the baseline.
    Stage-10 implementation produces contrary compiler evidence.
 
 ## Revision history
+
+**Revision 12** records the bounded actuator and safety generalisation. Rigs
+declare actuator names, programmes fill an equal-length output prefix bounded
+by `MAX_ACTUATORS = 4`, and records expose each post-safety applied value in
+that declaration order. The pure safety decision covers rig faults,
+`Program::fault`, non-finite commands, per-actuator clamps, global quieting,
+and persistent trip re-latching; non-gated rigs remain verbatim. Exact CBC
+W5500 hardware retained its 15-source registry, proved the absent-laser trip
+re-latches after a logical arm while a 3 V internal forcing signal produces
+zero applied output, and passed both continuity gates at 34–36 us. Per-actuator
+tripping remains explicitly deferred because partial excitation is not a safe
+generic response for coupled rigs.
 
 **Revision 11** records the completed programme extraction. The statically
 selected `Program` owns controller, Fourier, table, and signal state;

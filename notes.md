@@ -649,3 +649,41 @@ evidence:
   The laser and actuator supplies remained down, so this establishes logic,
   timing, network, and safety-quiet behaviour, not powered laser or actuator
   behaviour.
+
+## 2026-08-11T14:53+00:00 Rig-decoupling implementation stage 7
+
+- `Rig::ACTUATORS` now declares up to four named applied outputs, `actuate`
+  accepts the corresponding slice, and the common loop uses bounded commanded
+  and applied vectors. Setup rejects programme/rig count mismatches and excess
+  outputs. Source assembly inserts each actuator after programme signals and
+  before `cmd_epoch`; all production rigs retain their existing single `out`
+  source, so CBC remains at 15 sources. The obsolete controller type on `Rig`
+  was removed because the statically selected `Program` owns it.
+- The pure `helic_rt::safety_decide` applies limits per actuator, quiets the
+  complete vector on disarm, an existing trip, rig fault, `Program::fault`, or
+  any non-finite command, and requests the monotonic trip latch on every tick
+  while a fault persists. Host tests cover two-channel clamp and safe values,
+  every fault source, re-latching after a stale snapshot, non-gated verbatim
+  output, source order, count mismatch, and the four-actuator capacity. There
+  are now 36 `helic-rt` tests.
+- Exact clean W5500 CBC firmware `0.1.0 9714464` reported protocol 3, 42
+  parameters, 15 sources, and 8000 Hz. With the laser supply down, a 3 V
+  internal forcing mean produced applied `out = 0` while disarmed
+  (`safety = 0b1010`). A logical arm cleared the old trip, the still-present
+  laser fault re-latched it by the next observation (`safety = 0b1011`), and
+  applied output remained exactly zero. Both 512-record captures had zero UDP
+  loss, and timing counters remained clean.
+- The 8000-record all-15-source W5500 regression measured idle, TCP-poll, and
+  capture maxima of 35, 35, and 36 us. The 60000-record `adc0,out` regression
+  measured 34, 35, and 35 us. Both held wake phase at 36/36 us and had zero
+  jitter, overruns, tick timeouts, source/capture drops, UDP loss, and index
+  gaps. This remains within CBC's unchanged 60 us acceptance limit.
+- Root formatting, clippy, and tests passed; the complete release firmware
+  workspace passed clippy, build, and the SRAM layout gate. Realised CBC
+  hot-loop calls remain restricted to SRAM analogue transfers and EABI
+  copy/clear helpers, apart from invariant-failure panic thunks. Both W6100
+  wired variants cross-built but were not flashed; Python passed 65 tests and
+  Julia passed 89 checks. MATLAB was unavailable. Final W5500 state was
+  `arm = 0`, `table_mode = 0`, `freq = 0`, zero target/forcing coefficients,
+  `safety = 0b1010`, and clean timing counters. The laser and actuator supplies
+  remained down, so no powered-path evidence was obtained.

@@ -172,14 +172,14 @@ PWM-wrap tick and omit the ADC read.
 
 The component-ownership refactor in
 [rig_decoupling_proposal.md](rig_decoupling_proposal.md) is being implemented
-in explicit regression-gated stages. Stages 0–6 have moved the cross-core
+in explicit regression-gated stages. Stages 0–7 have moved the cross-core
 state and portable contracts into `helic-rt`, split firmware support by
 execution domain, replaced the global waveform buffers with owner-checked
 endpoints, composed component-owned parameter groups, and moved the standard
 target/forcing/controller/table graph behind the statically selected
-`Program`. The common loop now owns timing, command dispatch, record assembly,
-and the rig/program boundary; Stage 7 generalises its remaining scalar output
-path.
+`Program`, and generalised the rig/program boundary to a bounded actuator
+vector. The common loop now owns timing, command dispatch, vector safety, and
+record assembly.
 
 ```
 core 1 (real-time)                       core 0 (everything else)
@@ -219,8 +219,8 @@ runner with the PWM peripheral's latched wrap flag. Each tick then runs
    through wrapping-multiply phases; see
    [periodic_signal_generator.md](periodic_signal_generator.md)), steps the
    waveform table, and calls the controller;
-4. the programme output is passed through the current scalar safety gate and
-   into rig actuation (Stage 7 generalises this boundary to a bounded vector);
+4. the bounded programme output vector is passed through the safety gate and
+   into slice-based rig actuation;
 5. rig inputs, programme signals including coherent master `phase`, applied
    output, and `cmd_epoch` are assembled into a `Record`; diagnostics are
    updated.
