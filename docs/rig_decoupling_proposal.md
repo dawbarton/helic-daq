@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
-Status: implementation in progress; stages 0–3 completed 2026-08-11. Revision
-8.1. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+Status: implementation in progress; stages 0–4 completed 2026-08-11. Revision
+9. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -62,7 +62,8 @@ only for what it uses.
 | `MAX_SOURCES` | 24 | protocol discovery headroom |
 | `MAX_ACTUATORS` | 4 | record and safety-gate buffers |
 | `MAX_GROUPS` | 8 | `ParamStore` registry vector |
-| `MAX_RT_VALUES` | 132 | widest command payload; see "Payload width" |
+| `MAX_RT_VALUES` | 33 | widest copied payload; see "Payload width" |
+| `MAX_FORCE_VALUES` | 132 | widest buffered force vector |
 | `COMMAND_QUEUE_LEN` | 32 | existing |
 | `COMMANDS_PER_TICK` | 2 | existing WCET bound |
 
@@ -91,11 +92,12 @@ primitive with the reuse intent stated up front rather than discovered. If that
 intent proves wrong it moves into the appropriation rig's crate, which is the
 same one-commit operation in the other direction.
 
-The rule also settles the buffer. A generic `DoubleBuffer<T>` had **zero**
-consumers: the waveform table is the only buffered type, and the copied-payload
-decision for the force vector deliberately avoids creating a second. It is
-therefore concrete `TableBuffer` (§3), to be generalised additively if and when
-a second buffered component exists.
+The rule now settles the buffer in the other direction. Stage 4 measured two
+copied 33-value coefficient commands at 73 µs and two copied 132-value commands
+at 95–96 µs, both beyond CBC's unchanged 60 µs gate. Target coefficients,
+forcing coefficients, and the waveform table are therefore three actual
+consumers of one `DoubleBuffer<T>` protocol. `TableBuffer` remains a convenient
+alias, and force vectors use the same proven owner-checked mechanism.
 
 ## Target applications and what they constrain
 
@@ -190,7 +192,7 @@ so the whole vector must take effect at one sample boundary. The payload is
 Two mechanisms can deliver that atomically. The comparison, which earlier
 revisions asserted rather than showed:
 
-| | Copied payload (**chosen**) | Buffered force vector |
+| | Copied payload (**rejected**) | Buffered force vector (**chosen**) |
 |---|---|---|
 | `MAX_RT_VALUES` | 132 | 33 |
 | Queue SRAM | 32 × ~540 = 17.3 KB | 32 × ~140 = 4.5 KB |
@@ -199,31 +201,20 @@ revisions asserted rather than showed:
 | Per-boundary work | up to 1056 B copy | pointer swap |
 | Data path | `FourierSignal` owns its bank | banks live in the buffer, read through `Active` |
 
-The copy costs roughly 2–4 µs worst case against a 125 µs budget with 34 µs
-used. Its *expected* rate is once per excitation period, 400 ticks at 20 Hz, but
-that is an operating expectation and not an enforced bound: nothing stops a host
-writing the force vector faster, so the **WCET case remains two maximum-width
-commands in one tick** and is what stage 4 must measure. Twelve kilobytes of
-roughly 390 KB free is not decisive either.
+Stage 4 resolved the measurement gate. At a 34 µs steady baseline, two fully
+materialised 132-value commands took 95–96 µs and introduced 1 µs clock jitter;
+two production-shaped 33-value target/forcing commands still took 73 µs.
+Both materially exceed the predicted 2–4 µs copy increment and CBC's unchanged
+60 µs acceptance limit. Two owner-checked coefficient-buffer activations took
+55–56 µs, with fixed 36 µs wake phase and no jitter or faults. The buffered
+choice is therefore measured rather than precautionary.
 
-The deciding argument is **correctness-risk concentration**. Getting the buffer
-protocol right has taken four attempts (see "Revision history"), and the sound
-version needs a linear owner-checked token, non-`Copy` propagation through the
-command type, and explicit `!Sync` markers. Putting the *force vector* on that
-mechanism means a token defect applies a wrong force vector at a wrong
-`cmd_epoch`, which is materially worse than a wrong table sample and sits on the
-path where appropriation correctness is the entire point. A copied payload is
-trivially correct by construction.
-
-This choice also keeps the waveform table as the design's only buffered type,
-which is what lets §3 stay concrete rather than generic.
-
-**This decision is gated on measurement.** Stage 4 measures the actual
-`COMMANDS_PER_TICK` WCET at 132-value payloads. If the copy materially exceeds
-the 2–4 µs prediction, switch to the buffer. Applying two commands per tick
-copies up to 1056 bytes, which makes SRAM residency of the compiler's EABI copy
-helpers more critical, not less; the layout gate already caught flash-resident
-copy helpers once (`notes.md`, 2026-07-15, image `b35d4b8`).
+The correctness risk is controlled by using the Stage-3 protocol unchanged:
+one `&'static mut` split, non-`Sync` endpoints, a linear owner-checked token,
+and returned-command cancellation. Generalisation was earned only after the
+measurement created the second and third consumers. The production command
+queue falls from roughly 17.3 KB in the rejected wide build to 4.5 KB; a
+132-value force buffer costs a further 1.1 KB.
 
 ### Autonomous programme state is not a parameter shadow
 
@@ -320,7 +311,7 @@ reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 | Crate | Contents | Testable |
 |---|---|---|
 | `helic-proto` | wire protocol, `ErrorCode`; broker protocol feature-gated | host |
-| `helic-core` | DSP: generators, controllers, estimators, filters, tables, `Pll`, `TableBuffer` | host |
+| `helic-core` | DSP: generators, controllers, estimators, filters, tables, `Pll`, `DoubleBuffer<T>` | host |
 | **`helic-rt`** (new) | `Rig`, `TickSource`, `Program`, `ParamGroup`, `ParamDef`, `Payload`, `RtCommand`, `ParamStore`, safety decision, source assembly | host |
 | **`helic-fw-rt`** (new) | core 1: tick sources, `rt_mem`, `analog_spi`, PIO, loop driver, safety wrapper | cross-build |
 | **`helic-fw-support`** (new) | core 0: `net/`, `comms/`, `time_watchdog`, `status_run` | cross-build |
@@ -521,7 +512,8 @@ repository. `analog_spi.rs` deserves the same question. Both remain open.
 
 ```rust
 // helic-rt
-pub const MAX_RT_VALUES: usize = 132;
+pub const MAX_RT_VALUES: usize = 33;
+pub const MAX_FORCE_VALUES: usize = 132;
 pub const DOMAIN_RIG: u8 = 0;          // reserved; programmes use 1..
 
 /// Deliberately NOT `Copy`: `Buffer` carries a linear `CommitToken` that must
@@ -542,7 +534,7 @@ pub struct RtCommand {
     pub payload: Payload,
 }
 
-const _: () = assert!(core::mem::size_of::<RtCommand>() <= 560);
+const _: () = assert!(core::mem::size_of::<RtCommand>() <= 160);
 ```
 
 Core 1 routes:
@@ -555,11 +547,11 @@ if cmd.domain == DOMAIN_RIG {
 }
 ```
 
-`Values` is flat and length-tagged rather than `FourierCoeffs<H>`, because the
-payload must be non-generic while `HARMONICS` becomes a per-programme const
-generic. The `(domain, id)` pair determines the meaning, so the receiving
-component reconstructs its own typed value. One `Values` command carries a
-complete multi-actuator force vector.
+`Values` is retained for copied arrays no wider than one 16-harmonic
+coefficient set. The `(domain, id)` pair determines its meaning. Wider arrays,
+including a complete multi-actuator force vector, travel as `Buffer` tokens;
+target and forcing coefficients also use buffers because their measured
+two-command copied WCET exceeded the CBC gate.
 
 ### 2. Transactional writes, ordered centrally
 
@@ -719,18 +711,14 @@ defines the record layout.
 pub enum ParamKind { Scalar, Array(u16), Blob(u32) }
 ```
 
-### 3. The table buffer: concrete, not generic
+### 3. The owner-checked double buffer
 
-Four revisions were spent making a generic `DoubleBuffer<T>` safe, for a design
-in which the waveform table is the **only** buffered type — the force-vector
-decision deliberately avoids creating a second one. By this document's own
-two-consumer rule, that generalisation has not earned its place.
-
-So the type is concrete: `TableBuffer` in `helic-core`, holding two
-`WaveTable<N>` banks. The improvements that mattered are all independent of
-genericity and are kept: the endpoint split, the linear owner-checked token, and
-the normative ordering protocol. Adding a type parameter when a second buffered
-component genuinely appears is then a small additive change.
+Stage 3 first landed the proven concrete `TableBuffer`. Stage 4's failed copy
+gate then created actual second and third consumers: the target and forcing
+coefficient sets. The implementation consequently generalises the same code to
+`DoubleBuffer<T>`, with `TableBuffer = DoubleBuffer<WaveTable>` as an alias and
+`ValueBuffer<N> = DoubleBuffer<[f32; N]>` for force vectors. The endpoint split,
+linear owner-checked token, and normative ordering protocol are unchanged.
 
 **A note on the diagnosis, because it affects the lesson.** Of the six defects
 found across those revisions — `split` callable twice, a `Copy` token,
@@ -775,8 +763,8 @@ pub enum BufferError { Busy }
 
 const NO_PENDING: u8 = 0;   // pending stores bank + 1, keeping new() all-zero
 
-pub struct TableBuffer<const N: usize> {
-    banks: [UnsafeCell<WaveTable<N>>; 2],
+pub struct DoubleBuffer<T> {
+    banks: [UnsafeCell<T>; 2],
     /// Written only by core 1, at activation.
     active: AtomicU8,
     /// Bank id plus one, or `NO_PENDING`. Written by core 0 on commit and
@@ -784,9 +772,12 @@ pub struct TableBuffer<const N: usize> {
     pending: AtomicU8,
 }
 
-// `WaveTable` is plain data, so this needs no bound beyond the sharing
-// discipline the endpoints enforce.
-unsafe impl<const N: usize> Sync for TableBuffer<N> {}
+// Values move between uniquely owned core endpoints; `T: Send` is therefore
+// the only value-type bound needed by the sharing discipline.
+unsafe impl<T: Send> Sync for DoubleBuffer<T> {}
+
+pub type TableBuffer = DoubleBuffer<WaveTable>;
+pub type ValueBuffer<const N: usize> = DoubleBuffer<[f32; N]>;
 
 /// Linear proof that exactly one commit is outstanding. Neither `Copy` nor
 /// `Clone`: created by `Staging::commit`, moved into the command, and consumed
@@ -802,45 +793,45 @@ pub struct CommitToken {
     bank: u8,
 }
 
-impl<const N: usize> TableBuffer<N> {
-    pub const fn new() -> Self;
+impl<T: 'static> DoubleBuffer<T> {
+    pub const fn from_banks(first: T, second: T) -> Self;
 
     /// Split **once** into two uniquely owned endpoints. `&'static mut` makes a
     /// second split impossible, as `heapless::Queue::split` does. Obtain it
     /// from a `ConstStaticCell`: const-initialised, so no stack copy of a
     /// 16 KB table, and it panics on a second `take`.
-    pub fn split(&'static mut self) -> (Staging<N>, Active<N>);
+    pub fn split(&'static mut self) -> (Staging<T>, Active<T>);
 }
 
 /// `Send`, so it can be moved to its owning core; `!Sync` via `Cell`, so one
 /// endpoint cannot be shared between threads.
-pub struct Staging<const N: usize> {
-    buf: &'static TableBuffer<N>,
+pub struct Staging<T> {
+    buf: &'static DoubleBuffer<T>,
     _not_sync: PhantomData<Cell<()>>,
 }
 
-pub struct Active<const N: usize> {
-    buf: &'static TableBuffer<N>,
+pub struct Active<T> {
+    buf: &'static DoubleBuffer<T>,
     /// Cached bank id, updated only in `activate`, so `get()` performs no
     /// atomic operation on the tick path.
     current: u8,
     _not_sync: PhantomData<Cell<()>>,
 }
 
-impl<const N: usize> Staging<N> {
+impl<T: 'static> Staging<T> {
     /// Exclusive access to the inactive bank; the borrow is tied to
     /// `&mut self`, so a second call cannot alias the first.
-    pub fn buffer(&mut self) -> Result<&mut WaveTable<N>, BufferError>;
+    pub fn buffer(&mut self) -> Result<&mut T, BufferError>;
     pub fn commit(&mut self) -> Result<CommitToken, BufferError>;
     /// Ignores a token belonging to another buffer.
     pub fn cancel(&mut self, token: CommitToken);
 }
 
-impl<const N: usize> Active<N> {
+impl<T: 'static> Active<T> {
     /// Tied to `&self`, and `activate` takes `&mut self`, so no borrow can
     /// survive an activation.
     #[inline]
-    pub fn get(&self) -> &WaveTable<N>;
+    pub fn get(&self) -> &T;
     /// Ignores a token belonging to another buffer.
     pub fn activate(&mut self, token: CommitToken);
 }
@@ -1202,7 +1193,7 @@ check, with a test for each malformed case:
 
 ```rust
 // fw-cbc-rig/src/main.rs
-static TABLE: ConstStaticCell<TableBuffer<4096>> =
+static TABLE: ConstStaticCell<TableBuffer> =
     ConstStaticCell::new(TableBuffer::new());
 
 let (staging, active) = TABLE.take().split();
@@ -1247,6 +1238,7 @@ mod ids {
 pub struct Appropriation {
     harmonics: HarmonicGenerator<H>,
     forces: [FourierSignal<H>; SHAKERS],
+    force_vector: ActiveValues<VECTOR_LEN>,
     pll: Pll<H>,
     mode: ExcitationMode,
     force_channel: usize,      // measured force, the PLL reference
@@ -1269,16 +1261,10 @@ impl Program for Appropriation {
     fn apply(&mut self, domain: u8, id: u16, payload: Payload) {
         if domain != DOMAIN { return; }
         match (id, payload) {
-            // One command replaces the entire force vector at one sample
+            // One token activates the complete force vector at one sample
             // boundary: a partial update would corrupt the mode shape.
-            (ids::FORCE_VECTOR, Payload::Values { len, data }) => {
-                if len as usize != VECTOR_LEN { return; }
-                for (s, force) in self.forces.iter_mut().enumerate() {
-                    let base = s * (1 + 2 * H);
-                    force.set_coefficients(FourierCoeffs::from_flat(
-                        &data[base..base + 1 + 2 * H],
-                    ));
-                }
+            (ids::FORCE_VECTOR, Payload::Buffer(token)) => {
+                self.force_vector.activate(token);
             }
             (ids::FREQ_SETPOINT, Payload::U32(inc)) => self.harmonics.set_increment(inc),
             (ids::PLL_GAIN, Payload::F32(v)) => self.pll.set_gain(v),
@@ -1306,9 +1292,14 @@ impl Program for Appropriation {
         // block and the increment is installed only after the borrow ends.
         let next_increment = {
             let frame = self.harmonics.step(ctx.lut);
+            let vector = self.force_vector.get();
 
             for (j, force) in self.forces.iter().enumerate() {
-                outputs[j] = force.sample(frame);
+                let base = j * (1 + 2 * H);
+                outputs[j] = force.sample_coefficients(
+                    frame,
+                    &vector[base..base + 1 + 2 * H],
+                );
             }
             self.phase = frame.phase_turns();
 
@@ -1355,7 +1346,10 @@ impl Program for Appropriation {
 Its core-0 half, in the same file, sharing `mod ids` and the domain constant:
 
 ```rust
-pub struct AppropriationShadow { /* shadows + `pending` */ }
+pub struct AppropriationShadow {
+    staging: ValueStaging<VECTOR_LEN>,
+    /* shadows + `pending` */
+}
 
 impl ParamGroup for AppropriationShadow {
     /// Declared once, and the only place this group says where its commands
@@ -1381,11 +1375,10 @@ impl ParamGroup for AppropriationShadow {
                 // Rejects non-finite values. Nothing host-observable changes
                 // until `accept`.
                 let values = deserialize_f32s::<VECTOR_LEN>(data)?;
+                self.staging.buffer().map_err(map_busy)?.copy_from_slice(&values);
+                let token = self.staging.commit().map_err(map_busy)?;
                 self.pending = Some(Pending::Force(values));
-                Ok(Staged::Rt(Payload::Values {
-                    len: VECTOR_LEN as u8,
-                    data: pad(values),
-                }))
+                Ok(Staged::Rt(Payload::Buffer(token)))
             }
             // ... remaining ids, each returning `Staged::Rt(payload)`
             _ => Err(ErrorCode::BadIndex),
@@ -1393,7 +1386,12 @@ impl ParamGroup for AppropriationShadow {
     }
 
     fn accept(&mut self, _id: u16) { /* publish `self.pending` into the shadow */ }
-    fn reject(&mut self, _id: u16, _returned: Option<Payload>) { self.pending = None; }
+    fn reject(&mut self, _id: u16, returned: Option<Payload>) {
+        if let Some(Payload::Buffer(token)) = returned {
+            self.staging.cancel(token);
+        }
+        self.pending = None;
+    }
     fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode> { /* ... */ }
 }
 ```
@@ -1406,7 +1404,7 @@ itself verified.
 The device PLL keeps one drive point at the commanded force-to-response phase.
 The host computes the full multipoint, multiharmonic mode indicator from the
 streamed forces and responses against the streamed `phase`, and writes the
-resulting force vector as one atomic `Values` command.
+resulting force vector as one atomic buffered activation command.
 
 ### Example 3: a table as an ordinary component
 
@@ -1467,9 +1465,9 @@ Core 1, on consuming the token, activates and publishes the length:
 | Four-shaker appropriation rig | not expressible | rig crates only |
 | Rig-specific estimator (e.g. RPM) | `helic-core` | rig crates only |
 | Rig with no waveform table | not expressible | omit the component |
-| Second buffered blob | copy `table.rs` | generalise `TableBuffer` (additive) |
+| Second buffered blob | copy `table.rs` | instantiate `DoubleBuffer<T>` |
 | Different harmonic count (≤16) | `firmware/common/src/lib.rs` | const generic |
-| >24 sources, >4 actuators, >132 values | shared crates | shared crates, deliberately |
+| >24 sources, >4 actuators, >132 force values | shared crates | shared crates, deliberately |
 | New primitive with two consumers | `helic-core` | `helic-core`, correctly |
 
 ## Repository separation
@@ -1537,10 +1535,16 @@ production rigs here and treats the crate boundary as the contract that
    put the whole 32 KiB object in `.data`; zero-idle, `bank + 1` pending
    encoding restores the intended `.bss` construction without changing the
    state machine.
-4. **Complete the `RtCommand`/`Payload` redesign, address routing, and returned-
-   command rejection path.** Measure `COMMANDS_PER_TICK` WCET at 132-value payloads and
-   confirm EABI copy helpers remain in SRAM. **This measurement gates the
-   copy-versus-buffer decision.**
+4. **Completed 2026-08-11: `RtCommand`/`Payload` redesign, address routing,
+   returned-command rejection, and the copy-versus-buffer gate.** The exact
+   two-command diagnostic measured copied 132-value payloads at 95–96 us with
+   1 us jitter and copied 33-value coefficient payloads at 73 us. Both failed
+   the unchanged 60 us CBC gate. Target and forcing sets now use
+   `DoubleBuffer<FourierCoeffs<16>>`; two activations measured 55–56 us with
+   fixed 36 us wake phase and zero faults. The production queue occupies
+   0x118c bytes (4.5 KB), all realised EABI helpers remain in SRAM, and the
+   final default image passed 8000-record all-source and 60000-record sustained
+   regressions at 34–36 us with no timing faults, loss, drops, or gaps.
 5. **`ParamGroup` stage/accept/reject, the `ParamStore` walk, the
    `ResetDiagnostics` broadcast, and `validate()`.** Largest single commit; must
    change no discovered parameter name and no source order.
@@ -1599,11 +1603,12 @@ borrow held across `activate()`, a second `split()`, and any attempt to copy a
 user-facing half of an `unsafe impl Sync`; a test that merely restates ordinary
 field privacy would not.
 
-**Cross-buffer token rejection** — two `TableBuffer`s, with each other's tokens
-passed to `cancel` **and** to `activate`. Both must be ignored. This is its own
-test because checking the owner in only one of the two consuming operations was
-a real unsoundness: a foreign token could clear a buffer's pending flag, after
-which core 0 could obtain `&mut` to a bank core 1 was about to read.
+**Cross-buffer token rejection** — table, coefficient, and value buffers, with
+foreign same-type and cross-type tokens passed to `cancel` **and** to
+`activate`. All must be ignored. This is its own test because checking the
+owner in only one of the two consuming operations was a real unsoundness: a
+foreign token could clear a buffer's pending flag, after which core 0 could
+obtain `&mut` to a bank core 1 was about to read.
 
 **Reboot handshake** — `request` → `is_requested` → `mark_quiesced` →
 `is_quiesced` across the `helic-rt` boundary, with the idempotent repeat-request
@@ -1619,8 +1624,9 @@ counters, matching `params.rs:543`.
 **`table_len`** — reports the active length, not the pending one, across a
 commit that has been staged but not yet activated.
 
-**Atomic force vector** — one `Values` command updates every `FourierSignal` at
-the same tick; a length mismatch updates none.
+**Atomic force vector** — one owner-checked buffer token activates every force
+coefficient at the same tick; rejection returns the token and leaves the active
+bank untouched.
 
 **Golden registry** — the *set* of `(name, type, count, writable)` per rig.
 **Golden sources** — names *and order*, updated to include `phase`.
@@ -1678,7 +1684,8 @@ wake phase is the baseline.
   and the golden tests.
 - Core-1 inlining is newly load-bearing; a loop over shakers may not unroll as
   today's straight-line code does. Confirm by ELF inspection and timing.
-- The 132-value payload is the main new timing risk, and stage 4 gates it.
+- The 132-value copied payload failed its timing gate and is retained only as a
+  diagnostic comparison feature; production force vectors are buffered.
 - `Active::get()` per tick replaces a cached field.
 - Non-`Copy` `RtCommand` touches every construction site; expected to be
   mechanical, but it is a wide diff.
@@ -1706,6 +1713,16 @@ wake phase is the baseline.
    and 128 at `H = 16`. Decide with stage 6 ELF evidence.
 
 ## Revision history
+
+**Revision 9** records the Stage-4 measurement result and the consequent design
+change. Two fully materialised 132-value copied commands measured 95–96 us, and
+two 33-value coefficient commands measured 73 us, against CBC's unchanged 60 us
+limit. Both force vectors and coefficient sets therefore use owner-checked
+double buffers. Two coefficient activations measured 55–56 us. The previously
+concrete table implementation is now `DoubleBuffer<T>` because target,
+forcing, and table storage are three actual consumers; `TableBuffer` remains an
+alias. `MAX_RT_VALUES` returns to 33 for copied arrays, and
+`MAX_FORCE_VALUES = 132` names the buffered force-vector capacity.
 
 **Revision 8.1** settles one behavioural point raised alongside the fifth
 review. Revision 8 said every `set_enabled(true)` restarts acquisition, so a

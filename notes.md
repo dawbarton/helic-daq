@@ -543,3 +543,35 @@ evidence:
   laser and actuator supplies
   remained down, so the table signal and safety-quiet behaviour are verified,
   but no powered actuator response was measured.
+
+## 2026-08-11T13:33+00:00 Rig-decoupling implementation stage 4
+
+- The copied-payload timing assumption failed decisively on the W5500 CBC rig.
+  Diagnostic firmware `19e659c` materialised every value in two queued
+  132-value commands at one sample boundary: five backlog-two runs measured
+  95–96 us maximum loop time and 1 us clock jitter, although wake phase stayed
+  at 36/36 us and overruns, timeouts, and drops remained zero. The narrower
+  production-shaped copied coefficient pair on `59d76d7` still measured 73 us,
+  beyond the unchanged 60 us CBC gate. The proposal's 2–4 us copy estimate was
+  therefore wrong; do not retry copied force vectors or relax the gate.
+- Target and forcing coefficient sets now use the same linear,
+  owner-checked `DoubleBuffer<T>` activation protocol as waveform tables.
+  Queue-full host tests return coefficient tokens to their owning staging
+  endpoints. The exact two-activation diagnostic on firmware `a3bf233` measured
+  55–56 us over ten runs, with `cmd_backlog_max = 2`, fixed 36/36 us wake phase,
+  and zero jitter, overruns, timeouts, or drops. The production command queue is
+  0x118c bytes (4.5 KiB); the target and forcing buffers are each 0x110 bytes,
+  and all are zero-initialised in `.bss`.
+- The final default W5500 image was also `0.1.0 a3bf233`, protocol 3, with 42
+  parameters, 14 sources, and 8 kHz sampling. Its 8000-record all-source run
+  measured 34, 35, and 36 us maxima for idle, TCP polling, and capture. Its
+  60000-record `adc0,out` run measured 34, 35, and 35 us. Both held wake phase
+  at 36/36 us and had zero jitter, overruns, timeouts, record/packet drops,
+  capture drops, or index gaps.
+- A focused disarmed capture applied buffered target mean 0.25 and forcing mean
+  0.125 at sample boundaries: `target` remained 0.25, `forcing` transitioned
+  from 0 to 0.125 during the capture, `cmd_epoch` advanced from 14 to 15, and
+  applied `out` remained exactly zero. The capture had no loss, drops, or gaps,
+  and a 35 us loop maximum. Target, forcing, table mode, and arm were returned
+  to zero. The laser and actuator supplies remained down, so this is timing,
+  ownership, and safety-quiet evidence, not powered actuator evidence.

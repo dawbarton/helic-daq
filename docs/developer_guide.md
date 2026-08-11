@@ -392,16 +392,17 @@ name.
 Core 0 never touches loop state. Four mechanisms keep communication bounded:
 
 - **Commands** (core 0 → 1): `heapless::spsc` queue of `RtCommand`.
-  Array-valued parameters (coefficient sets) travel **by value**, so a tick
-  can never observe a half-written array.
-- **Waveform tables** (core 0 → 1): each firmware owns one const-initialised
-  `TableBuffer` with two fixed 4096-sample banks. A one-time split gives core 0
-  a non-`Sync` staging endpoint and core 1 a non-`Sync` active endpoint.
-  `Commit` moves a linear, owner-checked token through the command queue, and
-  core 1 activates it at a sample boundary. Further writes remain busy until
-  activation publishes the new active bank; `table_len` is likewise published
-  by core 1 only after the switch. Release/Acquire ordering makes staged writes
-  visible without an atomic load on every tick.
+- **Buffered arrays** (core 0 → 1): waveform tables, target coefficients, and
+  forcing coefficients use `DoubleBuffer<T>`. `TableBuffer` is its waveform
+  alias. A one-time split gives core 0 a non-`Sync` staging endpoint and core 1
+  a non-`Sync` active endpoint. `Commit` moves a linear, owner-checked token
+  through the command queue, and core 1 activates it at a sample boundary.
+  Further writes remain busy until activation publishes the new active bank;
+  `table_len` is likewise published by core 1 only after the switch.
+  Release/Acquire ordering makes staged writes visible without an atomic load
+  on every tick. This is deliberate: two copied 33-value commands measured
+  73 µs, while two buffer activations measured 55–56 µs against the unchanged
+  60 µs CBC gate.
 - **Records** (core 1 → 0): 256-deep `heapless::spsc` ring. The RT loop
   never blocks on it; overflow drops the record and increments
   `records_dropped`.
