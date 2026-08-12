@@ -977,31 +977,37 @@ evidence:
   7999.4–8000.3 ticks/s with zero overruns, tick timeouts, dropped records,
   lost packets, capture drops or index gaps, `loop_time_max` 37–38 µs against
   the rig's unchanged 60 µs limit.
-- **Separate defect, open, and only partly characterised.** The board went
-  unreachable twice this afternoon. Both times the optoNCDT had stopped
-  answering and `helic-fw-optoncdt` was probing baud rates about four times a
-  second, unboundedly. In the failed state `records_dropped` climbed to 833369
-  while streaming was *off*, which means core 0 was not draining the ring every
-  5 ms, so the network stack was not being serviced either; core 1 ticked
-  normally throughout, which is why the rig looks healthy on the probe while
-  being invisible on the network.
-  - Do not conclude that the probe loop alone starves core 0. Measured
-    afterwards on the same rig with the same silent sensor: about five probes
-    per second, `records_dropped` flat at zero, the full profile regression
-    passing and the network entirely healthy. The probe rate is therefore not
-    the discriminator, and something else about the failed state was. The most
-    likely remaining candidate is the documented floating-RX interrupt storm,
-    which depends on the line state a stalled sensor leaves behind rather than
-    on the probing itself.
-  - What is established: a silent sensor is a precondition for both failures,
-    the failure is core-0 starvation rather than anything on core 1, and a
-    reset clears it. What is not: why the same silent sensor is harmless now.
-    Instrument the UART error counters and the drain ticker before changing
-    the driver, and check the sensor and its pull-up physically first.
-  - The v0.1.3 tag message states this more strongly than the evidence now
-    supports, saying the probe loop starves core 0. A tag cannot be moved, so
-    this entry is the correction.
-  - The rig's laser was still not answering at the end of this session:
-    `laser_frames_received` stayed at 0 and `safety` read 10, meaning the gate
-    had latched a trip and was quieting the actuator. No `laser` value from
-    that rig should be trusted until the sensor is working.
+- **Two unreachable episodes, and they are not the same fault.** The board
+  went absent from the network twice this afternoon, both times shortly after
+  heavy streaming, with core 1 ticking normally throughout. The defmt captures
+  distinguish them, and the distinction was only possible because David
+  confirmed afterwards that he switched the optoNCDT off partway through the
+  session.
+  - **Second episode, explained.** The sensor was off. `helic-fw-optoncdt`
+    then probed baud rates about four times a second without bound, and
+    `records_dropped` climbed at roughly 6000/s with streaming *off*: core 0
+    was not draining the record ring every 5 ms, so the network stack was not
+    being serviced either. A switched-off sensor is a legitimate laboratory
+    state, so a rig should degrade rather than leave the network; the probe
+    loop wants a bounded backoff and a diagnostic counter instead of an
+    unbounded retry. Note the probe loop alone is not sufficient: measured
+    later with the sensor still off, five probes per second ran with the drop
+    counter flat at zero and the full regression passing. The remaining
+    candidate is the floating-RX interrupt storm the GP1 pull-up exists to
+    prevent, which depends on the line state a powered-down sensor leaves
+    behind rather than on probing.
+  - **First episode, still unexplained.** Its capture has no laser lines at
+    all, so the sensor was streaming normally, and `records_dropped` was frozen
+    at 1752338, so core 0 had resumed draining. A healthy laser, a serviced
+    ring, and the board still invisible from the host. Whatever this is, it is
+    not the laser and not starvation at the time of observation. Next time it
+    happens, attach the probe and check whether the WIZnet driver is still
+    servicing its RX path before resetting; a reset destroys the state that
+    would identify it.
+  - The v0.1.3 tag message says the probe loop starves core 0. That is
+    stronger than the evidence supports, and applies to at most one of the two
+    episodes. A tag cannot be moved, so this entry is the correction.
+  - The laser was off for the rest of the session, so `laser_frames_received`
+    stayed at 0 and `safety` read 10: the gate had latched a trip and was
+    quieting the actuator, which is the designed response to a blind feedback
+    path.
