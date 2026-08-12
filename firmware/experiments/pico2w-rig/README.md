@@ -28,7 +28,7 @@ required.
 [`src/rig.rs`](src/rig.rs) contains DAC behaviour; and
 [`src/telemetry.rs`](src/telemetry.rs) declares shared laser state.
 
-Build with `cargo build --release -p fw-pico2w-rig` from `firmware/`. Use the
-wired CBC rig for sustained full-rate multi-source streaming; see
+Build with `cargo build --release -p fw-pico2w-rig` from `firmware/`. Use a
+wired rig for sustained full-rate multi-source streaming; see
 the [user guide](../../../docs/user_guide.md) and
 [developer guide](../../../docs/developer_guide.md) for details.

@@ -197,7 +197,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument(
-        "--rig", default="cbc", help="discovered production profile name"
+        "--rig", default="pico2w", help="discovered production profile name"
     )
     selection.add_argument("--profile", type=Path, help="path to a rig-owned profile")
     parser.add_argument("--host", default=os.environ.get("HELIC_DAQ_HOST"))

@@ -147,9 +147,9 @@ fn main() -> ! {
             store,
             channels.record_rx,
         )));
-        // A disconnected optoNCDT RX line needs the same external 10k pull-up
-        // to 3V3 as cbc-rig, preventing UART break interrupts from starving
-        // the network executor.
+        // A disconnected optoNCDT RX line needs an external 10k pull-up to
+        // 3V3, as on every rig using this sensor, preventing UART break
+        // interrupts from starving the network executor.
         spawner.spawn(unwrap!(laser_task(board.laser)));
         spawner.spawn(unwrap!(status_task()));
     });

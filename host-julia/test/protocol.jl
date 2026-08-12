@@ -62,18 +62,18 @@ const P = HelicDAQ.Protocol
         @test HelicDAQ._unpack_value(definition, HelicDAQ._pack_value(definition, value)) == value
     end
     text = Parameter(0, "text", 'c', 8, true)
-    @test HelicDAQ._unpack_value(text, HelicDAQ._pack_value(text, "cbc")) == "cbc"
+    @test HelicDAQ._unpack_value(text, HelicDAQ._pack_value(text, "magneto")) == "magneto"
 
     beacon = P.BeaconResponse(
         P.VERSION,
         0x092e,
         (0x02, 0x48, 0x4c, 0x00, 0x00, 0x01),
-        "cbc-rig",
+        "magnetoelastic",
         "helic-daq sim",
     )
     encoded_beacon = P.encode_beacon_response(beacon)
     @test encoded_beacon == hex2bytes(
-        "484c02032e0902484c0000016362632d726967000000000000000000" *
+        "484c02032e0902484c0000016d61676e65746f656c61737469630000" *
             "68656c69632d6461712073696d000000",
     )
     decoded_beacon = P.decode_beacon_response(encoded_beacon)

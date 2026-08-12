@@ -3,8 +3,9 @@
 //! Each harmonic of the input is demodulated against sin/cos of the *shared*
 //! generator phase, then low-pass filtered with a one-pole IIR. Because the
 //! demodulation phases come from the same accumulator that drives the
-//! forcing, the estimates are phase-locked to the forcing by construction —
-//! exactly what CBC needs.
+//! forcing, the estimates are phase-locked to the forcing by construction,
+//! which is what a response measurement taken while the forcing changes
+//! requires.
 //!
 //! Per-period statistics (mean/variance across periods, as in the rtc duffing
 //! rig) are a planned extension; the `period_start` flag from the generator

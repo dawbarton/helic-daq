@@ -11,7 +11,7 @@
             0x02,
             0x092e,
             (0x02, 0x48, 0x4c, 0x00, 0x00, 0x01),
-            "cbc-rig",
+            "magnetoelastic",
             "helic-daq test",
         )
         send(server, peer.host, peer.port, P.encode_beacon_response(response))
@@ -22,7 +22,7 @@
         @test devices[1].address == ip"127.0.0.1"
         @test devices[1].control_port == 2350
         @test devices[1].mac == "02:48:4c:00:00:01"
-        @test devices[1].experiment == "cbc-rig"
+        @test devices[1].experiment == "magnetoelastic"
     finally
         wait(task)
         close(server)

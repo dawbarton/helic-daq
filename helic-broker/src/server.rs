@@ -1473,7 +1473,7 @@ mod tests {
 
     #[test]
     fn identities_are_fixed_width() {
-        assert_eq!(&fixed_identity("cbc-rig")[..8], b"cbc-rig\0");
+        assert_eq!(&fixed_identity("magnetoelastic")[..15], b"magnetoelastic\0");
         assert_eq!(
             fixed_identity("0123456789abcdefghijkl"),
             *b"0123456789abcdef"

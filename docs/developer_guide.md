@@ -85,7 +85,6 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 | `firmware/rt/` | Mandatory core-1 RP2350 mechanisms; no executor, time, network or core-0 support dependency | `thumbv8m.main-none-eabihf` only |
 | `firmware/support/` | Universal core-0 communication, network, identity, status and watchdog services | `thumbv8m.main-none-eabihf` only |
 | `firmware/integrations/optoncdt/` | Optional optoNCDT UART integration | `thumbv8m.main-none-eabihf` only |
-| `firmware/experiments/cbc-rig/` | Current CBC rig binary, wiring and compile-time configuration | `thumbv8m.main-none-eabihf` only |
 | `firmware/experiments/pico2w-rig/` | Pico 2W Wi-Fi signal generator, DAC and laser logger | `thumbv8m.main-none-eabihf` only |
 | `host-python/` | Python package `helic_daq` + `helic-daq` CLI, and the `helic_daq.verify` rig gates installed by out-of-tree rigs | host |
 | `tests/external-rig/` | Independent workspace proving out-of-workspace composition, with one real-time-only and one core-0 firmware member | host tests + `thumbv8m.main-none-eabihf` |
@@ -173,8 +172,9 @@ wrapper. Keep this pattern when sharing a task across experiments.
 
 ## Firmware architecture
 
-The CBC acquisition path is shown; ADC-free rigs replace CONVST/BUSY with a
-PWM-wrap tick and omit the ADC read.
+An ADC-clocked acquisition path is shown, as the wired magneto-elastic rig
+uses; ADC-free rigs replace CONVST/BUSY with a PWM-wrap tick and omit the ADC
+read.
 
 The component-ownership refactor in
 [rig_decoupling_proposal.md](rig_decoupling_proposal.md) was completed in 13
@@ -214,8 +214,8 @@ the 150 MHz system clock (`helic_rt::SampleRate::pwm_params`,
 re-exported through each experiment's `config.rs`).
 
 The software pipeline is edge-triggered on the BUSY falling edge
-(conversion complete). CBC uses the mandatory synchronous runner, which
-spin-polls the IO bank's raw
+(conversion complete). An ADC-clocked rig uses the mandatory synchronous
+runner, which spin-polls the IO bank's raw
 edge-detect latch from SRAM. ADC-free rigs, such as Pico 2W, use the same
 runner with the PWM peripheral's latched wrap flag. Each tick then runs
 
@@ -271,8 +271,8 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   remains disabled.
 - `helic_fw_rt::analog_spi`: register-level blocking SPI transfers in
   `.data.ram_func` with precomputed clock/format configs. The embassy
-  drivers still perform one-time init; only the per-tick CBC ADC/DAC and Pico
-  2W DAC data paths bypass them.
+  drivers still perform one-time init; only the per-tick ADC/DAC data paths,
+  as used by the magneto-elastic and Pico 2W rigs, bypass them.
 - raw PIO FIFO access, as the out-of-tree whirl rig uses for its SSI and
   optical-period state machines. Embassy retains ownership and performs
   one-time PIO setup, while
@@ -288,8 +288,8 @@ constructs the rig and diagnostics, then enters `run_hot_loop` in SRAM with:
   maxima during this refactor.
 - Network reboot quiescence: core 0 publishes a release/acquire reboot request;
   core 1 diverts at the next sample boundary into bounded `Rig::prepare_reboot`
-  steps, publishes completion, and spins in SRAM. CBC and Pico 2W issue one DAC
-  word per boundary to preserve device timing; a rig with no actuator
+  steps, publishes completion, and spins in SRAM. A rig with an AD5064 issues
+  one DAC word per boundary to preserve device timing; a rig with no actuator
   completes immediately.
   `helic-rt-layout` requires the shared completion symbol in SRAM and checks
   any emitted experiment quiescence symbols there too.
@@ -341,7 +341,7 @@ so "it still streams" proves nothing.
 
 ```sh
 cd firmware
-cargo build --release -p fw-cbc-rig -p fw-pico2w-rig
+cargo build --release -p fw-pico2w-rig
 helic-rt-layout
 ```
 
@@ -407,17 +407,27 @@ knowledge of where this repository is.
 
 ```sh
 cd firmware
-helic-rt-regression --rig cbc
+helic-rt-regression --rig pico2w --host <DHCP-address>
 ```
 
-Use `--rig pico2w --host <DHCP-address>` for the other profile. Acceptance, in **every** CBC phase at 8 kHz:
+Only `pico2w` is discoverable here. A rig maintained in its own repository is
+checked the same way from its own checkout, where its profile is the only one
+found:
+
+```sh
+helic-rt-regression --profile rig-profile.toml
+```
+
+Acceptance, in **every** phase at the rig's sample rate:
 
 - `overruns == 0`, `tick_timeouts == 0`, `records_dropped == 0`;
-- `ticks_per_s` ≈ 8000 (a deficit means BUSY edges are being skipped);
+- `ticks_per_s` ≈ the configured rate (a deficit means tick edges are being
+  skipped);
 - `clock_jitter == 0`;
 - `wake_phase_min == wake_phase_max` (a spread of more than ~2 µs means
   wake-up determinism regressed);
-- `loop_time_max` ≤ ~60 µs (current reference build: 35–37 µs);
+- `loop_time_max` within the profile's own limit, where it sets one (the
+  wired 8 kHz magneto-elastic profile gates 60 µs and measures 36–38 µs);
 - capture `lost_packets == 0` and `capture_dropped == 0`.
 
 `cmd_backlog_max` records host-command bursts. Two commands are applied per
@@ -425,13 +435,15 @@ tick; a non-zero maximum is not a timing failure, but persistent `Busy` replies
 or a maximum near the queue capacity indicates an undersized control path.
 
 **3. Streaming-heavy check** (when the change touches records, streaming or
-the network): capture all 15 sources for 8000 records and `adc0,out` for
-60000 records:
+the network): capture every source for 8000 records, then the profile's
+smoke-test source set for 60000 records. Run it against a wired rig at 8 kHz,
+which is the demanding case:
 
 ```sh
-cd firmware
-helic-rt-regression --rig cbc --capture-sources all --capture-samples 8000
-helic-rt-regression --rig cbc --no-flash --capture-samples 60000
+helic-rt-regression --profile rig-profile.toml \
+  --capture-sources all --capture-samples 8000
+helic-rt-regression --profile rig-profile.toml \
+  --no-flash --capture-samples 60000
 ```
 
 The tool asserts contiguous indices and zero loss. The original manual
@@ -467,7 +479,7 @@ Core 0 never touches loop state. Four mechanisms keep communication bounded:
   Release/Acquire ordering makes staged writes visible without an atomic load
   on every tick. This is deliberate: two copied 33-value commands measured
   73 µs, while two buffer activations measured 55–56 µs against the unchanged
-  60 µs CBC gate.
+  60 µs gate of the wired 8 kHz rig they were measured on.
 - **Records** (core 1 → 0): 256-deep `heapless::spsc` ring. The RT loop
   never blocks on it; overflow drops the record and increments
   `records_dropped`.
@@ -497,9 +509,9 @@ SRAM-resident FIFO access, fixing both channels at the same sample instant
 with one-sample latency. PIO0 SM1 measures rising-edge intervals from the
 optical revolution pulse independently of core load.
 
-The analogue SPI bus (SPI1: ADC + DAC chip selects) belongs to core 1
-exclusively. CBC's `board.rs` hands the unassembled `CbcParts` to core 1,
-and `rig.rs` builds the shared-bus devices there. This is what lets the bus
+On a rig with an analogue SPI bus (ADC + DAC chip selects) the bus belongs to
+core 1 exclusively. The rig's `board.rs` hands the unassembled parts to core 1,
+and its `rig.rs` builds the shared-bus devices there. This is what lets the bus
 mutex be the zero-cost `NoopRawMutex` (it is `!Sync`, so this is also
 compiler-enforced).
 
@@ -823,7 +835,7 @@ impl Controller for MyController {
 }
 ```
 
-Then point `firmware/experiments/cbc-rig/src/config.rs` at it:
+Then point the rig's `src/config.rs` at it:
 
 ```rust
 pub type ActiveController = MyController;
@@ -952,20 +964,21 @@ incomplete HDF5 reboot close. HDF5 unit tests force a segment rollover and reope
 result with an independent reader. These host checks do not replace hardware
 tests when a later change touches firmware or the real-time/network path.
 
-Flashing/debugging: `cargo run --release -p fw-cbc-rig` in `firmware/` uses probe-rs
+Flashing/debugging: `cargo run --release -p fw-pico2w-rig` in `firmware/` uses probe-rs
 (`--chip RP235x`) and streams defmt logs over RTT; `DEFMT_LOG` is set in
 `firmware/.cargo/config.toml`. Without a probe, build a UF2 with picotool
 (see the user guide).
 
 ## Hardware verification boundary and deferred capabilities
 
-- The `cbc-rig` behaviour is **verified on hardware** (2026-07): networking,
+- The wired analogue path is **verified on hardware** (2026-07): networking,
   RT loop, ADC read, DAC write, DAC→ADC loopback (DC + AC), signal generator, all
   four sample-rate presets, parameter round-trip, closed-loop PID, and the
-  optoNCDT command-and-stream path through an ISL3177E at 8 kHz. The
-  Pico 2W/CYW43 paths have compile-time and host-test verification only. See
-  [../notes.md](../notes.md); the whirl rig records its own evidence in its
-  repository.
+  optoNCDT command-and-stream path through an ISL3177E at 8 kHz. That evidence
+  was gathered on the magneto-elastic rig while it was maintained here, so it
+  is in [../notes.md](../notes.md) up to the 2026-08 repository split and
+  continues in that rig's own repository, as the whirl rig's does in its own.
+  The Pico 2W/CYW43 paths have compile-time and host-test verification only.
 - Arbitrary table upload and playback are implemented and host-tested, but
   still require scope verification on hardware, including glitch-free
   re-commit and long phase-locked runs.

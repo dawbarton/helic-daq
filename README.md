@@ -38,17 +38,19 @@ record segmented HDF5 files without changing the firmware.
 
 | Firmware package | Board and purpose | Verification |
 |---|---|---|
-| `fw-cbc-rig` | W5500/W6100-EVB-Pico2, AD7609, AD5064 and optional optoNCDT | Core path verified on W5500; W6100 software verified |
 | `fw-pico2w-rig` | Pico 2W and AD5064 over Wi-Fi | Software verified |
 
 Here, software verified means that portable logic passes host tests and the
 complete firmware target builds; it is not a claim about the physical path.
 See [notes.md](notes.md) for the precise hardware-verification boundary.
 
-The dual-encoder whirl rig is maintained in its own repository,
-[helic-whirl-rig](https://github.com/dawbarton/helic-whirl-rig), pinned to a
-HELIC-DAQ release tag. Adding a rig that way is described in the developer
-guide under "Adding a rig in its own repository".
+The laboratory rigs are maintained in their own repositories, each pinned to a
+HELIC-DAQ release tag: the wired magneto-elastic rig in
+[helic-magneto-elastic-rig](https://github.com/dawbarton/helic-magneto-elastic-rig),
+and the dual-encoder whirl rig in
+[helic-whirl-rig](https://github.com/dawbarton/helic-whirl-rig). Adding a rig
+that way is described in the developer guide under "Adding a rig in its own
+repository".
 
 ## Layout
 
@@ -84,12 +86,11 @@ guide for the complete check set.
 ## Flash and connect
 
 With a debug probe and
-[probe-rs](https://probe.rs), flash the CBC experiment and stream its defmt
-log:
+[probe-rs](https://probe.rs), flash an experiment and stream its defmt log:
 
 ```sh
 cd firmware
-cargo run --release -p fw-cbc-rig
+cargo run --release -p fw-pico2w-rig
 ```
 
 Install the host package from the repository root, discover devices, and

@@ -45,7 +45,7 @@ def default_params(sample_rate: float) -> list[SimParam]:
     coefficients = [0.0] * 33
     return [
         SimParam("firmware", "c", 16, False, "helic-daq sim"),
-        SimParam("experiment", "c", 16, False, "cbc-rig"),
+        SimParam("experiment", "c", 16, False, "magnetoelastic"),
         SimParam("sample_freq", "f", 1, False, sample_rate),
         SimParam("ticks", "I", 1, False, 0),
         SimParam("loop_time_last", "I", 1, False, 5),

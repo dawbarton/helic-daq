@@ -111,6 +111,3 @@ jobs:
           cargo build --release --workspace
       - name: Check out-of-workspace real-time symbols
         run: helic-rt-layout --profile ../tests/external-rig/rig-profile.toml --profile ../tests/external-rig/service-rig-profile.toml --elf-dir ../tests/external-rig/target/thumbv8m.main-none-eabihf/release
-      - name: Build the W6100 wired variant
-        run: |
-          cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100

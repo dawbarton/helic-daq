@@ -465,7 +465,7 @@ mod tests {
 
     fn metadata() -> SessionMetadata {
         SessionMetadata {
-            experiment: "cbc-rig".into(),
+            experiment: "magnetoelastic".into(),
             firmware: "helic-daq test".into(),
             sample_rate_hz: 8000.0,
             decimation: 1,

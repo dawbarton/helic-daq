@@ -88,7 +88,7 @@ class TestDevice(unittest.TestCase):
 
     def test_get_scalar_and_string(self):
         self.assertEqual(self.dev.get("firmware"), "helic-daq sim")
-        self.assertEqual(self.dev.get("experiment"), "cbc-rig")
+        self.assertEqual(self.dev.get("experiment"), "magnetoelastic")
         self.assertEqual(self.dev.get("sample_freq"), 8000.0)
         self.assertEqual(self.dev.get("ticks"), 0)
 

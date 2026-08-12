@@ -14,19 +14,23 @@ from helic_daq.verify.profile import ProfileError, load_profile, load_profiles
 REPOSITORY = Path(__file__).resolve().parents[2]
 FIRMWARE = REPOSITORY / "firmware"
 PROFILE_PATHS = discover_profiles(FIRMWARE)
+#: A wired profile with the full hot-symbol set. The production wired rigs are
+#: maintained out of tree, so the core-0 composition fixture is what this
+#: repository owns that exercises those paths.
+WIRED_PROFILE = REPOSITORY / "tests" / "external-rig" / "service-rig-profile.toml"
 
 
 class ProfileLoadingTests(unittest.TestCase):
     def test_production_profiles_are_rig_owned_data(self) -> None:
         profiles = load_profiles(PROFILE_PATHS)
 
-        self.assertEqual(set(profiles), {"cbc", "pico2w"})
-        self.assertEqual(profiles["cbc"].regression.max_loop_us, 60)
-        self.assertEqual(profiles["cbc"].regression.capture_sources[0], "adc0")
+        self.assertEqual(set(profiles), {"pico2w"})
+        self.assertEqual(profiles["pico2w"].regression.sample_rate_hz, 8000)
+        self.assertEqual(profiles["pico2w"].regression.capture_sources[0], "laser")
         self.assertIsNone(profiles["pico2w"].regression.default_host)
         self.assertIn(
             ("table_buffer", "Active", "3get"),
-            profiles["cbc"].layout.required_patterns,
+            profiles["pico2w"].layout.required_patterns,
         )
 
     def test_duplicate_names_are_rejected(self) -> None:
@@ -72,9 +76,7 @@ class LayoutProfileTests(unittest.TestCase):
                 )
 
     def test_checker_rejects_a_profiled_symbol_in_flash(self) -> None:
-        profile = load_profile(
-            FIRMWARE / "experiments" / "cbc-rig" / "rig-profile.toml"
-        )
+        profile = load_profile(WIRED_PROFILE)
         realised = [
             (layout.SRAM_START, "prefix" + "_".join(pattern))
             for pattern in profile.layout.required_patterns
@@ -91,9 +93,7 @@ class LayoutProfileTests(unittest.TestCase):
         self.assertTrue(any("outside SRAM" in error for error in errors))
 
     def test_checker_rejects_an_optional_hot_symbol_when_emitted_in_flash(self) -> None:
-        profile = load_profile(
-            FIRMWARE / "experiments" / "cbc-rig" / "rig-profile.toml"
-        )
+        profile = load_profile(WIRED_PROFILE)
         realised = [
             (layout.SRAM_START, "prefix" + "_".join(pattern))
             for pattern in profile.layout.required_patterns
@@ -114,9 +114,7 @@ class BoardSelectionTests(unittest.TestCase):
     """A rig's default build, not the tool, decides which controller is flashed."""
 
     def profile_with_board(self, default_board: str | None) -> object:
-        source = load_profile(
-            FIRMWARE / "experiments" / "cbc-rig" / "rig-profile.toml"
-        ).path.read_text()
+        source = load_profile(WIRED_PROFILE).path.read_text()
         if default_board is not None:
             source = source.replace(
                 "wired = true", f'wired = true\ndefault_board = "{default_board}"'
@@ -158,9 +156,7 @@ class BoardSelectionTests(unittest.TestCase):
 
 class RegressionProfileTests(unittest.TestCase):
     def test_quiet_sequence_is_driven_by_profile(self) -> None:
-        profile = load_profile(
-            FIRMWARE / "experiments" / "cbc-rig" / "rig-profile.toml"
-        )
+        profile = load_profile(WIRED_PROFILE)
 
         class FakeDevice:
             def __init__(self) -> None:

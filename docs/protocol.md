@@ -190,16 +190,16 @@ phase. `diag_reset` clears the `*_max`/`*_min` diagnostics along with
 `records_dropped`, `cmd_backlog_max`, the safety clamp/quiet tick counts, and
 experiment event counters such as the laser error diagnostics; total counters
 such as `ticks` and `laser_frames_received` keep running. `arm`/`safety` act
-only on an experiment whose rig opts into the safety gate (`cbc-rig`);
+only on an experiment whose rig opts into the safety gate (`magnetoelastic`);
 elsewhere `arm` is inert and `safety` reads 0. The output is disarmed after
 every reset and on control-connection loss.
 
 `mcu_reboot` accepts exactly the u32 value `0x52454254`; every other value,
 including 0 and 1, returns bad value. A valid write disables streaming and
 disarms the safety gate. Core 1 then quiesces experiment outputs at sample
-boundaries: CBC restores both differential DAC inputs to their common-mode
-rest value and defines the unused channels, Pico 2W zeros all four DAC
-channels, and a rig with no actuator completes immediately. Core 0 waits
+boundaries: the magneto-elastic rig restores both differential DAC inputs to
+their common-mode rest value and defines the unused channels, Pico 2W zeros all
+four DAC channels, and a rig with no actuator completes immediately. Core 0 waits
 up to 20 ms for that handshake, then asks the RP2350 ROM for an asynchronous,
 normal-path reset after 250 ms. A quiescence timeout is logged but does not
 prevent reset, because resetting is the remaining recovery for a stuck core 1.
@@ -213,7 +213,7 @@ then closes every downstream connection, clears stream state and history,
 finalises an active recording as an incomplete MCU-reboot close, and reconnects.
 
 Experiment read-only values, rig parameters and controller parameters follow
-the base registry. For `cbc-rig`, these include `laser`,
+the base registry. For `magnetoelastic`, these include `laser`,
 `laser_frames_received`, `laser_uart_errors`, `laser_parse_errors`,
 `laser_invalid_frames`, `laser_unexpected_values`, `laser_sync_errors`,
 `rig_laser_range`, and `rig_out_channel`. `laser_frames_received` is a
@@ -240,7 +240,7 @@ in this table. The table is assembled as:
 4. `cmd_epoch`, in counts.
 
 Names are unique ASCII strings of at most 15 bytes; units are at most 7
-bytes. `cbc-rig` currently begins with `adc0` through `adc7` in volts and
+bytes. `magnetoelastic` currently begins with `adc0` through `adc7` in volts and
 `laser` in millimetres. Hosts resolve requested source names from this table;
 there are no protocol-wide fixed source ids.
 
@@ -323,5 +323,5 @@ the defmt boot banner retains the full `helic-daq <version> <git describe>`.
   `01 1F 0F 00 10 27 00 00 2A 00 00 00 04 00 00 00 00 00 02 00 03 00 08 0C`.
 - Beacon request: `48 4C 01`.
 - Beacon response for protocol 3, port 2350, MAC `02:48:4c:00:00:01`,
-  experiment `cbc-rig`, firmware `helic-daq sim`:
-  `48 4C 02 03 2E 09 02 48 4C 00 00 01 63 62 63 2D 72 69 67 00 00 00 00 00 00 00 00 00 68 65 6C 69 63 2D 64 61 71 20 73 69 6D 00 00 00`.
+  experiment `magnetoelastic`, firmware `helic-daq sim`:
+  `48 4C 02 03 2E 09 02 48 4C 00 00 01 6D 61 67 6E 65 74 6F 65 6C 61 73 74 69 63 00 00 68 65 6C 69 63 2D 64 61 71 20 73 69 6D 00 00 00`.

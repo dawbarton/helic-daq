@@ -143,7 +143,7 @@ async fn run_two_client_flow(recording_enabled: bool) -> Result<()> {
     let length = timeout(Duration::from_secs(1), discovery.recv(&mut beacon_bytes)).await??;
     let beacon = BeaconResponse::decode(&beacon_bytes[..length]).expect("valid broker beacon");
     assert_eq!(beacon.control_port, control_port);
-    assert!(beacon.experiment.starts_with(b"cbc-rig\0"));
+    assert!(beacon.experiment.starts_with(b"magnetoelastic\0"));
     assert!(beacon.firmware.starts_with(b"helic-broker "));
 
     let setup = [1, 0, 0, 0, 0, 0, 2, 0, 1];
@@ -367,7 +367,7 @@ fn parameter_values(request: &[u8]) -> Vec<u8> {
         .chunks_exact(2)
         .flat_map(|index| match u16::from_le_bytes([index[0], index[1]]) {
             0 => fixed_text("helic-daq test").to_vec(),
-            1 => fixed_text("cbc-rig").to_vec(),
+            1 => fixed_text("magnetoelastic").to_vec(),
             2 => 0u32.to_le_bytes().to_vec(),
             3 => 0u32.to_le_bytes().to_vec(),
             _ => Vec::new(),

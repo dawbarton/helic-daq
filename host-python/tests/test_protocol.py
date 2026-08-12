@@ -132,14 +132,14 @@ class TestBeacon(unittest.TestCase):
     def test_known_request_and_response_round_trip(self):
         self.assertEqual(protocol.BEACON_REQUEST, bytes.fromhex("48 4c 01"))
         beacon = protocol.BeaconResponse(
-            3, 2350, bytes.fromhex("02 48 4c 00 00 01"), "cbc-rig", "helic-daq sim"
+            3, 2350, bytes.fromhex("02 48 4c 00 00 01"), "magnetoelastic", "helic-daq sim"
         )
         encoded = protocol.encode_beacon_response(beacon)
         self.assertEqual(
             encoded,
             bytes.fromhex(
                 "48 4c 02 03 2e 09 02 48 4c 00 00 01 "
-                "63 62 63 2d 72 69 67 00 00 00 00 00 00 00 00 00 "
+                "6d 61 67 6e 65 74 6f 65 6c 61 73 74 69 63 00 00 "
                 "68 65 6c 69 63 2d 64 61 71 20 73 69 6d 00 00 00"
             ),
         )

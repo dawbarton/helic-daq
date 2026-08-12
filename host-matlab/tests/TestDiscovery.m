@@ -12,7 +12,7 @@ classdef TestDiscovery < matlab.unittest.TestCase
             testCase.verifyEqual(devices.Address, "127.0.0.1");
             testCase.verifyEqual(devices.ControlPort, uint16(2350));
             testCase.verifyEqual(devices.Mac, "02:48:4c:00:00:01");
-            testCase.verifyEqual(devices.Experiment, "cbc-rig");
+            testCase.verifyEqual(devices.Experiment, "magnetoelastic");
         end
 
         function nativeDirectedDiscovery(testCase)
@@ -28,7 +28,7 @@ classdef TestDiscovery < matlab.unittest.TestCase
                 'Port', server.LocalPort, 'Addresses', "127.0.0.1");
             configureCallback(server, 'off');
             testCase.verifyEqual(height(devices), 1);
-            testCase.verifyEqual(devices.Experiment, "cbc-rig");
+            testCase.verifyEqual(devices.Experiment, "magnetoelastic");
         end
     end
 
@@ -41,7 +41,7 @@ classdef TestDiscovery < matlab.unittest.TestCase
             response = struct('Version', helicdaq.Protocol.VERSION, ...
                 'ControlPort', uint16(2350), ...
                 'Mac', uint8([2, 72, 76, 0, 0, 1]), ...
-                'Experiment', "cbc-rig", 'Firmware', "helic-daq test");
+                'Experiment', "magnetoelastic", 'Firmware', "helic-daq test");
             write(server, helicdaq.Protocol.encodeBeaconResponse(response), ...
                 'uint8', datagram.SenderAddress, datagram.SenderPort);
         end

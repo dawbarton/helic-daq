@@ -189,7 +189,7 @@ class TestSimulator(unittest.TestCase):
             (magic, kind, version, port),
             (protocol.MAGIC, 2, protocol.VERSION, self.sim.port),
         )
-        self.assertEqual(response[12:28].rstrip(b"\0"), b"cbc-rig")
+        self.assertEqual(response[12:28].rstrip(b"\0"), b"magnetoelastic")
 
     def test_find_devices_and_cli(self):
         devices = find_devices(
@@ -198,7 +198,7 @@ class TestSimulator(unittest.TestCase):
             addresses=["127.0.0.1"],
         )
         self.assertEqual(len(devices), 1)
-        self.assertEqual(devices[0].experiment, "cbc-rig")
+        self.assertEqual(devices[0].experiment, "magnetoelastic")
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -214,7 +214,7 @@ class TestSimulator(unittest.TestCase):
                 ]
             )
         self.assertEqual(result, 0)
-        self.assertIn("cbc-rig", output.getvalue())
+        self.assertIn("magnetoelastic", output.getvalue())
 
     def test_cli_capture_end_to_end(self):
         self.dev.close()
@@ -404,7 +404,7 @@ class TestSimulator(unittest.TestCase):
             bad.settimeout(1.0)
             self.assertEqual(bad.recv(1), b"")
         self.dev = Device("127.0.0.1", self.sim.port)
-        self.assertEqual(self.dev.get("experiment"), "cbc-rig")
+        self.assertEqual(self.dev.get("experiment"), "magnetoelastic")
 
 
 if __name__ == "__main__":

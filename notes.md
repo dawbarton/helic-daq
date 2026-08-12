@@ -1,7 +1,14 @@
 # Hardware verification status
 
-Last updated 2026-08-11. Read this before a hardware session and update the
+Last updated 2026-08-12. Read this before a hardware session and update the
 verification boundary, failures and fitted-hardware assumptions afterwards.
+
+Entries before 2026-08-12 record the wired analogue rig under its former
+package name `fw-cbc-rig`. That rig is now the magneto-elastic rig, maintained
+at [helic-magneto-elastic-rig](https://github.com/dawbarton/helic-magneto-elastic-rig)
+and advertising the experiment name `magnetoelastic`; the record of the work
+done while it lived here stays below, unedited, and its evidence continues in
+its own repository.
 
 ## Verified on hardware
 
@@ -908,3 +915,38 @@ evidence:
   reference-material tree were identified but deliberately left untouched.
 - No hardware was flashed. W6100 evidence remains cross-build-only, and the
   attached CBC W5500 remains on the accepted, disarmed Stage-11 image.
+
+## 2026-08-12T16:54+00:00 Wired analogue rig split into its own repository
+
+- The wired analogue rig left this repository for
+  [helic-magneto-elastic-rig](https://github.com/dawbarton/helic-magneto-elastic-rig),
+  consuming the platform crates as git dependencies pinned to `v0.1.2`;
+  nothing is vendored. History starts fresh there rather than being carried
+  across, so the record of the work done while the rig lived here is the
+  entries above and the platform's git history.
+- The firmware identity changed with the move and nothing else did. The
+  package is `fw-magnetoelastic-rig`, the advertised experiment name is
+  `magnetoelastic` (14 bytes, inside the beacon's 16-byte field), and the
+  profile is selected as `--rig magnetoelastic`. Pin assignments, safety
+  limits, the 42-parameter registry and the 15-source table are unchanged.
+- Hardware evidence for the rename, on the attached W5500 board: exact clean
+  firmware `0.1.0 86a5262` reported protocol 3, 42 parameters, 15 sources at
+  8 kHz, disarmed at boot. The profile regression passed all phases at
+  7999.5–8000.3 ticks/s with zero overruns, tick timeouts, dropped records,
+  lost packets, capture drops or index gaps, `loop_time_max` 38 µs against the
+  unchanged 60 µs limit; the 8000-record all-source capture passed with the
+  same counters. Recorded in full in the rig repository's `notes.md`.
+- Removed here: the experiment crate, the W6100 wired cross-build CI step, and
+  the wired rig's entries in the developer and user guides, which now point at
+  the rig repository. The simulator, the shared beacon known-answer vector and
+  the host fixtures in all four languages now use `magnetoelastic`; the
+  regression runner's `--rig` default is `pico2w`, the only profile this
+  repository still ships. The rig-profile tests that needed a wired contract
+  now use `tests/external-rig/service-rig-profile.toml`, which this repository
+  owns, rather than a production rig's file.
+- Verified after the removal: root fmt, clippy and 169 tests; the firmware
+  workspace fmt, release clippy, build and layout gate for `pico2w`;
+  dependency rules in both workspaces; the external fixtures' build, tests and
+  two-profile layout gate; 77 host Python tests plus the external fixture
+  test; and the Julia suite. MATLAB is not installed here, so its two edited
+  fixtures rest on CI.

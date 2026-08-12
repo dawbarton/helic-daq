@@ -563,8 +563,9 @@ untested flight-dynamics controller. Any later controller belongs in
 
 ### 4. Integrate hawk as a production experiment
 
-Adding a genuine experiment changes the repository's declared production set.
-Update all places that currently enumerate exactly CBC, whirl, and Pico 2W:
+Adding a genuine experiment changes the repository's declared production set,
+which is now `pico2w-rig` alone, the laboratory rigs being maintained in their
+own repositories. Update all places that enumerate it:
 
 - the firmware workspace and CI expectations, where explicit;
 - `firmware/tools/check_rt_layout.py`;

@@ -1,22 +1,25 @@
 # HELIC-DAQ user guide
 
 HELIC-DAQ is a real-time control and data acquisition platform for laboratory
-control, signal generation and instrumentation. `cbc-rig` targets
-control-based continuation using an AD7609 ADC and AD5064 DAC. Wired
-experiments support the W5500-EVB-Pico2 and W6100-EVB-Pico2. `pico2w-rig`
-runs an AD5064 signal generator with optional optoNCDT laser logging on a
-Raspberry Pi Pico 2W over Wi-Fi.
+control, signal generation and instrumentation. `pico2w-rig`, the experiment
+kept in this repository, runs an AD5064 signal generator with optional
+optoNCDT laser logging on a Raspberry Pi Pico 2W over Wi-Fi.
 
-Rigs may also be maintained in their own repositories against a pinned
-HELIC-DAQ release; the dual-encoder
-[whirl rig](https://github.com/dawbarton/helic-whirl-rig) is one. The host
-workflows below are identical for such a rig, because the host discovers
-parameters and sources by name from whatever firmware it connects to.
+The laboratory rigs are maintained in their own repositories against a pinned
+HELIC-DAQ release: the wired
+[magneto-elastic rig](https://github.com/dawbarton/helic-magneto-elastic-rig),
+which acquires through an AD7609 ADC and drives an exciter through an AD5064
+DAC, and the dual-encoder
+[whirl rig](https://github.com/dawbarton/helic-whirl-rig). Wired rigs support
+the W5500-EVB-Pico2 and the pin-compatible W6100-EVB-Pico2. The host workflows
+below are identical for such a rig, because the host discovers parameters and
+sources by name from whatever firmware it connects to.
 
 ## What it does
 
-- In `cbc-rig`, samples all 8 analogue inputs simultaneously at **1, 2, 4 or
-  8 kHz** (compile-time preset), with hardware-timed conversion starts.
+- In a rig with an AD7609, such as the magneto-elastic rig, samples all 8
+  analogue inputs simultaneously at **1, 2, 4 or 8 kHz** (compile-time preset),
+  with hardware-timed conversion starts.
 - In `pico2w-rig`, updates an AD5064 output at a hardware-timed **8 kHz** while
   Wi-Fi control, streaming and optional laser logging run on the other core.
 - Runs a **real-time control loop** every sample: measurements → controller →
@@ -26,7 +29,8 @@ parameters and sources by name from whatever firmware it connects to.
   and has no actuation.
 - Generates a **periodic reference/forcing signal** as a Fourier series
   (16 harmonics by default) with µHz-resolution frequency control and
-  glitch-free, phase-continuous updates, which are central to CBC.
+  glitch-free, phase-continuous updates, so the reference can be changed while
+  the experiment runs.
 - Lets a host computer **change parameters on the fly** (frequency, Fourier
   coefficients, controller gains) over the network, safely: updates take
   effect atomically at a sample boundary.
@@ -52,16 +56,22 @@ header, plus `cargo install probe-rs-tools`):
 
 ```sh
 cd firmware
-cargo run --release -p fw-cbc-rig # builds, flashes, and streams the device log
 HELIC_WIFI_SSID=lab HELIC_WIFI_PASSWORD=secret \
-  cargo run --release -p fw-pico2w-rig # Pico 2W Wi-Fi signal generator
+  cargo run --release -p fw-pico2w-rig # builds, flashes, and streams the log
 ```
 
-Wired packages target the W5500-EVB-Pico2 by default. Select the pin-compatible
-W6100-EVB-Pico2 explicitly:
+A rig maintained in its own repository is flashed the same way from that
+repository, where the single package is the default:
 
 ```sh
-cargo run --release -p fw-cbc-rig --no-default-features --features board-w6100
+cargo run --release
+```
+
+A wired rig's default feature selects the Ethernet controller physically
+fitted to it. Select the other, pin-compatible controller explicitly:
+
+```sh
+cargo run --release --no-default-features --features board-w6100
 ```
 
 The synchronous SRAM real-time path is mandatory and is retained when default
@@ -74,15 +84,15 @@ line with loop timing and overruns.
 
 ```sh
 cd firmware
-cargo build --release -p fw-cbc-rig
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-cbc-rig -t elf helic-daq.uf2
+cargo build --release -p fw-pico2w-rig
+picotool uf2 convert target/thumbv8m.main-none-eabihf/release/fw-pico2w-rig -t elf helic-daq.uf2
 # hold BOOTSEL while plugging in the USB cable, then:
 picotool load helic-daq.uf2 && picotool reboot
 ```
 
-Add `--no-default-features --features board-w6100` to the CBC
-build command for a W6100 image. The resulting executable has the same
-filename, so convert or copy it before building the other board variant.
+Add `--no-default-features --features board-w6100` to a wired rig's build
+command for a W6100 image. The resulting executable has the same filename, so
+convert or copy it before building the other board variant.
 
 Substitute another `fw-*` experiment package in the build and output filename
 to flash it.
@@ -95,9 +105,8 @@ Find devices without knowing their addresses:
 helic-daq find
 ```
 
-The wired experiments use static addresses by default: `192.168.1.235/24` for
-`cbc-rig`. A separately maintained rig chooses its own; the whirl rig uses
-`192.168.1.238/24`.
+Each wired rig chooses its own static address by default: the magneto-elastic
+rig uses `192.168.1.235/24` and the whirl rig `192.168.1.238/24`.
 Connect it to your machine directly or via a switch and give your machine an
 address on the same subnet, for example `192.168.1.10/24`. After installing
 the host package below, check the TCP control service:
@@ -415,22 +424,22 @@ pass-through controller the output is simply `target + forcing`.
 |---|---|
 | Analogue in 0–7 | AD7609 inputs, ±10 V (or ±20 V, compile-time) |
 | Analogue out 0–3 | Per-channel polarity, set in `board.rs` (`DAC_POLARITY`): unipolar 0–4.096 V or bipolar ±4.096 V |
-| Laser | optoNCDT 1420 via bidirectional RS422↔TTL at 921.6 kBaud; CBC configures its rate to match the sample clock |
+| Laser | optoNCDT 1420 via bidirectional RS422↔TTL at 921.6 kBaud; the firmware configures its rate to match the sample clock |
 
-Output-channel polarity must match your analogue board's output stages. The
-target design is two bipolar + two unipolar; the current build is **all four
-unipolar** (matching the interim bring-up board). The controller writes to
+Output-channel polarity must match your analogue board's output stages, and is
+declared by the rig rather than by the platform: check the rig's own
+`DAC_POLARITY` against the board in front of you. The controller writes to
 output channel 0 by default. The laser sensor must be preconfigured (via
 Micro-Epsilon's tool) only if its baud rate has changed from the factory
-921.6 kBaud. CBC configures its measuring rate, disables output reduction and
-additional values, then selects binary RS422 output. This requires both UART
+921.6 kBaud. The firmware configures its measuring rate, disables output
+reduction and additional values, then selects binary RS422 output. This requires both UART
 directions through suitable TTL↔RS422 hardware; GP1 still needs the external
 idle-high pull-up.
 
 ## Things you set at compile time
 
 Edit the selected experiment's `src/config.rs` and reflash. The table shows
-the `cbc-rig` defaults:
+the magneto-elastic rig's defaults:
 
 | Setting | Constant | Default |
 |---|---|---|
@@ -456,7 +465,7 @@ checks before using the resulting image.
   stay well under the sample period (125 µs at 8 kHz).
 - `overruns`: ticks that ran over the period. Should be 0.
 - `tick_timeouts`: non-zero means the selected tick source isn't responding;
-  for `cbc-rig`, the ADC may not be wired or powered.
+  on a rig clocked by its ADC, the ADC may not be wired or powered.
 - `records_dropped`: stream data lost because the host wasn't keeping up.
 - `laser_frames_received`: complete optoNCDT measurement frames parsed since
   boot. Its rate should match the configured laser measuring rate.
@@ -481,8 +490,8 @@ experiment, the armed/tripped/clamp/quiet fields).
 
 ### Output safety (gated experiments)
 
-Experiments that drive a hazardous actuator (e.g. `cbc-rig`) enable a firmware
-output safety gate. Two parameters expose and control it:
+Experiments that drive a hazardous actuator (e.g. the magneto-elastic rig)
+enable a firmware output safety gate. Two parameters expose and control it:
 
 - `arm` (writable): write `1` to arm the output, `0` to disarm. The output is
   **disarmed after every flash/reset** and is disarmed automatically when the

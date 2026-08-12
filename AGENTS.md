@@ -1,8 +1,9 @@
 # HELIC-DAQ
 
 Real-time control and data acquisition on RP2350 boards using Rust and
-Embassy. HELIC-DAQ is the platform; CBC is one experiment under
-`firmware/experiments/cbc-rig`.
+Embassy. HELIC-DAQ is the platform; `firmware/experiments/pico2w-rig` is the
+one experiment kept in this repository, and the laboratory rigs are maintained
+in their own repositories against a pinned platform tag.
 
 ## Read before changing code
 
@@ -22,18 +23,19 @@ Embassy. HELIC-DAQ is the platform; CBC is one experiment under
 There is no deployed protocol v1. Do not add compatibility shims. Crates are
 `helic-core`, `helic-drivers` and `helic-proto`; the Python package is
 `helic_daq`, the Julia package is `HelicDAQ`, and the MATLAB package is
-`helicdaq`. The repository directory may still be named `cbc-daq`, but code
-and current documentation use HELIC-DAQ except where CBC is the experiment.
+`helicdaq`. Code and current documentation use HELIC-DAQ throughout.
 
-The production firmware set in this repository is exactly `cbc-rig` and
-`pico2w-rig`. Do not restore retired experiment crates, and do not restore the
-whirl rig: it is maintained separately at
-[helic-whirl-rig](https://github.com/dawbarton/helic-whirl-rig), pinned to a
-platform tag. Adding a genuinely new experiment here also requires updating the
-firmware workspace and CI, adding its rig-owned verification profile, and
-updating the user/developer guides and `notes.md`. The shared layout and
-regression tools discover profiles as data; do not add an experiment-specific
-registry to either tool.
+The production firmware set in this repository is exactly `pico2w-rig`. Do not
+restore retired experiment crates, and do not restore a rig that has moved out
+of tree: the whirl rig is maintained at
+[helic-whirl-rig](https://github.com/dawbarton/helic-whirl-rig) and the
+magneto-elastic rig at
+[helic-magneto-elastic-rig](https://github.com/dawbarton/helic-magneto-elastic-rig),
+each pinned to a platform tag. Adding a genuinely new experiment here also
+requires updating the firmware workspace and CI, adding its rig-owned
+verification profile, and updating the user/developer guides and `notes.md`.
+The shared layout and regression tools discover profiles as data; do not add
+an experiment-specific registry to either tool.
 
 A change to a shared crate is now a change to a downstream repository as well.
 Nothing in this repository rebuilds an out-of-tree rig, so treat the crate
@@ -235,10 +237,11 @@ experiment in which it was first needed:
 - `helic-rt-regression` (`helic_daq.verify.regression`) is the sequential hardware runner. It
   flashes one profile, checks identity, measures idle/TCP-poll/capture phases,
   verifies counters, rate, wake-phase spread and capture continuity, then
-  quiets outputs. CBC additionally gates `loop_time_max <= 60 µs`; the current
-  W5500 reference is 32–34 µs (38 µs during complete coefficient replacement).
-  Do not relax an acceptance limit to accommodate a new regression.
-- For record/network changes, run the CBC profile once with
+  quiets outputs. A profile may add its own limit, such as the wired
+  magneto-elastic rig's `loop_time_max <= 60 µs`; those limits and their
+  evidence belong to the rig. Do not relax an acceptance limit to accommodate
+  a new regression.
+- For record/network changes, run a wired rig profile once with
   `--capture-sources all --capture-samples 8000`, then once with
   `--no-flash --capture-samples 60000`. For core-0 timer/network changes, also
   disconnect for at least five minutes, reconnect and prove the drain/watchdog
@@ -266,12 +269,12 @@ experiment in which it was first needed:
 
 ## Hardware constraints worth preserving
 
-- The current CBC build configures all AD5064 channels as unipolar for the
-  interim analogue board. `DAC_POLARITY` in `cbc-rig/rig.rs` must match the
-  fitted output stages before hardware use.
-- The optoNCDT UART input needs an idle-high line. The current rig uses an
-  external 10 kΩ pull-up on GP1; without it, a disconnected sensor can cause
-  a UART interrupt storm.
+- A rig driving an AD5064 must declare a channel polarity matching its fitted
+  output stages. The driver cannot detect a mismatch, and no software check
+  will: it is the rig's own hardware evidence.
+- The optoNCDT UART input needs an idle-high line, which in practice means an
+  external pull-up on the receive pin; without it, a disconnected sensor can
+  cause a UART interrupt storm that starves core 0.
 - The Pico 2W Wi-Fi/DAC path is not yet hardware-verified; consult `notes.md`
   before relying on it.
 - Confirm the Ethernet controller physically attached before flashing a wired
@@ -315,7 +318,6 @@ cargo clippy --manifest-path build/Cargo.toml --all-targets \
   --target x86_64-unknown-linux-gnu -- -D warnings
 cargo test --manifest-path build/Cargo.toml --target x86_64-unknown-linux-gnu
 helic-rt-layout
-cargo build --release -p fw-cbc-rig --no-default-features --features board-w6100
 cd ../tests/external-rig
 cargo fmt --all -- --check
 cargo clippy --release --workspace -- -D warnings

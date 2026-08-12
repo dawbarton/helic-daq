@@ -902,39 +902,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fw-cbc-rig"
-version = "0.1.2"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "defmt 1.1.1",
- "defmt-rtt",
- "embassy-embedded-hal",
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-rp",
- "embassy-sync",
- "embassy-time",
- "embedded-hal 1.0.0",
- "embedded-hal-bus",
- "embedded-io-async 0.7.0",
- "fixed",
- "heapless",
- "helic-core",
- "helic-drivers",
- "helic-fw-build",
- "helic-fw-optoncdt",
- "helic-fw-rt",
- "helic-fw-support",
- "helic-proto",
- "helic-rt",
- "panic-probe",
- "rand_core 0.10.1",
- "static_cell",
-]
-
-[[package]]
 name = "fw-pico2w-rig"
 version = "0.1.2"
 dependencies = [
@@ -1499,12 +1466,6 @@ name = "rand_core"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
-
-[[package]]
-name = "rand_core"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "redox_syscall"
