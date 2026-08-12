@@ -977,19 +977,31 @@ evidence:
   7999.4–8000.3 ticks/s with zero overruns, tick timeouts, dropped records,
   lost packets, capture drops or index gaps, `loop_time_max` 37–38 µs against
   the rig's unchanged 60 µs limit.
-- **Separate defect, open.** The board did go unreachable twice, and defmt
-  shows why: the optoNCDT stopped answering, and `helic-fw-optoncdt` then
-  probes baud rates about four times a second indefinitely. In that state
-  `records_dropped` climbed to 833369 while streaming was *off*, which means
-  core 0 was not draining the ring every 5 ms, i.e. the laser path was
-  starving core 0 and with it the network stack. Core 1 kept ticking
-  throughout, which is why the rig looks healthy on the probe while being
-  invisible on the network, and why only a reset appears to fix it. The
-  healthy 90 s window earlier the same afternoon has zero laser log lines and
-  `dropped 0`, so this is the sensor dropping out, not load.
-  - The probe loop needs a bounded backoff, and the sensor's absence should be
-    a diagnostic counter rather than an unbounded retry. Not fixed here: it is
-    a different subsystem from the control link, and the sensor needs checking
-    physically first. The rig's laser was still not answering at the end of
-    this session, so the safety gate stays tripped and no `laser` value on
-    that rig should be trusted until it is.
+- **Separate defect, open, and only partly characterised.** The board went
+  unreachable twice this afternoon. Both times the optoNCDT had stopped
+  answering and `helic-fw-optoncdt` was probing baud rates about four times a
+  second, unboundedly. In the failed state `records_dropped` climbed to 833369
+  while streaming was *off*, which means core 0 was not draining the ring every
+  5 ms, so the network stack was not being serviced either; core 1 ticked
+  normally throughout, which is why the rig looks healthy on the probe while
+  being invisible on the network.
+  - Do not conclude that the probe loop alone starves core 0. Measured
+    afterwards on the same rig with the same silent sensor: about five probes
+    per second, `records_dropped` flat at zero, the full profile regression
+    passing and the network entirely healthy. The probe rate is therefore not
+    the discriminator, and something else about the failed state was. The most
+    likely remaining candidate is the documented floating-RX interrupt storm,
+    which depends on the line state a stalled sensor leaves behind rather than
+    on the probing itself.
+  - What is established: a silent sensor is a precondition for both failures,
+    the failure is core-0 starvation rather than anything on core 1, and a
+    reset clears it. What is not: why the same silent sensor is harmless now.
+    Instrument the UART error counters and the drain ticker before changing
+    the driver, and check the sensor and its pull-up physically first.
+  - The v0.1.3 tag message states this more strongly than the evidence now
+    supports, saying the probe loop starves core 0. A tag cannot be moved, so
+    this entry is the correction.
+  - The rig's laser was still not answering at the end of this session:
+    `laser_frames_received` stayed at 0 and `safety` read 10, meaning the gate
+    had latched a trip and was quieting the actuator. No `laser` value from
+    that rig should be trusted until the sensor is working.
