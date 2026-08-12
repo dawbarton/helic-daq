@@ -496,7 +496,11 @@ enable a firmware output safety gate. Two parameters expose and control it:
 - `arm` (writable): write `1` to arm the output, `0` to disarm. The output is
   **disarmed after every flash/reset** and is disarmed automatically when the
   MCU control connection drops. A direct connection therefore needs a
-  persistent host session that arms once and holds the connection. With the
+  persistent host session that arms once and holds the connection; the session
+  may sit idle, because the device keeps the connection alive with TCP
+  keep-alive probes rather than requiring the host to poll. If the host
+  vanishes without closing the connection, the probes go unanswered and the
+  device disarms and stops streaming within about 10 s. With the
   broker, its upstream connection remains open across individual client
   departures, but the broker explicitly disarms when its final downstream
   client disconnects. The one-shot CLI rejects non-zero `arm` writes because

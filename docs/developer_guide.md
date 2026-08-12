@@ -529,9 +529,24 @@ Three transport-independent server tasks:
   ≤1472-byte packets. Session config lives in
   `helic_fw_support::comms::STREAM`, a critical-section mutex shared by the two
   tasks. `StreamStart` bumps a generation counter, which
-  re-arms the streamer (sequence reset, finite-capture countdown).
+  re-arms the streamer (sequence reset, finite-capture countdown). The streamer
+  sends only while `control_connected` holds, so a session cannot outlive its
+  controlling connection even if the control task never resumes to clear
+  `enabled`.
 - `helic_fw_support::comms::beacon::beacon_task`: answers UDP discovery
   requests with protocol version, experiment identity, control port and MAC.
+
+The control socket sets a 2 s keep-alive interval and a 10 s timeout. Both are
+needed and neither is arbitrary. Without keep-alive probes the timeout measures
+*silence* rather than liveness, so a host that arms the output and then holds
+the connection without polling was reset after exactly 30 s, which is the
+opposite of what the arm-and-hold workflow asks for; the probes oblige a live
+peer to answer, so an idle-but-alive session now survives indefinitely. With
+the probes in place, silence does mean the peer is gone, and the shorter
+timeout bounds how long a rig keeps driving an output, or streaming to a host,
+after that host vanishes without closing its connection: comms-loss quieting
+and the stream stop follow the abort. Raise the timeout and that hazard window
+grows with it.
 
 ### The parameter registry (`params.rs`)
 

@@ -192,7 +192,10 @@ experiment event counters such as the laser error diagnostics; total counters
 such as `ticks` and `laser_frames_received` keep running. `arm`/`safety` act
 only on an experiment whose rig opts into the safety gate (`magnetoelastic`);
 elsewhere `arm` is inert and `safety` reads 0. The output is disarmed after
-every reset and on control-connection loss.
+every reset and on control-connection loss. A connection closed by the host
+takes effect at once; a host that vanishes silently is detected by unanswered
+TCP keep-alive probes, which bounds the loss to about 10 s. Streaming stops at
+the same moment: records are sent only while a control connection is open.
 
 `mcu_reboot` accepts exactly the u32 value `0x52454254`; every other value,
 including 0 and 1, returns bad value. A valid write disables streaming and

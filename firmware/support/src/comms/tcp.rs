@@ -14,19 +14,43 @@ use helic_rt::{source, source_count, Program, Rig, MAX_SOURCES};
 
 use super::STREAM;
 
+/// Keep-alive probe interval on the control connection.
+///
+/// Without probes, the timeout below measures silence rather than liveness:
+/// an idle but perfectly healthy host was reset after 30 s, because nothing
+/// obliged it to send anything. Probes make a live peer answer, so silence
+/// now means the peer is gone.
+const CONTROL_KEEP_ALIVE: Duration = Duration::from_secs(2);
+
+/// Silence tolerated on the control connection before it is aborted.
+///
+/// Several probes must go unanswered, so this is not tripped by ordinary
+/// jitter or by a host busy receiving a capture. Comms-loss quieting and the
+/// stream stop follow immediately, which bounds how long a rig can drive an
+/// output, or stream to a host, after that host has vanished without closing
+/// its connection.
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub async fn control_run<R: Rig, P: Program>(stack: Stack<'static>, mut store: ParamStore) -> ! {
     let mut rx_buf = [0u8; 2048];
     let mut tx_buf = [0u8; 2048];
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
-        socket.set_timeout(Some(Duration::from_secs(30)));
+        socket.set_timeout(Some(CONTROL_TIMEOUT));
+        socket.set_keep_alive(Some(CONTROL_KEEP_ALIVE));
         if socket.accept(helic_proto::CONTROL_PORT).await.is_err() {
             continue;
         }
         info!("control: client connected");
+        STREAM.lock(|s| s.borrow_mut().control_connected = true);
         serve::<R, P>(&mut socket, &mut store).await;
-        // Stop streaming when the controlling connection goes away.
-        STREAM.lock(|s| s.borrow_mut().enabled = false);
+        // Stop streaming when the controlling connection goes away, and record
+        // that there is no connection, which the streamer checks for itself.
+        STREAM.lock(|s| {
+            let mut s = s.borrow_mut();
+            s.enabled = false;
+            s.control_connected = false;
+        });
         // Comms-loss quieting: a dropped control connection disarms the output
         // immediately (inert for a rig that is not safety-gated).
         store.shared().safety.disarm();

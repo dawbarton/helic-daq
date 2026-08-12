@@ -27,6 +27,13 @@ pub struct StreamState {
     pub count: u32,
     /// Incremented by every `StreamStart`; the streamer re-arms on change.
     pub generation: u32,
+    /// True while the TCP server is serving a control connection. Records
+    /// leave the device only while this holds, so a session cannot outlive the
+    /// connection that asked for it even if the control task stops before
+    /// clearing `enabled`. The connection itself is bounded by the keep-alive
+    /// and timeout in `tcp`, which is what makes this a real limit rather than
+    /// a restatement of the client's intentions.
+    pub control_connected: bool,
 }
 
 pub static STREAM: Mutex<CriticalSectionRawMutex, RefCell<StreamState>> =
@@ -37,4 +44,5 @@ pub static STREAM: Mutex<CriticalSectionRawMutex, RefCell<StreamState>> =
         decimation: 1,
         count: 0,
         generation: 0,
+        control_connected: false,
     }));

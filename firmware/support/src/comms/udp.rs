@@ -48,22 +48,25 @@ pub async fn stream_task(
     let mut seq: u32 = 0;
     let mut remaining: u32 = 0; // records left in a finite session; 0 when continuous
     let mut generation: u32 = 0;
+    let mut suppressed = false; // reported once per transition, not per flush
 
     loop {
         ticker.next().await;
 
         // Snapshot the session config.
-        let (enabled, target, sources, decimation, count, gen) = STREAM.lock(|s| {
-            let s = s.borrow();
-            (
-                s.enabled,
-                s.target,
-                s.sources.clone(),
-                s.decimation.max(1) as u32,
-                s.count,
-                s.generation,
-            )
-        });
+        let (enabled, control_connected, target, sources, decimation, count, gen) =
+            STREAM.lock(|s| {
+                let s = s.borrow();
+                (
+                    s.enabled,
+                    s.control_connected,
+                    s.target,
+                    s.sources.clone(),
+                    s.decimation.max(1) as u32,
+                    s.count,
+                    s.generation,
+                )
+            });
 
         if gen != generation {
             // New StreamStart: re-arm.
@@ -73,7 +76,16 @@ pub async fn stream_task(
             info!("stream: armed ({} sources)", sources.len());
         }
 
-        let (Some((addr, port)), true) = (target, enabled) else {
+        // Records leave the device only while a control connection is open.
+        // The control server clears `enabled` when a connection ends, so this
+        // is a second, independent check rather than the only one: it holds
+        // even if that task never resumes.
+        if enabled && !control_connected && !suppressed {
+            info!("stream: suppressed, no control connection");
+        }
+        suppressed = enabled && !control_connected;
+
+        let (Some((addr, port)), true) = (target, enabled && control_connected) else {
             // Not streaming: keep the ring drained so old data never leaks
             // into a future session.
             while records.dequeue().is_some() {}

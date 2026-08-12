@@ -950,3 +950,46 @@ evidence:
   two-profile layout gate; 77 host Python tests plus the external fixture
   test; and the Julia suite. MATLAB is not installed here, so its two edited
   fixtures rest on CI.
+
+## 2026-08-12T17:20+00:00 Control-link liveness, and a correction
+
+- **Correction.** The 2026-08-12 entry above attributed a rig that had
+  vanished from the network to an interrupted capture leaving it streaming.
+  That is wrong. Killing a streaming client sends a FIN, the control server
+  sees the disconnect immediately and stops the stream: measured at 12.0 s
+  into a continuous session, `control: client disconnected` appeared in the
+  same defmt millisecond as the kill.
+- **What the control socket actually did.** It set a 30 s timeout and no
+  keep-alive. smoltcp's timeout measures time since the last *received*
+  packet, so it fired on silence rather than on death. Measured on hardware:
+  an idle but perfectly healthy connection was reset after 30.0 s, exactly as
+  predicted. That is the opposite of what the arm-and-hold workflow needs,
+  since a reset disarms the output.
+- **Fix.** The control socket now sets a 2 s keep-alive interval and a 10 s
+  timeout. Probes oblige a live peer to answer, so an idle session survives;
+  silence now means the peer is gone, and comms-loss quieting plus the stream
+  stop follow within about 10 s instead of 30. The streamer additionally sends
+  only while a control connection is open, so a session cannot outlive its
+  connection even if the control task never resumes.
+- **Evidence.** On the attached W5500 magneto-elastic rig, built against this
+  tree: the same idle connection that was reset at 30.0 s before the change
+  was still open after 90 s. The profile regression passed all phases at
+  7999.4–8000.3 ticks/s with zero overruns, tick timeouts, dropped records,
+  lost packets, capture drops or index gaps, `loop_time_max` 37–38 µs against
+  the rig's unchanged 60 µs limit.
+- **Separate defect, open.** The board did go unreachable twice, and defmt
+  shows why: the optoNCDT stopped answering, and `helic-fw-optoncdt` then
+  probes baud rates about four times a second indefinitely. In that state
+  `records_dropped` climbed to 833369 while streaming was *off*, which means
+  core 0 was not draining the ring every 5 ms, i.e. the laser path was
+  starving core 0 and with it the network stack. Core 1 kept ticking
+  throughout, which is why the rig looks healthy on the probe while being
+  invisible on the network, and why only a reset appears to fix it. The
+  healthy 90 s window earlier the same afternoon has zero laser log lines and
+  `dropped 0`, so this is the sensor dropping out, not load.
+  - The probe loop needs a bounded backoff, and the sensor's absence should be
+    a diagnostic counter rather than an unbounded retry. Not fixed here: it is
+    a different subsystem from the control link, and the sensor needs checking
+    physically first. The rig's laser was still not answering at the end of
+    this session, so the safety gate stays tripped and no `laser` value on
+    that rig should be trusted until it is.
