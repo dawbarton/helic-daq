@@ -103,6 +103,10 @@ class RegressionDryRunTests(unittest.TestCase):
             "0.02",
             "--capture-samples",
             "8",
+            "--write-seconds",
+            "0.1",
+            "--write-interval",
+            "0.02",
         ]
         output = io.StringIO()
         with (
@@ -120,10 +124,16 @@ class RegressionDryRunTests(unittest.TestCase):
         self.assertEqual(report["experiment"], "fixture-rig")
         self.assertEqual(report["capture"]["records"], 8)
         self.assertEqual(report["acceptance_errors"], [])
-        self.assertEqual(
-            [write for write in device.writes if write[0] == "drive_enable"],
-            [("drive_enable", 0), ("drive_enable", 0)],
-        )
+        # The write phase drives the rig's own quiet writes, so their count is
+        # a function of its duration rather than a fixed property of the run.
+        # What must hold regardless is that the runner only ever writes the
+        # quiet value, and that the run ends with the rig quiet.
+        enables = [write for write in device.writes if write[0] == "drive_enable"]
+        self.assertGreater(len(enables), 2)
+        self.assertTrue(all(value == 0 for _, value in enables))
+        self.assertEqual(device.writes[-1], ("drive_enable", 0))
+        self.assertGreater(report["write"]["writes"], 0)
+        self.assertEqual(report["write"]["rejected"], 0)
 
 
 if __name__ == "__main__":
