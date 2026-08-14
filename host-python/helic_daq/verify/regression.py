@@ -1,8 +1,8 @@
 """Flash and exercise one production rig's real-time path sequentially.
 
 The control server is single-client. This tool therefore performs firmware
-flashing, idle measurement, TCP polling, and UDP capture in strict order and
-fails if common real-time acceptance criteria regress.
+flashing, idle measurement, TCP polling, parameter writing, and UDP capture in
+strict order and fails if common real-time acceptance criteria regress.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-from helic_daq import Device, protocol
+from helic_daq import Device, DeviceError, protocol
 
 from . import discover_profiles
 from .profile import (
@@ -149,12 +149,60 @@ def measure_phase(
     return result
 
 
+def write_phase(
+    device: Device, profile: RegressionProfile, seconds: float, interval: float
+) -> dict[str, object]:
+    """Measure the loop while parameters are written, not merely read.
+
+    The idle, poll, and capture phases only ever read, and each resets the
+    diagnostics after the setup writes, so none of them observes a tick that
+    applies a command. That is the gap this phase closes. Applying a command
+    costs the real-time loop the whole cross-core envelope, so a rig's declared
+    `max_loop_us` says nothing about a rig being tuned until it is tested here,
+    and writing parameters to a running loop is the common workflow: sweeps,
+    continuation, and live controller tuning all do it.
+
+    The rig's own quiet writes are reused as the traffic. They are already
+    declared safe to apply at any moment, which is exactly the property needed,
+    and they cost the loop the same as any other command because the envelope
+    is a fixed size.
+    """
+    reset_diagnostics(device)
+    before = snapshot(device)
+    started = time.monotonic()
+    writes = 0
+    busy = 0
+    while time.monotonic() - started < seconds:
+        for write in profile.quiet:
+            if write.zeros:
+                value: object = [0.0] * device.param(write.name).count
+            else:
+                value = write.value
+            try:
+                device.set(write.name, value)
+                writes += 1
+            except DeviceError:
+                # Legitimate backpressure rather than a fault: the queue is
+                # bounded and the host can outrun a tick. Counted, not gated,
+                # because at these intervals it should simply never happen.
+                busy += 1
+        time.sleep(interval)
+    result: dict[str, object] = delta(
+        before, snapshot(device), time.monotonic() - started
+    )
+    result["phase"] = phase_snapshot(device)
+    result["writes"] = writes
+    result["rejected"] = busy
+    return result
+
+
 def acceptance_errors(
     result: dict[str, object], profile: RegressionProfile
 ) -> list[str]:
     errors: list[str] = []
-    for phase_name in ("idle", "poll", "capture"):
-        phase = result[phase_name]
+    for phase_name in ("idle", "poll", "write", "capture"):
+        # `write` is absent when the rig declares no quiet writes to reuse.
+        phase = result.get(phase_name)
         if not isinstance(phase, dict):
             continue
         for counter in ("overruns", "tick_timeouts", "records_dropped", "clock_jitter"):
@@ -217,6 +265,13 @@ def main() -> int:
     parser.add_argument("--idle-seconds", type=float, default=5.0)
     parser.add_argument("--poll-seconds", type=float, default=5.0)
     parser.add_argument("--poll-interval", type=float, default=0.05)
+    parser.add_argument(
+        "--write-seconds",
+        type=float,
+        default=5.0,
+        help="seconds spent writing parameters to the running loop; 0 skips",
+    )
+    parser.add_argument("--write-interval", type=float, default=0.02)
     parser.add_argument("--capture-samples", type=int, default=8_000)
     parser.add_argument(
         "--capture-sources",
@@ -280,6 +335,13 @@ def main() -> int:
         quiet_outputs(device, regression)
         result["idle"] = measure_phase(device, args.idle_seconds, None)
         result["poll"] = measure_phase(device, args.poll_seconds, args.poll_interval)
+        # Only phase that exercises a tick applying a command. Needs writes the
+        # rig has declared safe, so a rig with no quiet list is not tested here.
+        if args.write_seconds > 0 and regression.quiet:
+            result["write"] = write_phase(
+                device, regression, args.write_seconds, args.write_interval
+            )
+            quiet_outputs(device, regression)
 
         reset_diagnostics(device)
         before = snapshot(device)
