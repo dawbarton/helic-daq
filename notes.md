@@ -1116,3 +1116,54 @@ guess further. The evidence log is kept as the third episode's probe capture.
 Next step is to bisect `8110974` against its parent with a fixed
 sixteen-second connection, which is now a two-minute test rather than an
 unexplained episode.
+
+## 2026-08-14T23:30+00:00 Correction: it was blocking RTT, not the control link
+
+The entry above is wrong and is retracted. There is no fifteen-second control
+link defect, the keep-alive constants introduced in `8110974` are not
+implicated, and neither is the embassy-time alarm watchdog. **`defmt-rtt`
+blocks when its buffer fills, and the buffer fills whenever no debugger is
+draining it.** The status task logs once a second, so it fills in roughly
+fifteen seconds; the next `info!` blocks inside a critical section and core 0
+stops. Core 1 is Embassy-free, SRAM-resident and never logs, so it keeps
+ticking at exactly 8 kHz throughout.
+
+What misled me, recorded because the same trap will catch the next person.
+My test harness flashed with `cargo run` and then killed the tmux session to
+free the probe before each measurement, so every failing run had no RTT reader
+and every passing run had one. The fifteen seconds looked like a network clock
+because it is genuinely constant, but it is the buffer fill time at a fixed
+logging rate, which is exactly why it did not depend on traffic direction,
+rate, or volume.
+
+Worse, **attaching the probe drains the buffer and releases the block**, so
+the board recovers the moment you go to look at it. That is why the earlier
+episodes were unexplainable, why the note above them says a reset destroys the
+evidence, and why my own probe capture showed a perfectly healthy core 0 with
+the status task logging on the millisecond: the attach had already fixed it.
+Observing the fault removes it.
+
+Evidence, all on one firmware with no reset between:
+
+| Condition | 20 ms reads |
+|---|---|
+| Probe attached | survives, test ended at 90 s |
+| Probe killed | dies after 455 reads, 12.83 s |
+| Probe re-attached, no reset, no reflash | answers immediately, `ticks` 12462784 |
+
+The last row is the one that settles it. A reset would have destroyed it.
+
+Fixed by enabling `defmt-rtt`'s `disable-blocking-mode`, so a full buffer drops
+frames rather than halting the core. With it, ninety seconds of 20 ms reads
+with no probe attached survive, and **the full default regression passes end to
+end for the first time**: 630 writes in the write phase at 45 us, 8000 records,
+no lost packets, no index gaps, no acceptance errors.
+
+This also explains the regression's history rather than just its present. The
+tool detaches from defmt deliberately before opening its host connection, so it
+has always been racing this; it passed at about thirteen seconds by a margin of
+two, and the five seconds of writes I added pushed it past. The write phase
+found a real defect after all, just not the one I attributed it to.
+
+The earlier "board became unreachable" episodes are very probably all of this,
+including the stale connection that opened this session.

@@ -710,6 +710,30 @@ change it cannot wait for, a temporary `[patch]` is the honest mechanism, but
 record why and remove it once the change lands upstream: a patched fork that
 outlives its reason is how these arrangements silently diverge.
 
+#### `defmt-rtt` must not be left in blocking mode
+
+```toml
+defmt-rtt = { version = "1.3.0", features = ["disable-blocking-mode"] }
+```
+
+The feature is not optional for a rig, and omitting it does not fail a build,
+a lint or any static gate. `defmt-rtt` defaults to blocking when the RTT buffer
+fills, and the buffer fills whenever no debugger is draining it, which is the
+normal state of a deployed rig and of every regression phase, because the
+regression detaches `cargo run` from defmt before it opens its host
+connection. The status task alone logs once a second, so the buffer fills in
+roughly fifteen seconds; the next `info!` then blocks inside a critical
+section and **core 0 stops** — network, record drain and all. Core 1 is
+Embassy-free and never logs, so it keeps ticking perfectly throughout, which
+makes the symptom "the board vanished from the network but the rig is fine".
+
+Attaching a probe drains the buffer and releases the block, so the board
+recovers the instant you go to look at it. That is why this presented for days
+as an intermittent, unexplainable disappearance: observing it fixed it, and
+resetting it destroyed the evidence. With the feature enabled, a full buffer
+drops frames instead, which is the only acceptable behaviour for a transport
+that a real-time rig does not require.
+
 #### Embassy versions must match the platform
 
 This is the one pin that fails confusingly rather than cleanly. `embassy-rp`
