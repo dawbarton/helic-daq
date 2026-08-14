@@ -7,7 +7,6 @@ license.workspace = true
 
 [features]
 diag-max-command-burst = ["helic-rt/diag-max-command-burst"]
-diag-wide-command-payload = ["helic-rt/diag-wide-command-payload"]
 diag-skip-record-enqueue = []
 # Desktop builds of the portable crates must not name an embedded linker
 # section; firmware enables their matching feature centrally here.

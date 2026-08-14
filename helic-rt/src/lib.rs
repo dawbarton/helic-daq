@@ -20,7 +20,7 @@ pub use channels::{
     command_id, ActiveCoeffs, ActiveTable, CoeffStaging, CommandConsumer, CommandProducer, Payload,
     Record, RecordConsumer, RecordProducer, RtChannels, RtCommand, COMMANDS_PER_TICK,
     COMMAND_QUEUE_LEN, DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE,
-    MAX_FORCE_VALUES, MAX_RT_VALUES, RECORD_QUEUE_LEN,
+    MAX_FORCE_VALUES, RECORD_QUEUE_LEN,
 };
 pub use program::{Program, StandardProgram, StepCtx};
 pub use rig::{

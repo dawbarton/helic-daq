@@ -144,10 +144,6 @@ pub enum ParamAction {
     ResetDiagnostics,
 }
 
-#[cfg_attr(
-    feature = "diag-wide-command-payload",
-    allow(clippy::large_enum_variant)
-)]
 pub enum Staged {
     Local(ParamAction),
     Rt(Payload),
@@ -410,11 +406,8 @@ impl ParamStore {
         for _ in 0..crate::COMMANDS_PER_TICK {
             let result = self.commands.enqueue(RtCommand {
                 domain: crate::DOMAIN_GENERATOR,
-                id: crate::command_id::generator::DIAGNOSTIC_VALUES,
-                payload: Payload::Values {
-                    len: crate::MAX_RT_VALUES as u8,
-                    data: [0.0; crate::MAX_RT_VALUES],
-                },
+                id: crate::command_id::generator::DIAGNOSTIC_BURST,
+                payload: Payload::F32(0.0),
             });
             debug_assert!(result.is_ok());
         }

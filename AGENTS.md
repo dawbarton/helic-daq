@@ -182,11 +182,10 @@ experiment in which it was first needed:
 ### Bounded platform contract
 
 - Production bounds are `MAX_SOURCES = 24`, `MAX_ACTUATORS = 4`,
-  `MAX_GROUPS = 8`, `MAX_RT_VALUES = 33`, `MAX_FORCE_VALUES = 132`,
-  `COMMAND_QUEUE_LEN = 32`, `COMMANDS_PER_TICK = 2` and
-  `MAX_HARMONICS = 16`. Harmonic count and waveform-table capacity are
-  experiment-selected const generics; the current production table capacity
-  is 4096.
+  `MAX_GROUPS = 8`, `MAX_FORCE_VALUES = 132`, `COMMAND_QUEUE_LEN = 32`,
+  `COMMANDS_PER_TICK = 2` and `MAX_HARMONICS = 16`. Harmonic count and
+  waveform-table capacity are experiment-selected const generics; the current
+  production table capacity is 4096.
 - Changing an existing shared capacity in either direction is a breaking
   platform change because it changes queue or record layout, SRAM use or WCET.
   Require memory, discovery, layout and hardware-timing evidence; do not raise

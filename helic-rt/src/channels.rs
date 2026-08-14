@@ -6,16 +6,6 @@ use helic_core::{Active, CommitToken, Staging};
 
 use crate::{DEFAULT_HARMONICS, MAX_SOURCES};
 
-/// Maximum number of scalar values copied inline by one RT command.
-///
-/// This accommodates one mean plus sixteen sine/cosine harmonic pairs. Wider
-/// vectors use an owner-checked [`helic_core::ValueBuffer`], because hardware
-/// timing rejected copying 132 values through this envelope. Changing this
-/// bound changes queue SRAM use and command WCET, so it is breaking.
-#[cfg(not(feature = "diag-wide-command-payload"))]
-pub const MAX_RT_VALUES: usize = 33;
-#[cfg(feature = "diag-wide-command-payload")]
-pub const MAX_RT_VALUES: usize = 132;
 /// Widest reviewed buffered force vector: four actuators at sixteen harmonics.
 pub const MAX_FORCE_VALUES: usize = 132;
 
@@ -34,8 +24,10 @@ pub mod command_id {
         pub const SET_INCREMENT: u16 = 0;
         pub const SET_TARGET: u16 = 1;
         pub const SET_FORCING: u16 = 2;
-        /// Feature-gated WCET probe which materialises every copied value.
-        pub const DIAGNOSTIC_VALUES: u16 = u16::MAX;
+        /// Feature-gated WCET probe. Carries a scalar, like every production
+        /// command, so the burst it measures is the burst a rig can actually
+        /// receive.
+        pub const DIAGNOSTIC_BURST: u16 = u16::MAX;
     }
 
     pub mod table {
@@ -62,15 +54,10 @@ pub mod command_id {
 /// Deliberately not `Copy` or `Clone`: `Buffer` contains a linear token whose
 /// ownership must travel back to the staging endpoint if enqueueing fails.
 #[derive(Debug)]
-#[cfg_attr(
-    feature = "diag-wide-command-payload",
-    allow(clippy::large_enum_variant)
-)]
 pub enum Payload {
     Unit,
     F32(f32),
     U32(u32),
-    Values { len: u8, data: [f32; MAX_RT_VALUES] },
     Buffer(CommitToken),
 }
 
@@ -82,9 +69,10 @@ pub struct RtCommand {
     pub payload: Payload,
 }
 
-#[cfg(not(feature = "diag-wide-command-payload"))]
-const _: () = assert!(core::mem::size_of::<RtCommand>() <= 160);
-const _: () = assert!(core::mem::size_of::<RtCommand>() <= 560);
+// Four pointer widths: 16 bytes on the 32-bit target, 32 on a 64-bit host,
+// because `CommitToken` carries its owner address. Tight enough that adding
+// any inline array to `Payload` fails the build rather than the timing gate.
+const _: () = assert!(core::mem::size_of::<RtCommand>() <= 4 * core::mem::size_of::<usize>());
 
 pub const COMMAND_QUEUE_LEN: usize = 32;
 /// Maximum number of host commands applied at one sample boundary.
@@ -130,12 +118,7 @@ mod tests {
 
     #[test]
     fn command_envelope_stays_within_reviewed_sram_bound() {
-        if cfg!(feature = "diag-wide-command-payload") {
-            assert_eq!(MAX_RT_VALUES, 132);
-        } else {
-            assert_eq!(MAX_RT_VALUES, 33);
-            assert!(core::mem::size_of::<RtCommand>() <= 160);
-        }
+        assert!(core::mem::size_of::<RtCommand>() <= 4 * core::mem::size_of::<usize>());
     }
 
     #[test]
@@ -143,8 +126,5 @@ mod tests {
         const ACTUATORS: usize = 4;
         const HARMONICS: usize = 16;
         assert_eq!(ACTUATORS * (1 + 2 * HARMONICS), MAX_FORCE_VALUES);
-        if !cfg!(feature = "diag-wide-command-payload") {
-            assert_eq!(1 + 2 * HARMONICS, MAX_RT_VALUES);
-        }
     }
 }

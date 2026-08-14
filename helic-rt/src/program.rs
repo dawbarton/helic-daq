@@ -131,13 +131,8 @@ impl<C: Controller, const H: usize, const N: usize> Program for StandardProgram<
                 self.forcing_coeffs.activate(token);
             }
             #[cfg(feature = "diag-max-command-burst")]
-            (
-                DOMAIN_GENERATOR,
-                command_id::generator::DIAGNOSTIC_VALUES,
-                Payload::Values { len, data },
-            ) => {
-                debug_assert_eq!(len as usize, 1 + 2 * H);
-                core::hint::black_box(data);
+            (DOMAIN_GENERATOR, command_id::generator::DIAGNOSTIC_BURST, Payload::F32(v)) => {
+                core::hint::black_box(v);
             }
             (DOMAIN_TABLE, command_id::table::SET_INCREMENT, Payload::U32(increment)) => {
                 self.table_player.set_increment(increment)
