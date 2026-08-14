@@ -1011,3 +1011,52 @@ evidence:
     stayed at 0 and `safety` read 10: the gate had latched a trip and was
     quieting the actuator, which is the designed response to a blind feedback
     path.
+
+## 2026-08-14T21:30+00:00 The copied command payload is deleted, and the regression now writes
+
+Measured on the magneto-elastic rig at 8 kHz, laser, exciter, and stepper
+powered down. Every parameter write cost the tick 19 to 20 us, and the cause
+was neither the rig nor the handler: `set_rig_param` and `apply_program` are a
+few tens of instructions each and entirely SRAM resident.
+
+Isolation. Reads over TCP cost nothing, 45 us against a 44 us quiet tick, so
+it is not core-0 network activity, which is all a GET and a SET share.
+`t_measure_max` and `t_actuate_max` never moved, so all of it lands in the
+rest of the tick. Rig-domain and program-domain writes cost the same. And a
+33-float `target_coeffs` write cost exactly what a one-float write cost, which
+is the tell: the cost does not depend on what the command carries.
+
+It is the fixed-size envelope. Confirmed by scaling rather than by reading
+code, using `diag-wide-command-payload` and two prototype widths:
+
+| `RtCommand` | Write | Extra over quiet |
+|---|---|---|
+| 16 B, `Values` removed | 45 us | 2 us |
+| 44 B, `MAX_RT_VALUES = 8` | 50 us | 6 us |
+| 140 B, as shipped | 64 us | 20 us |
+| 536 B, `diag-wide-command-payload` | 118 us | 74 us |
+
+Linear through the origin at 0.139 us per byte, about 21 cycles per byte at
+150 MHz. Alignment was tested and is not the mechanism: `#[repr(align(8))]` on
+both `Payload` and `RtCommand` changed nothing. It is simply bytes moved.
+
+`Payload::Values` had had no production consumer since `a3bf233`, twenty-one
+minutes after `af90fea` narrowed it to 33 for the coefficients that `a3bf233`
+then moved to buffers. So the buffered path never escaped the copy cost; it
+only stopped making it worse, because an enum charges its largest variant to
+every command whether or not that variant is in use. Deleted rather than
+feature-gated: gating would have left the burst probe measuring a command
+shape no shipped image has.
+
+Also on the pre-stator magneto firmware `dd215ec`, quiet 43 us and any write
+63 us, so this long predates that rig's stepper axis.
+
+The regression could not have caught it. Idle and poll only read, and every
+phase resets the diagnostics after its setup writes, so no phase observed a
+tick applying a command, and `max_loop_us` was a quiescent limit. The
+magneto-elastic rig declares 60 us and every write cost 64. A write phase now
+runs between poll and capture, reusing the rig's declared quiet writes.
+
+Worth keeping in view: at 8 kHz there was 81 us of headroom, so none of this
+was urgent. At 16 kHz the period is 62.5 us against a 44 us quiet tick, and a
+single 20 us command would have overrun outright.
