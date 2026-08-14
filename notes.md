@@ -1060,3 +1060,59 @@ runs between poll and capture, reusing the rig's declared quiet writes.
 Worth keeping in view: at 8 kHz there was 81 us of headroom, so none of this
 was urgent. At 16 kHz the period is 62.5 us against a 44 us quiet tick, and a
 single 20 us command would have overrun outright.
+
+## 2026-08-14T22:40+00:00 The control link dies about fifteen seconds after it opens
+
+Found by the new regression write phase, which is the first thing in the tool
+that kept a connection open long enough. **This is not the write phase, not the
+command envelope, and not the magneto-elastic rig: it reproduces on v0.1.3.**
+It is very likely the third and best-evidenced instance of the "board becomes
+unreachable" episodes recorded above.
+
+The board stops answering the control channel, and afterwards new connections
+time out rather than being refused, so the listener is wedged too. Everything
+else keeps running perfectly. With the probe attached rather than reset:
+
+- Core 1 ticks at exactly 8000/s, `loop 43/45 us`, jitter 0, overruns 0, tick
+  timeouts 0, indefinitely.
+- Core 0's executor is alive: the 1 Hz status task logs on the millisecond and
+  the laser probe loop keeps cycling its baud rates.
+- `records_dropped` is frozen, so core 0 is still draining the record ring.
+
+So it is the network path alone, not starvation and not a core-0 stall.
+
+It is a clock, not a load. Time to failure over six runs on v0.2.0:
+
+| Traffic | Spacing | Operations | Time to failure |
+|---|---|---|---|
+| writes | 5 ms | 3684 | 15.06 s |
+| writes | 20 ms | 1491 | 15.40 s |
+| writes | 20 ms | 1545 | 15.35 s |
+| writes | 50 ms | 672 | 15.32 s |
+| reads | 20 ms | 570 | 15.06 s |
+| reads | 200 ms | 62 | 15.52 s |
+| reads | 1 s | 13 | 16.02 s |
+
+Operation count varies by sixty times and direction does not matter; the time
+is 15.06 to 16.02 s. A connection left almost entirely silent, one read at
+0 s and one at 10 s, also failed by 20 s. The clock therefore starts when the
+connection opens and runs regardless of what crosses it.
+
+That explains why nothing had caught it. Every `helic-daq` invocation is
+connect, one request, disconnect. The measurement scripts used today ran about
+eleven seconds and always finished just inside the window. The regression
+before the write phase ran roughly thirteen seconds and passed by a margin of
+two; adding five seconds of writes pushed it over, which is the whole reason
+the phase found this rather than a loop-time regression. It also explains the
+stale connection at the start of this session that presented as "connection
+refused" from a second client.
+
+First suspect is `firmware/support/src/comms/tcp.rs`, where `8110974` set
+`CONTROL_KEEP_ALIVE` to 2 s and `CONTROL_TIMEOUT` to 10 s to make the link
+prove liveness rather than assume it. Fifteen seconds is not either constant,
+so the mechanism is not yet established and this entry deliberately does not
+guess further. The evidence log is kept as the third episode's probe capture.
+
+Next step is to bisect `8110974` against its parent with a fixed
+sixteen-second connection, which is now a two-minute test rather than an
+unexplained episode.
