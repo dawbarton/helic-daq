@@ -86,6 +86,43 @@ def check_default_policy(data: dict[str, Any], workspace: Path) -> None:
         raise SystemExit("helic-fw-support must not depend on helic-fw-rt")
 
 
+def require_nonblocking_rtt(data: dict[str, Any]) -> None:
+    """Fail a build whose `defmt-rtt` can block the core it logs from.
+
+    Unconditional, and deliberately not something a rig opts into: the hazard
+    is a property of the transport, every rig hits it, and the failure is
+    invisible in exactly the way that stops anyone finding it.
+
+    `defmt-rtt` initialises its control block to non-blocking, so a rig that
+    boots with no debugger is safe. probe-rs then writes the blocking mode
+    when it attaches, and nothing rewrites it when the debugger goes away, so
+    from the first `cargo run` until the next reset the firmware believes a
+    host is draining a buffer that nobody is reading. Once it fills, the next
+    `info!` blocks inside a critical section and the whole core stops. On this
+    platform that is core 0: network, record drain and device services, while
+    core 1 keeps ticking at full rate and every real-time counter stays clean.
+
+    Nothing else catches it. It builds, it lints, it passes the layout gate,
+    and attaching a probe to investigate drains the buffer and releases the
+    block, so the fault disappears on inspection and a reset destroys the
+    evidence. It presents only as a rig that intermittently vanishes from the
+    network while apparently healthy.
+    """
+    names = {package["id"]: package["name"] for package in data["packages"]}
+    nodes = [
+        node for node in data["resolve"]["nodes"] if names[node["id"]] == "defmt-rtt"
+    ]
+    for node in nodes:
+        if "disable-blocking-mode" not in set(node.get("features", [])):
+            raise SystemExit(
+                "defmt-rtt is resolved without `disable-blocking-mode`, so a "
+                "detached debugger will stall the core once the RTT buffer "
+                "fills. Declare it as:\n"
+                '  defmt-rtt = { version = "1.3.0", '
+                'features = ["disable-blocking-mode"] }'
+            )
+
+
 def load_policy(path: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as stream:
@@ -133,6 +170,9 @@ def main() -> None:
     args = parser.parse_args()
 
     data = metadata(args.workspace)
+    # Applies to every workspace, with or without a policy file, so a new rig
+    # inherits it without having to know it exists.
+    require_nonblocking_rtt(data)
     if args.policy is None:
         check_default_policy(data, args.workspace)
     else:

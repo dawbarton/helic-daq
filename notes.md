@@ -1167,3 +1167,38 @@ found a real defect after all, just not the one I attributed it to.
 
 The earlier "board became unreachable" episodes are very probably all of this,
 including the stale connection that opened this session.
+
+## 2026-08-14T23:55+00:00 The blocking-RTT hazard needs a detached probe, and is now gated
+
+Refinement of the entry above, and one correction in it. Blocking is not the
+firmware's own default: `defmt-rtt` initialises its control block to
+`MODE_NON_BLOCKING_TRIM`, and the blocking path is chosen at run time from
+that flag. **probe-rs writes `MODE_BLOCK_IF_FULL` when it attaches, and
+nothing rewrites it when the debugger goes away.** So the firmware spends the
+rest of that boot believing a host is draining a buffer nobody reads.
+
+That means a rig which boots and never sees a probe is safe, and the previous
+entry's "the normal state of a deployed rig" is wrong. Measured on a build
+without `disable-blocking-mode`, on one firmware image:
+
+| Boot | 20 ms reads |
+|---|---|
+| Flashed by `cargo run`, probe then killed | dies after 486 reads, 13.27 s |
+| `probe-rs reset`, which never attaches RTT | survives 4214 reads, 90 s |
+
+The hazard is therefore precisely a debugger that attached and detached
+without a reset, which is the entire development and verification workflow.
+`cargo run` does it every time, and the regression does it deliberately before
+opening its host connection. Not an edge case, but it does mean a rig in the
+field that has been power-cycled since its last flash is fine.
+
+Gated rather than documented. `helic-deps-check` now fails any workspace whose
+`defmt-rtt` resolves without `disable-blocking-mode`, unconditionally and
+without a policy entry, so a new rig inherits the rule without having to know
+it exists. Checking the resolved feature from `cargo metadata` rather than the
+manifest text means a rig cannot pass by declaring it somewhere that does not
+apply. Verified both ways against this repository's own rigs, and unit tested.
+
+The regression keeps its part as the backstop that catches a rig whose gate
+was somehow bypassed, and its `control link lost` message now names blocking
+RTT as the first suspect, since that message misdirected me for most of a day.

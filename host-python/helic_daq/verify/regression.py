@@ -201,7 +201,11 @@ def write_phase(
                 # operator alongside the diagnosis.
                 raise ControlLinkLost(
                     f"no response after {writes} writes and "
-                    f"{time.monotonic() - started:.2f} s of this phase: {error}"
+                    f"{time.monotonic() - started:.2f} s of this phase: {error}. "
+                    "If the run flashed with a debugger that has since "
+                    "detached, suspect defmt-rtt blocking on a full buffer "
+                    "before suspecting the network; `helic-deps-check` "
+                    "enforces the feature that prevents it."
                 ) from error
         time.sleep(interval)
     result: dict[str, object] = delta(

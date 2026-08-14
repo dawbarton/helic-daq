@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from helic_daq.verify import discover_profiles, layout, regression
+from helic_daq.verify import dependencies, discover_profiles, layout, regression
 from helic_daq.verify.profile import ProfileError, load_profile, load_profiles
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -183,3 +183,30 @@ class RegressionProfileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NonBlockingRttTest(unittest.TestCase):
+    """The gate that stops a rig shipping a debug transport which can stall it.
+
+    Worth a unit test rather than trust, because the failure it prevents is
+    invisible by construction: it builds, it lints, it passes every other gate,
+    and attaching a probe to investigate cures it.
+    """
+
+    @staticmethod
+    def _metadata(features: list[str]) -> dict:
+        return {
+            "packages": [{"id": "defmt-rtt 1.3.0", "name": "defmt-rtt"}],
+            "resolve": {"nodes": [{"id": "defmt-rtt 1.3.0", "features": features}]},
+        }
+
+    def test_blocking_defmt_rtt_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            dependencies.require_nonblocking_rtt(self._metadata([]))
+        self.assertIn("disable-blocking-mode", str(raised.exception))
+
+    def test_non_blocking_defmt_rtt_is_accepted(self) -> None:
+        dependencies.require_nonblocking_rtt(self._metadata(["disable-blocking-mode"]))
+
+    def test_workspace_without_defmt_rtt_is_unaffected(self) -> None:
+        dependencies.require_nonblocking_rtt({"packages": [], "resolve": {"nodes": []}})

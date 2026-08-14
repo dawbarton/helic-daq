@@ -716,16 +716,24 @@ outlives its reason is how these arrangements silently diverge.
 defmt-rtt = { version = "1.3.0", features = ["disable-blocking-mode"] }
 ```
 
-The feature is not optional for a rig, and omitting it does not fail a build,
-a lint or any static gate. `defmt-rtt` defaults to blocking when the RTT buffer
-fills, and the buffer fills whenever no debugger is draining it, which is the
-normal state of a deployed rig and of every regression phase, because the
-regression detaches `cargo run` from defmt before it opens its host
-connection. The status task alone logs once a second, so the buffer fills in
-roughly fifteen seconds; the next `info!` then blocks inside a critical
-section and **core 0 stops** — network, record drain and all. Core 1 is
-Embassy-free and never logs, so it keeps ticking perfectly throughout, which
-makes the symptom "the board vanished from the network but the rig is fine".
+The feature is not optional for a rig. `helic-deps-check` enforces it for every
+workspace, with or without a policy file, so a new rig inherits the rule
+without having to know it exists; nothing else catches its absence.
+
+The precise hazard is a debugger that attached and then went away. `defmt-rtt`
+initialises its control block to non-blocking, so a rig that boots and never
+sees a probe is safe. probe-rs writes the blocking mode when it attaches, and
+nothing rewrites it when the debugger detaches, so from the first `cargo run`
+until the next reset the firmware believes a host is draining a buffer nobody
+is reading. The status task alone logs once a second, so it fills in roughly
+fifteen seconds; the next `info!` then blocks inside a critical section and
+**core 0 stops** — network, record drain and all. Core 1 is Embassy-free and
+never logs, so it keeps ticking perfectly throughout, which makes the symptom
+"the board vanished from the network but the rig is fine".
+
+That is the normal development and verification workflow, not an edge case:
+the regression detaches `cargo run` from defmt before opening its host
+connection, so every run since has been racing it.
 
 Attaching a probe drains the buffer and releases the block, so the board
 recovers the instant you go to look at it. That is why this presented for days
