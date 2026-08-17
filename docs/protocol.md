@@ -300,6 +300,9 @@ experiment c×16, firmware c×16`. Both hardware firmware and the host simulator
 respond. Requests and responses are fixed-size and carry no control-frame CRC.
 Hardware uses the same compact firmware identity as the parameter registry;
 the defmt boot banner retains the full `helic-daq <version> <git describe>`.
+The compact identity is `<version> <revision>`, with a `+` suffix when tracked
+files differ from `HEAD`, or `?` as the revision when Git state was unavailable
+at build time. Untracked files are ignored.
 
 ## Known-answer vectors
 
