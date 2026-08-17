@@ -765,7 +765,10 @@ fn main() {
 
 `emit_identity` finds the repository containing the calling crate and exports
 `HELIC_GIT_DESCRIBE` and `HELIC_FIRMWARE_ID` from **the rig's** package version
-and revision. `emit_memory_x` puts the shared 2 MiB-flash RP2350 layout on the
+and revision. The compact wire identity is `version revision`, with `+` after
+the revision when tracked files differ from `HEAD`, or `?` in place of the
+revision when Git state cannot be established. Untracked files do not mark an
+image dirty. `emit_memory_x` puts the shared 2 MiB-flash RP2350 layout on the
 linker search path; a board with a different flash size keeps its own
 `memory.x`, copies it in the build script, and does not call this.
 

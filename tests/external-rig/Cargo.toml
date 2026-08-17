@@ -17,11 +17,11 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-helic-core = "=0.2.4"
-helic-rt = "=0.2.4"
-helic-fw-build = "=0.2.4"
-helic-fw-rt = { version = "=0.2.4", features = ["rt-sram"] }
-helic-fw-support = { version = "=0.2.4", default-features = false }
+helic-core = "=0.2.5"
+helic-rt = "=0.2.5"
+helic-fw-build = "=0.2.5"
+helic-fw-rt = { version = "=0.2.5", features = ["rt-sram"] }
+helic-fw-support = { version = "=0.2.5", default-features = false }
 cortex-m-rt = "0.7.5"
 defmt = "1.1.1"
 defmt-rtt = { version = "1.3.0", features = ["disable-blocking-mode"] }
