@@ -35,6 +35,10 @@ impl<'d, PIO: RawPioInstance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
         assert!((1..=16).contains(&bits));
         assert!((1..=4_000_000).contains(&bit_rate_hz));
 
+        // The RMB20/AM4096 latches its position on the first falling edge and
+        // presents each data bit on the following rising edge. Sample one PIO
+        // cycle after that rising edge; sampling during the low phase prefixes
+        // the idle-high bit and shifts the position right by one.
         let program = pio::pio_asm!(
             r#"
                 .side_set 1
@@ -44,8 +48,8 @@ impl<'d, PIO: RawPioInstance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
                 mov isr, null     side 1
             bitloop:
                 nop               side 0
-                in pins, 2        side 0
                 nop               side 1
+                in pins, 2        side 1
                 jmp x-- bitloop   side 1
                 nop               side 0 [1]
                 nop               side 1 [1]
