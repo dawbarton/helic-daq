@@ -19,6 +19,12 @@ pub struct DualSsiReader<'d, PIO: Instance, const SM: usize> {
 impl<'d, PIO: RawPioInstance + 'd, const SM: usize> DualSsiReader<'d, PIO, SM> {
     /// Configure a dual-input SSI state machine.
     ///
+    /// This transport is hardware-verified with RLS RMB20/AM4096 encoders. It
+    /// assumes an idle-high clock, a word latched by the first falling edge,
+    /// and data advanced on each following rising edge. SSI encoders vary in
+    /// frame layout and data-valid timing; check another encoder's data sheet
+    /// before reusing this transport.
+    ///
     /// The typed PIO instance selects its matching PAC register block, so a
     /// caller cannot accidentally pair (for example) a PIO0 state machine with
     /// PIO1 FIFO registers.
