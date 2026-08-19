@@ -901,7 +901,6 @@ dependencies = [
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
  "heapless",
- "helic-core",
  "helic-proto",
  "helic-rt",
  "static_cell",
