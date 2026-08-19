@@ -1265,3 +1265,17 @@ reference together and remove the patch.
   `/workspace/cbc-duffing-rig`. That repository is dead and must not be treated
   as a downstream consumer or release-migration obligation. Its stale host API
   calls do not block the HELIC-DAQ release.
+
+## 2026-08-19T14:14+00:00 Platform v0.3.0 released and the live rig repinned
+
+- Annotated tag and GitHub release `v0.3.0` point to `3dbe996`. Local release
+  gates passed, and GitHub CI run 32262017996 passed all five jobs on that exact
+  commit, including MATLAB. The tag message records the breaking Rust and host
+  API changes and the unchanged protocol-v3 packet layout.
+- `helic-magneto-elastic-rig` was repinned in `eda0bfe`: all eight crate tags,
+  the CI verification-tool tag, and the README install command now use v0.3.0;
+  the temporary sibling patch is removed, and the lockfile resolves
+  `v0.3.0#3dbe996`. Its push CI run 32262717054 passed the W5500 and W6100
+  builds, dependency policy, and SRAM layout gate.
+- No firmware was flashed for either release or repin. Existing electrical,
+  PID, PLL, and real-time hardware-evidence boundaries are unchanged.
