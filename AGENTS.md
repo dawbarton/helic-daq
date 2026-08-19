@@ -49,7 +49,7 @@ experiment in which it was first needed:
 
 | Location | What belongs there |
 |---|---|
-| `helic-core` | Portable, allocation-free DSP, generators, controllers, estimators, filters, safety primitives and owner-checked buffers. Promote a rig-local algorithm here when it has two actual consumers, or when it is deliberately accepted as a platform primitive. |
+| `helic-core` | Portable, allocation-free DSP, generators, numerical control primitives, estimators, filters, safety primitives and owner-checked buffers. Promote a rig-local algorithm here when it has two actual consumers, or when it is deliberately accepted as a platform primitive. |
 | `helic-rt` | Portable, Embassy-free `Rig`, `TickSource` and `Program` contracts; commands, records and queues; `RtShared`; component parameter groups and `ParamStore`; source assembly and the pure safety decision. |
 | `helic-drivers` | Portable chip, sensor and peripheral logic expressed over `embedded-hal`, without RP2350 board policy. |
 | `helic-proto` | Wire and broker codecs, type codes, framing and protocol constants. |
@@ -61,13 +61,14 @@ experiment in which it was first needed:
 
 - Keep every experiment crate predictable: `board.rs` owns only pins and
   unassembled peripheral parts; `config.rs` owns compile-time choices and the
-  concrete `ActiveController`/`ActiveProgram`; `telemetry.rs` owns atomic-backed
-  declarations; `rig.rs` assembles core-1 hardware and implements `Rig`; and
-  `main.rs` binds interrupts, assigns cores and composes common runners. Move
-  code to shared crates only when reuse is established rather than scattering
-  one rig across repository-level packages. A rig-local library target must
-  remain host-testable without pulling in Embassy or RP2350 dependencies.
-- `Program` owns logical sample-rate computation: the master phase, controller,
+  concrete `ActiveProgram` and any selected control policy; `telemetry.rs` owns
+  atomic-backed declarations; `rig.rs` assembles core-1 hardware and implements
+  `Rig`; and `main.rs` binds interrupts, assigns cores and composes common
+  runners. Move code to shared crates only when reuse is established rather
+  than scattering one rig across repository-level packages. A rig-local
+  library target must remain host-testable without pulling in Embassy or
+  RP2350 dependencies.
+- `Program` owns logical sample-rate computation: the master phase, control,
   signal generators, table player, programme command domains, signals and
   programme-originated faults. `Rig` owns physical measurement, vector
   actuation, hardware parameters, clamps, safe values, physical faults and the
@@ -77,7 +78,8 @@ experiment in which it was first needed:
 - Core 0 may walk fixed-capacity trait-object parameter groups during control
   requests. Core 1 remains statically dispatched through the concrete
   `ActiveProgram`, `Rig` and `TickSource`; do not add `dyn`, allocation or
-  run-time programme/controller selection to the tick path.
+  run-time trait dispatch to the tick path. A concrete `StandardControl` may
+  implement bounded run-time policy modes internally when a rig requires them.
 - Each firmware application owns one const-initialised `RtShared` and injects
   the same reference into `ParamStore` and the core-1 loop. Do not restore
   library statics or share mutable loop state directly across cores.
@@ -138,14 +140,20 @@ experiment in which it was first needed:
   chip-select types; construct it once beside the audited experiment pin map,
   document the exclusivity invariant and expose only safe bound operations to
   the tick path.
-- Controllers are selected statically through each experiment's
-  `ActiveController` alias. Reusable controllers implement
-  `helic_core::controller::Controller`; do not add runtime dispatch to the
-  tick path.
+- `StandardProgram` is parameterised by a concrete
+  `helic_rt::StandardControl<H>`. Reusable complete-output policies such as
+  `PassThrough` and `PidController` belong in `helic-rt`; numerical primitives
+  such as `Pid` and `Pll` belong in `helic-core`. A rig-specific control may
+  live in the rig's host-testable library target. Keep dispatch static even
+  when that concrete control provides bounded run-time modes.
 - Parameters and stream sources are discovered by name on connection. Never
-  hard-code registry or source indices in host code. New controller and rig
-  parameters and controller telemetry use their trait hooks rather than wire
-  protocol changes. A `ParamGroup` owns its definitions, shadows, validation,
+  hard-code registry or source indices in host code. Simple all-`f32` controls
+  may use `ScalarControlGroup`; controls with enums, pulses, unit conversions
+  or cross-parameter invariants own a dedicated `ParamGroup`. Control telemetry
+  comes from `StandardControl`; neither parameters nor telemetry require wire
+  protocol changes. There is no universal `ctrl_reset` or reserved control id:
+  expose a reset pulse only in a group that owns and routes it. A `ParamGroup`
+  owns its definitions, shadows, validation,
   staging, acceptance and rejection; `ParamStore` only maps the discovered
   global index to a group-local id, constructs the command address and commits
   transactionally after queueing. Keep the fixed platform group beside the
