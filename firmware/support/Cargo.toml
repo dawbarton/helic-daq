@@ -13,7 +13,6 @@ net-wiznet-w5500 = ["net-wiznet"]
 net-wiznet-w6100 = ["net-wiznet"]
 
 [dependencies]
-helic-core.workspace = true
 helic-proto.workspace = true
 helic-rt.workspace = true
 cyw43 = { workspace = true, optional = true }

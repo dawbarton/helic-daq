@@ -905,7 +905,6 @@ dependencies = [
 name = "fw-pico2w-rig"
 version = "0.3.0"
 dependencies = [
- "cortex-m",
  "cortex-m-rt",
  "cyw43",
  "defmt 1.1.1",
@@ -915,14 +914,12 @@ dependencies = [
  "embassy-rp",
  "embassy-time",
  "embedded-hal-bus",
- "heapless",
  "helic-core",
  "helic-drivers",
  "helic-fw-build",
  "helic-fw-optoncdt",
  "helic-fw-rt",
  "helic-fw-support",
- "helic-proto",
  "helic-rt",
  "panic-probe",
  "static_cell",
@@ -1052,7 +1049,6 @@ dependencies = [
  "embedded-hal-bus",
  "embedded-io-async 0.7.0",
  "heapless",
- "helic-core",
  "helic-proto",
  "helic-rt",
  "static_cell",
