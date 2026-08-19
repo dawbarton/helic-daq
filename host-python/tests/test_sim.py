@@ -10,12 +10,25 @@ from pathlib import Path
 
 import numpy as np
 
-from helic_daq import Device, DeviceError, protocol
-from helic_daq import cli
+import helic_daq as hdaq
+from helic_daq import Device, DeviceError, cli, protocol
 from helic_daq.device import Parameter
-from helic_daq.discovery import find_devices
 from helic_daq.protocol import MsgType
 from helic_daq.sim import COMMAND_EPOCH_MASK, Simulator
+
+
+class TestPublicSurface(unittest.TestCase):
+    def test_top_level_names_are_deliberately_small(self):
+        self.assertEqual(
+            hdaq.__all__,
+            ["Device", "DeviceError", "StreamReceiver", "find_devices"],
+        )
+        self.assertFalse(hasattr(hdaq, "Parameter"))
+        self.assertFalse(hasattr(hdaq, "Source"))
+        self.assertIs(hdaq.protocol, protocol)
+
+    def test_version_comes_from_package_metadata(self):
+        self.assertEqual(hdaq.__version__, "0.1.3")
 
 
 class TestCliValueParsing(unittest.TestCase):
@@ -53,8 +66,8 @@ class TestSimulator(unittest.TestCase):
     def test_finite_capture_end_to_end(self):
         coefficients = [0.0] * 33
         coefficients[17] = 1.0
-        self.dev.set("freq", 10.0)
-        self.dev.set("forcing_coeffs", coefficients)
+        self.dev.set_parameter("freq", 10.0)
+        self.dev.set_parameter("forcing_coeffs", coefficients)
         data = self.dev.capture(["forcing", "out"], samples=64, port=0)
         self.assertEqual(len(data["index"]), 64)
         self.assertEqual(data["lost_packets"], 0)
@@ -64,8 +77,8 @@ class TestSimulator(unittest.TestCase):
     def test_phase_is_coherent_with_generated_signals(self):
         coefficients = [0.0] * 33
         coefficients[17] = 1.0
-        self.dev.set("freq", 1000.0)
-        self.dev.set("forcing_coeffs", coefficients)
+        self.dev.set_parameter("freq", 1000.0)
+        self.dev.set_parameter("forcing_coeffs", coefficients)
         data = self.dev.capture(["phase", "forcing"], samples=16, port=0)
         np.testing.assert_allclose(
             data["forcing"],
@@ -77,13 +90,13 @@ class TestSimulator(unittest.TestCase):
         initial = self.dev.capture(["cmd_epoch"], samples=1, port=0)
         self.assertEqual(initial["cmd_epoch"][0], 0.0)
 
-        self.dev.set("freq", 10.0)
-        self.dev.set("diag_reset", 1)
-        self.dev.set("table_trigger", 0)
+        self.dev.set_parameter("freq", 10.0)
+        self.dev.set_parameter("diag_reset", 1)
+        self.dev.set_parameter("table_trigger", 0)
         changed = self.dev.capture(["cmd_epoch"], samples=1, port=0)
         self.assertEqual(changed["cmd_epoch"][0], 1.0)
 
-        table = self.dev.param("table")
+        table = self.dev.parameter("table")
         raw = np.asarray([0.0, 1.0], dtype="<f4").tobytes()
         self.dev._request(
             MsgType.SET_BLOCK,
@@ -96,17 +109,17 @@ class TestSimulator(unittest.TestCase):
         self.assertEqual(committed["cmd_epoch"][0], 2.0)
 
         self.sim._cmd_epoch = COMMAND_EPOCH_MASK
-        self.dev.set("table_gain", 2.0)
+        self.dev.set_parameter("table_gain", 2.0)
         wrapped = self.dev.capture(["cmd_epoch"], samples=1, port=0)
         self.assertEqual(wrapped["cmd_epoch"][0], 0.0)
 
     def test_staged_table_is_committed_and_streamed(self):
-        table = self.dev.param("table")
+        table = self.dev.parameter("table")
         raw = np.asarray([1.0, 2.0], dtype="<f4").tobytes()
         self.dev._request(MsgType.SET_BLOCK, protocol.encode_set_block(table.index, 0, raw))
         self.dev._request(MsgType.COMMIT, protocol.encode_commit(table.index, 2))
         self.assertEqual(self.sim.table, [1.0, 2.0])
-        self.dev.set("table_mode", 1)
+        self.dev.set_parameter("table_mode", 1)
         data = self.dev.capture(["table", "out"], samples=4, port=0)
         np.testing.assert_allclose(data["table"], 1.0)
         np.testing.assert_allclose(data["out"], 1.0)
@@ -119,17 +132,17 @@ class TestSimulator(unittest.TestCase):
             interpolation="hold",
         )
         self.assertEqual(self.sim.table, [0.0, 1.0, 0.0, -1.0])
-        self.assertEqual(self.dev.get("table_len"), 4)
-        self.assertAlmostEqual(self.dev.get("table_freq"), 10.0)
-        self.assertEqual(self.dev.get("table_interp"), 0)
-        self.assertEqual(self.dev.get("table_mode"), 1)
+        self.assertEqual(self.dev.get_parameter("table_len"), 4)
+        self.assertAlmostEqual(self.dev.get_parameter("table_freq"), 10.0)
+        self.assertEqual(self.dev.get_parameter("table_interp"), 0)
+        self.assertEqual(self.dev.get_parameter("table_mode"), 1)
 
     def test_table_interpolation_changes_simulated_shape(self):
         self.dev.upload_table([0.0, 1.0], freq=1000.0, interpolation="hold")
         held = [self.sim._table_value(t) for t in (0.000125, 0.000375, 0.000625)]
         np.testing.assert_allclose(held, [0.0, 0.0, 1.0])
 
-        self.dev.set("table_interp", 1)
+        self.dev.set_parameter("table_interp", 1)
         linear = [self.sim._table_value(t) for t in (0.000125, 0.000375, 0.000625)]
         np.testing.assert_allclose(linear, [0.25, 0.75, 0.75], atol=1e-6)
 
@@ -154,28 +167,30 @@ class TestSimulator(unittest.TestCase):
         self.sim._by_name["loop_time_max"].value = 42
         self.sim._by_name["laser_uart_errors"].value = 7
         self.sim._by_name["laser_frames_received"].value = 123
-        self.dev.set("diag_reset", 1)
+        self.dev.set_parameter("diag_reset", 1)
         self.assertEqual(
-            self.dev.get(
-                "loop_time_max",
-                "diag_reset",
-                "laser_uart_errors",
-                "laser_frames_received",
+            self.dev.get_parameters(
+                (
+                    "loop_time_max",
+                    "diag_reset",
+                    "laser_uart_errors",
+                    "laser_frames_received",
+                )
             ),
             [0, 0, 0, 123],
         )
 
     def test_arm_is_direct_and_disconnect_disarms(self):
         initial_epoch = self.sim._cmd_epoch
-        self.dev.set("arm", 1)
-        self.assertEqual(self.dev.get("arm"), 1)
-        self.assertEqual(self.dev.get("safety") & 1, 1)
+        self.dev.set_parameter("arm", 1)
+        self.assertEqual(self.dev.get_parameter("arm"), 1)
+        self.assertEqual(self.dev.get_parameter("safety") & 1, 1)
         self.assertEqual(self.sim._cmd_epoch, initial_epoch)
 
         self.dev.close()
         self.dev = Device("127.0.0.1", self.sim.port)
-        self.assertEqual(self.dev.get("arm"), 0)
-        self.assertEqual(self.dev.get("safety") & 1, 0)
+        self.assertEqual(self.dev.get_parameter("arm"), 0)
+        self.assertEqual(self.dev.get_parameter("safety") & 1, 0)
 
     def test_beacon_response(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
@@ -193,7 +208,7 @@ class TestSimulator(unittest.TestCase):
         self.assertEqual(response[12:28].rstrip(b"\0"), b"pico2w-rig")
 
     def test_find_devices_and_cli(self):
-        devices = find_devices(
+        devices = hdaq.find_devices(
             timeout=0.1,
             port=self.sim.beacon_port,
             addresses=["127.0.0.1"],
@@ -273,8 +288,8 @@ class TestSimulator(unittest.TestCase):
                 )
             self.assertEqual(result, 0)
         self.dev = Device("127.0.0.1", self.sim.port)
-        self.assertEqual(self.dev.get("table_mode"), 2)
-        self.assertEqual(self.dev.get("freq"), 17.5)
+        self.assertEqual(self.dev.get_parameter("table_mode"), 2)
+        self.assertEqual(self.dev.get_parameter("freq"), 17.5)
 
     def test_cli_bad_integer_is_a_concise_error(self):
         self.dev.close()
@@ -329,10 +344,10 @@ class TestSimulator(unittest.TestCase):
         self.dev = Device("127.0.0.1", self.sim.port)
         self.assertEqual(result, 0)
         self.assertEqual(output.getvalue().strip(), "diagnostics reset")
-        self.assertEqual(self.dev.get("loop_time_max"), 0)
+        self.assertEqual(self.dev.get_parameter("loop_time_max"), 0)
 
     def test_cli_reboot_command(self):
-        self.dev.set("freq", 17.5)
+        self.dev.set_parameter("freq", 17.5)
         self.dev.close()
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -348,7 +363,7 @@ class TestSimulator(unittest.TestCase):
         self.dev = Device("127.0.0.1", self.sim.port)
         self.assertEqual(result, 0)
         self.assertEqual(output.getvalue().strip(), "MCU reboot scheduled")
-        self.assertEqual(self.dev.get("freq"), 0.0)
+        self.assertEqual(self.dev.get_parameter("freq"), 0.0)
 
     def test_cli_refuses_one_shot_arm(self):
         self.dev.close()
@@ -368,7 +383,7 @@ class TestSimulator(unittest.TestCase):
         self.dev = Device("127.0.0.1", self.sim.port)
         self.assertEqual(result, 1)
         self.assertIn("persistent Python session", stderr.getvalue())
-        self.assertEqual(self.dev.get("arm"), 0)
+        self.assertEqual(self.dev.get_parameter("arm"), 0)
 
     def test_cli_upload(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -392,9 +407,9 @@ class TestSimulator(unittest.TestCase):
                 )
             self.dev = Device("127.0.0.1", self.sim.port)
         self.assertEqual(result, 0)
-        self.assertEqual(self.dev.get("table_len"), 4)
-        self.assertAlmostEqual(self.dev.get("table_freq"), 5.0)
-        self.assertEqual(self.dev.get("table_interp"), 0)
+        self.assertEqual(self.dev.get_parameter("table_len"), 4)
+        self.assertAlmostEqual(self.dev.get_parameter("table_freq"), 5.0)
+        self.assertEqual(self.dev.get_parameter("table_interp"), 0)
 
     def test_bad_frame_drops_only_that_connection(self):
         self.dev.close()
@@ -405,7 +420,7 @@ class TestSimulator(unittest.TestCase):
             bad.settimeout(1.0)
             self.assertEqual(bad.recv(1), b"")
         self.dev = Device("127.0.0.1", self.sim.port)
-        self.assertEqual(self.dev.get("experiment"), "pico2w-rig")
+        self.assertEqual(self.dev.get_parameter("experiment"), "pico2w-rig")
 
 
 if __name__ == "__main__":

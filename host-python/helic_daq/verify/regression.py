@@ -96,15 +96,15 @@ def connect(host: str, deadline_s: float) -> Device:
 
 
 def snapshot(device: Device) -> dict[str, int]:
-    return dict(zip(COUNTERS, device.get(*COUNTERS)))
+    return dict(zip(COUNTERS, device.get_parameters(COUNTERS)))
 
 
 def reset_diagnostics(device: Device) -> None:
-    device.set("diag_reset", 1)
+    device.set_parameter("diag_reset", 1)
 
 
 def phase_snapshot(device: Device) -> dict[str, int]:
-    return dict(zip(PHASE_COUNTERS, device.get(*PHASE_COUNTERS)))
+    return dict(zip(PHASE_COUNTERS, device.get_parameters(PHASE_COUNTERS)))
 
 
 def delta(
@@ -128,10 +128,10 @@ def delta(
 def quiet_outputs(device: Device, profile: RegressionProfile) -> None:
     for write in profile.quiet:
         if write.zeros:
-            value: object = [0.0] * device.param(write.name).count
+            value: object = [0.0] * device.parameter(write.name).count
         else:
             value = write.value
-        device.set(write.name, value)
+        device.set_parameter(write.name, value)
 
 
 def measure_phase(
@@ -183,11 +183,11 @@ def write_phase(
     while time.monotonic() - started < seconds:
         for write in profile.quiet:
             if write.zeros:
-                value: object = [0.0] * device.param(write.name).count
+                value: object = [0.0] * device.parameter(write.name).count
             else:
                 value = write.value
             try:
-                device.set(write.name, value)
+                device.set_parameter(write.name, value)
                 writes += 1
             except DeviceError:
                 # Legitimate backpressure rather than a fault: the queue is
@@ -371,7 +371,7 @@ def measure(
     with connect(host, args.connect_timeout) as device:
         status = device.status()
         result["status"] = status
-        experiment = device.get("experiment")
+        experiment = device.get_parameter("experiment")
         result["experiment"] = experiment
         if experiment != profile.experiment:
             raise RuntimeError(

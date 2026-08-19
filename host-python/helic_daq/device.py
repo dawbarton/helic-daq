@@ -1,10 +1,10 @@
-"""TCP control connection: parameter discovery, get/set, stream control."""
+"""TCP control connection: parameter discovery, access, and stream control."""
 
 from __future__ import annotations
 
+import math
 import socket
 import struct
-import math
 import threading
 import time
 from dataclasses import dataclass
@@ -49,10 +49,10 @@ class _ParamAccessor:
         object.__setattr__(self, "_device", device)
 
     def __getattr__(self, name: str):
-        return self._device.get(name)
+        return self._device.get_parameter(name)
 
     def __setattr__(self, name: str, value) -> None:
-        self._device.set(name, value)
+        self._device.set_parameter(name, value)
 
     def __dir__(self):
         return [p.name for p in self._device.params]
@@ -62,8 +62,8 @@ class Device:
     """A connection to a HELIC-DAQ device.
 
     Discovers the parameter registry at connect; parameters are then
-    accessible by name through :meth:`get`/:meth:`set` or the :attr:`par`
-    attribute accessor.
+    accessible by name through :meth:`get_parameter`/:meth:`set_parameter` or
+    the :attr:`par` attribute accessor.
 
     Control-channel transactions are serialised on ``_request_lock``, so a
     connection may be shared between threads. ``timeout`` bounds each socket
@@ -176,7 +176,7 @@ class Device:
         self.sources = [Source(i, *definition) for i, definition in enumerate(definitions)]
         self._source_by_name = {source.name: source for source in self.sources}
 
-    def param(self, name_or_index) -> Parameter:
+    def parameter(self, name_or_index) -> Parameter:
         """Look up a parameter definition by name or index."""
         if isinstance(name_or_index, int):
             if 0 <= name_or_index < len(self.params):
@@ -189,13 +189,12 @@ class Device:
 
     # -- parameters --------------------------------------------------------
 
-    def get(self, *names):
-        """Get one or more parameters by name (or index).
+    def get_parameters(self, names):
+        """Get parameters by name (or index) in one round trip.
 
-        A single argument returns the value directly; multiple arguments
-        return a list, fetched in one round trip.
+        Returns a list in the same order as ``names``.
         """
-        params = [self.param(n) for n in names]
+        params = [self.parameter(name) for name in names]
         size = sum(p.size for p in params)
         if size > protocol.MAX_PAYLOAD:
             raise DeviceError(
@@ -208,11 +207,15 @@ class Device:
         for p in params:
             values.append(self._unpack_value(p, data[off : off + p.size]))
             off += p.size
-        return values[0] if len(values) == 1 else values
+        return values
 
-    def set(self, name, value) -> None:
+    def get_parameter(self, name):
+        """Get one parameter by name (or index)."""
+        return self.get_parameters((name,))[0]
+
+    def set_parameter(self, name, value) -> None:
         """Set a parameter by name (or index)."""
-        p = self.param(name)
+        p = self.parameter(name)
         if not p.writable:
             raise DeviceError(f"parameter {p.name!r} is read-only")
         raw = self._pack_value(p, value)
@@ -224,7 +227,7 @@ class Device:
         A successful reply means that the firmware has quiesced its outputs
         and the RP2350 ROM has accepted the delayed reset request.
         """
-        self.set("mcu_reboot", protocol.MCU_REBOOT_CONFIRMATION)
+        self.set_parameter("mcu_reboot", protocol.MCU_REBOOT_CONFIRMATION)
         self.close()
 
     def upload_table(
@@ -245,7 +248,7 @@ class Device:
         ``interpolation`` is ``"linear"`` or zero-order ``"hold"``.
         """
         values = [float(value) for value in values]
-        table = self.param("table")
+        table = self.parameter("table")
         if not 2 <= len(values) <= table.count:
             raise ValueError(f"table length must be between 2 and {table.count}")
         if not all(math.isfinite(value) for value in values):
@@ -290,14 +293,14 @@ class Device:
                 MsgType.COMMIT, protocol.encode_commit(table.index, len(values))
             )
             if freq is not None:
-                self.set("table_freq", freq)
-            self.set("table_gain", gain)
-            self.set("table_interp", interpolation_value)
-            self.set("table_mult", mult)
-            self.set("table_phase", phase)
-            self.set("table_mode", mode_value)
+                self.set_parameter("table_freq", freq)
+            self.set_parameter("table_gain", gain)
+            self.set_parameter("table_interp", interpolation_value)
+            self.set_parameter("table_mult", mult)
+            self.set_parameter("table_phase", phase)
+            self.set_parameter("table_mode", mode_value)
             if mode_value in (2, 4):
-                self.set("table_trigger", 1)
+                self.set_parameter("table_trigger", 1)
 
     def _request_with_busy_retry(
         self, msg_type: int, payload: bytes, timeout: float = 1.0
@@ -350,7 +353,7 @@ class Device:
             "uptime_s": uptime_ms / 1000.0,
         }
 
-    def stream_setup(self, sources, decimation: int = 1, count: int = 0) -> list[str]:
+    def configure_stream(self, sources, decimation: int = 1, count: int = 0) -> list[str]:
         """Configure the stream: which values, every n-th sample, and how
         many records in total (0 = continuous). Returns the resolved source
         names in record order."""
@@ -381,15 +384,15 @@ class Device:
         self._request(MsgType.STREAM_SETUP, payload)
         return names
 
-    def stream_start(self, port: int = protocol.STREAM_PORT) -> None:
+    def start_stream(self, port: int = protocol.STREAM_PORT) -> None:
         """Start streaming to this host's `port` (UDP)."""
         self._request(MsgType.STREAM_START, struct.pack("<H", port))
 
-    def stream_start_quiet(self, port: int = protocol.STREAM_PORT) -> None:
+    def start_stream_quiet(self, port: int = protocol.STREAM_PORT) -> None:
         """Start or attach to a broker stream without live UDP forwarding."""
         self._request(MsgType.QUIET_STREAM_START, struct.pack("<H", port))
 
-    def stream_set_quiet(self, quiet: bool) -> None:
+    def set_stream_quiet(self, quiet: bool) -> None:
         """Enable or disable live forwarding for this broker client."""
         self._request(MsgType.SET_CLIENT_QUIET, bytes([bool(quiet)]))
 
@@ -414,7 +417,7 @@ class Device:
             "sources": source_names,
         }
 
-    def stream_stop(self) -> None:
+    def stop_stream(self) -> None:
         self._request(MsgType.STREAM_STOP)
 
     def capture(
@@ -444,12 +447,12 @@ class Device:
             # receive, which would otherwise stall every other thread for the
             # length of the capture.
             with self._request_lock:
-                names = self.stream_setup(sources, decimation=decimation, count=samples)
-                self.stream_start(rx.port)
+                names = self.configure_stream(sources, decimation=decimation, count=samples)
+                self.start_stream(rx.port)
             try:
                 return rx.capture(samples, names)
             finally:
-                self.stream_stop()
+                self.stop_stream()
 
     def capture_recent(
         self,
@@ -475,7 +478,7 @@ class Device:
             # would otherwise stall every other thread for the length of the
             # capture.
             with self._request_lock:
-                self.stream_start_quiet(rx.port)
+                self.start_stream_quiet(rx.port)
                 # Snapshot the shared configuration only after attaching: a stream
                 # restart before then could mislabel the replay, whereas once
                 # attached a restart detaches this client and GetRecent fails.

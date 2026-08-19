@@ -26,7 +26,7 @@ def cmd_list(args) -> None:
             if p.size > protocol.MAX_PAYLOAD:
                 shown = "<block parameter>"
             else:
-                value = dev.get(p.index)
+                value = dev.get_parameter(p.index)
                 shown = value
             if isinstance(shown, list) and len(shown) > 4:
                 shown = f"[{shown[0]:g}, {shown[1]:g}, ... x{len(shown)}]"
@@ -41,7 +41,7 @@ def cmd_list(args) -> None:
 def cmd_get(args) -> None:
     with _connect(args) as dev:
         for name in args.names:
-            print(f"{name} = {dev.get(name)}")
+            print(f"{name} = {dev.get_parameter(name)}")
 
 
 def _parse_values(text: str, parameter: Parameter):
@@ -72,20 +72,20 @@ def _parse_values(text: str, parameter: Parameter):
 
 def cmd_set(args) -> None:
     with _connect(args) as dev:
-        parameter = dev.param(args.name)
+        parameter = dev.parameter(args.name)
         value = _parse_values(args.value, parameter)
         if parameter.name == "arm" and value != 0:
             raise DeviceError(
                 "the one-shot CLI cannot keep the output armed; use "
-                "Device.set('arm', 1) in a persistent Python session"
+                "Device.set_parameter('arm', 1) in a persistent Python session"
             )
-        dev.set(parameter.index, value)
-        print(f"{args.name} = {dev.get(args.name)}")
+        dev.set_parameter(parameter.index, value)
+        print(f"{args.name} = {dev.get_parameter(args.name)}")
 
 
 def cmd_diag_reset(args) -> None:
     with _connect(args) as dev:
-        dev.set("diag_reset", 1)
+        dev.set_parameter("diag_reset", 1)
     print("diagnostics reset")
 
 
@@ -99,7 +99,7 @@ def cmd_status(args) -> None:
     with _connect(args) as dev:
         for key, value in dev.status().items():
             print(f"{key}: {value}")
-        print(f"firmware: {dev.get('firmware')}")
+        print(f"firmware: {dev.get_parameter('firmware')}")
 
 
 def cmd_sources(args) -> None:
@@ -122,23 +122,23 @@ def cmd_find(args) -> None:
 def cmd_sine(args) -> None:
     """Quick smoke test: sinusoidal forcing on the output channel."""
     with _connect(args) as dev:
-        coeffs = dev.param("forcing_coeffs")
+        coeffs = dev.parameter("forcing_coeffs")
         n = coeffs.count  # 1 + 2K: mean, a[1..K], b[1..K]
         harmonics = (n - 1) // 2
         if not 1 <= args.harmonic <= harmonics:
             raise DeviceError(f"--harmonic must be between 1 and {harmonics}")
         values = [0.0] * n
         values[1 + harmonics + (args.harmonic - 1)] = args.amplitude  # b_k (sin)
-        dev.set("freq", args.freq)
-        dev.set("forcing_coeffs", values)
+        dev.set_parameter("freq", args.freq)
+        dev.set_parameter("forcing_coeffs", values)
         print(f"forcing: {args.amplitude} V sine at {args.freq} Hz (harmonic {args.harmonic})")
 
 
 def cmd_stop(args) -> None:
     with _connect(args) as dev:
-        coeffs = dev.param("forcing_coeffs")
-        dev.set("forcing_coeffs", [0.0] * coeffs.count)
-        dev.set("target_coeffs", [0.0] * coeffs.count)
+        coeffs = dev.parameter("forcing_coeffs")
+        dev.set_parameter("forcing_coeffs", [0.0] * coeffs.count)
+        dev.set_parameter("target_coeffs", [0.0] * coeffs.count)
         print("forcing and target zeroed")
 
 

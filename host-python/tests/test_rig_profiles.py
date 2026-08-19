@@ -162,10 +162,10 @@ class RegressionProfileTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.writes: list[tuple[str, object]] = []
 
-            def param(self, _name: str) -> SimpleNamespace:
+            def parameter(self, _name: str) -> SimpleNamespace:
                 return SimpleNamespace(count=3)
 
-            def set(self, name: str, value: object) -> None:
+            def set_parameter(self, name: str, value: object) -> None:
                 self.writes.append((name, value))
 
         device = FakeDevice()

@@ -41,16 +41,19 @@ class TestStreamReceiver(unittest.TestCase):
 
     def test_recv_single_packet(self):
         self.send(make_packet(0, 100, [[1.0, 2.0], [3.0, 4.0]]))
-        header, values = self.rx.recv()
+        header, values = self.rx.receive()
         self.assertEqual(header.first_index, 100)
         self.assertEqual(values.shape, (2, 2))
         np.testing.assert_array_equal(values, [[1.0, 2.0], [3.0, 4.0]])
 
+    def test_recv_name_has_no_compatibility_alias(self):
+        self.assertFalse(hasattr(self.rx, "recv"))
+
     def test_lost_packet_detection(self):
         self.send(make_packet(0, 0, [[1.0]]))
         self.send(make_packet(3, 10, [[2.0]]))  # packets 1, 2 lost
-        self.rx.recv()
-        self.rx.recv()
+        self.rx.receive()
+        self.rx.receive()
         self.assertEqual(self.rx.lost_packets, 2)
 
     def test_capture_assembles_and_indexes(self):

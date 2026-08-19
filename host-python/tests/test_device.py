@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 from helic_daq import Device, DeviceError, protocol
 from helic_daq.device import Source
 from helic_daq.protocol import ProtocolError
-
 from helic_daq.sim import SimParam, Simulator, default_params
 
 
@@ -61,11 +60,24 @@ class TestDevice(unittest.TestCase):
         self.assertIn("mcu_reboot", names)
         self.assertIn("rig_laser_range", names)
         self.assertIn("laser_frames_received", names)
-        coeffs = self.dev.param("forcing_coeffs")
+        coeffs = self.dev.parameter("forcing_coeffs")
         self.assertEqual(coeffs.type_code, "f")
         self.assertEqual(coeffs.count, 33)
         self.assertTrue(coeffs.writable)
         self.assertFalse(self.dev.params[0].writable)
+
+    def test_removed_method_names_have_no_compatibility_aliases(self):
+        for name in (
+            "param",
+            "get",
+            "set",
+            "stream_setup",
+            "stream_start",
+            "stream_start_quiet",
+            "stream_set_quiet",
+            "stream_stop",
+        ):
+            self.assertFalse(hasattr(self.dev, name))
 
     def test_multi_page_discovery_preserves_late_parameter_indices(self):
         params = default_params(8000.0)
@@ -75,11 +87,11 @@ class TestDevice(unittest.TestCase):
         )
         with Simulator(params=params) as simulator:
             with Device("127.0.0.1", port=simulator.port) as device:
-                late = device.param("paged_extra_049")
+                late = device.parameter("paged_extra_049")
                 self.assertEqual(late.index, len(params) - 1)
-                self.assertEqual(device.get(late.name), 49.0)
-                device.set(late.name, 12.5)
-                self.assertEqual(device.get(late.name), 12.5)
+                self.assertEqual(device.get_parameter(late.name), 49.0)
+                device.set_parameter(late.name, 12.5)
+                self.assertEqual(device.get_parameter(late.name), 12.5)
 
     def test_non_progressing_parameter_page_is_rejected(self):
         with NonProgressingSimulator() as simulator:
@@ -87,36 +99,36 @@ class TestDevice(unittest.TestCase):
                 Device("127.0.0.1", port=simulator.port)
 
     def test_get_scalar_and_string(self):
-        self.assertEqual(self.dev.get("firmware"), "helic-daq sim")
-        self.assertEqual(self.dev.get("experiment"), "pico2w-rig")
-        self.assertEqual(self.dev.get("sample_freq"), 8000.0)
-        self.assertEqual(self.dev.get("ticks"), 0)
+        self.assertEqual(self.dev.get_parameter("firmware"), "helic-daq sim")
+        self.assertEqual(self.dev.get_parameter("experiment"), "pico2w-rig")
+        self.assertEqual(self.dev.get_parameter("sample_freq"), 8000.0)
+        self.assertEqual(self.dev.get_parameter("ticks"), 0)
 
     def test_multi_get_single_round_trip(self):
-        fs, ticks = self.dev.get("sample_freq", "ticks")
+        fs, ticks = self.dev.get_parameters(("sample_freq", "ticks"))
         self.assertEqual((fs, ticks), (8000.0, 0))
 
     def test_oversize_get_is_rejected_locally(self):
         with self.assertRaisesRegex(DeviceError, str(protocol.MAX_PAYLOAD)):
-            self.dev.get("table")
+            self.dev.get_parameter("table")
 
     def test_set_and_read_back(self):
-        self.dev.set("freq", 17.5)
-        self.assertEqual(self.dev.get("freq"), 17.5)
+        self.dev.set_parameter("freq", 17.5)
+        self.assertEqual(self.dev.get_parameter("freq"), 17.5)
 
     def test_reboot_requires_confirmation_and_restores_power_on_state(self):
-        self.dev.set("freq", 17.5)
+        self.dev.set_parameter("freq", 17.5)
         initial_epoch = self.sim._cmd_epoch
         with self.assertRaises(DeviceError) as caught:
-            self.dev.set("mcu_reboot", 1)
+            self.dev.set_parameter("mcu_reboot", 1)
         self.assertEqual(caught.exception.code, 6)
         self.assertEqual(self.sim._cmd_epoch, initial_epoch)
 
         self.dev.reboot()
         self.assertEqual(self.dev._sock.fileno(), -1)
         self.dev = Device("127.0.0.1", port=self.sim.port)
-        self.assertEqual(self.dev.get("freq"), 0.0)
-        self.assertEqual(self.dev.get("arm"), 0)
+        self.assertEqual(self.dev.get_parameter("freq"), 0.0)
+        self.assertEqual(self.dev.get_parameter("arm"), 0)
         self.assertEqual(self.sim._cmd_epoch, 0)
 
     def test_invalid_rig_values_are_rejected_without_changing_shadow(self):
@@ -126,14 +138,14 @@ class TestDevice(unittest.TestCase):
             ("rig_out_channel", 1.5, 0.0),
         ]:
             with self.assertRaises(DeviceError):
-                self.dev.set(name, value)
-            self.assertEqual(self.dev.get(name), initial)
+                self.dev.set_parameter(name, value)
+            self.assertEqual(self.dev.get_parameter(name), initial)
 
     def test_array_round_trip(self):
         coeffs = [0.0] * 33
         coeffs[17] = 1.25  # b1
-        self.dev.set("forcing_coeffs", coeffs)
-        self.assertEqual(self.dev.get("forcing_coeffs"), coeffs)
+        self.dev.set_parameter("forcing_coeffs", coeffs)
+        self.assertEqual(self.dev.get_parameter("forcing_coeffs"), coeffs)
 
     def test_attribute_access(self):
         self.dev.par.rig_laser_range = 20.0
@@ -141,23 +153,23 @@ class TestDevice(unittest.TestCase):
 
     def test_read_only_rejected_locally(self):
         with self.assertRaises(DeviceError):
-            self.dev.set("ticks", 0)
+            self.dev.set_parameter("ticks", 0)
 
     def test_invalid_value_type_is_reported_as_device_error(self):
         with self.assertRaisesRegex(DeviceError, "invalid value.*diag_reset"):
-            self.dev.set("diag_reset", 1.0)
+            self.dev.set_parameter("diag_reset", 1.0)
         with self.assertRaisesRegex(DeviceError, "invalid value.*diag_reset"):
-            self.dev.set("diag_reset", -1)
+            self.dev.set_parameter("diag_reset", -1)
 
     def test_wrong_array_length_rejected(self):
         with self.assertRaises(DeviceError):
-            self.dev.set("forcing_coeffs", [1.0, 2.0])
+            self.dev.set_parameter("forcing_coeffs", [1.0, 2.0])
 
     def test_unknown_parameter(self):
         with self.assertRaises(DeviceError):
-            self.dev.get("nonexistent")
+            self.dev.get_parameter("nonexistent")
         with self.assertRaises(DeviceError):
-            self.dev.get(-1)
+            self.dev.get_parameter(-1)
 
     def test_status(self):
         status = self.dev.status()
@@ -167,19 +179,19 @@ class TestDevice(unittest.TestCase):
         self.assertGreaterEqual(status["uptime_s"], 0.0)
 
     def test_stream_setup_and_start(self):
-        names = self.dev.stream_setup(["laser", "out"], decimation=4, count=0)
+        names = self.dev.configure_stream(["laser", "out"], decimation=4, count=0)
         self.assertEqual(names, ["laser", "out"])
         self.assertEqual(self.sim.stream_setup, (4, 0, [0, 5]))
-        self.dev.stream_start(2351)
+        self.dev.start_stream(2351)
         self.assertEqual(self.sim.stream_target, ("127.0.0.1", 2351))
-        self.dev.stream_stop()
+        self.dev.stop_stream()
         self.assertIsNone(self.sim.stream_target)
 
     def test_unknown_source_rejected(self):
         with self.assertRaisesRegex(DeviceError, r"laser \[mm\].*out \[V\]"):
-            self.dev.stream_setup(["bogus"])
+            self.dev.configure_stream(["bogus"])
         with self.assertRaises(DeviceError):
-            self.dev.stream_setup([-1])
+            self.dev.configure_stream([-1])
 
     def test_source_discovery(self):
         self.assertEqual((self.dev.sources[0].name, self.dev.sources[0].unit), ("laser", "mm"))
@@ -211,7 +223,7 @@ class TestDevice(unittest.TestCase):
             try:
                 for _ in range(20):
                     self.dev.status()
-                    self.dev.get("sample_freq")
+                    self.dev.get_parameter("sample_freq")
             except Exception as error:
                 errors.append(error)
 

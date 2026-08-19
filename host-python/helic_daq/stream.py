@@ -40,7 +40,7 @@ class StreamReceiver:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    def recv(self) -> tuple[StreamHeader, np.ndarray]:
+    def receive(self) -> tuple[StreamHeader, np.ndarray]:
         """Receive one packet: (header, values[n_records, n_sources]).
 
         Raises ``socket.timeout`` if nothing arrives; tracks lost packets
@@ -71,7 +71,7 @@ class StreamReceiver:
         dropped = 0
         got = 0
         while got < n_records:
-            header, values = self.recv()
+            header, values = self.receive()
             blocks.append(values)
             step = header.decimation
             indices.append(header.first_index + step * np.arange(header.n_records, dtype=np.int64))
