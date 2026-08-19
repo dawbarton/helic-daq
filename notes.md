@@ -1258,3 +1258,10 @@ reference together and remove the patch.
   to the old API. Change that script in the same commit that advances its
   submodule after v0.3.0 is published; changing it before the pin would break
   the currently reproducible checkout.
+
+## 2026-08-19T13:56+00:00 Correction: the CBC rig is not a release consumer
+
+- The final bullet of the preceding entry refers to
+  `/workspace/cbc-duffing-rig`. That repository is dead and must not be treated
+  as a downstream consumer or release-migration obligation. Its stale host API
+  calls do not block the HELIC-DAQ release.
