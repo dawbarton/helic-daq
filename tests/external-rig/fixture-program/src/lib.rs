@@ -1,15 +1,14 @@
 //! Minimal independent programme and controller used by the external-rig
 //! acceptance fixtures.
 //!
-//! The controller exists so that a locally defined `Controller`, with its own
+//! The controller exists so that a locally defined `StandardControl`, with its own
 //! host-settable parameter and telemetry, is instantiated through the shared
-//! `ControllerGroup` and control service from outside both HELIC-DAQ
+//! `ScalarControlGroup` and control service from outside both HELIC-DAQ
 //! workspaces.
 
 #![no_std]
 
-use helic_core::controller::Controller;
-use helic_rt::{Payload, Program, StepCtx};
+use helic_rt::{ControlStep, Payload, Program, StandardControl, StandardControlInputs, StepCtx};
 
 /// Pass a commanded bias to the fixture's single actuator.
 pub struct FixtureProgram {
@@ -44,7 +43,7 @@ impl Program for FixtureProgram {
 
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
-    fn step(&mut self, inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, outputs: &mut [f32]) {
+    fn step(&mut self, inputs: &[f32], _enabled: bool, _ctx: &StepCtx<'_>, outputs: &mut [f32]) {
         outputs[0] = inputs[0] + self.bias;
     }
 
@@ -72,12 +71,15 @@ impl FixtureController {
     }
 }
 
-impl Controller for FixtureController {
+impl<const H: usize> StandardControl<H> for FixtureController {
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
-    fn tick(&mut self, inputs: &[f32], reference: f32, _dt: f32) -> f32 {
-        self.last_error = reference - inputs[0];
-        self.gain * self.last_error
+    fn step(&mut self, inputs: StandardControlInputs<'_, H>, _ctx: &StepCtx<'_>) -> ControlStep {
+        self.last_error = inputs.reference - inputs.measured[0];
+        ControlStep {
+            output: self.gain * self.last_error + inputs.forcing + inputs.table,
+            next_increment: None,
+        }
     }
 
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
@@ -85,16 +87,16 @@ impl Controller for FixtureController {
         self.last_error = 0.0;
     }
 
-    fn param_names() -> &'static [&'static str] {
+    fn scalar_param_names() -> &'static [&'static str] {
         &["fixture_gain"]
     }
 
-    fn param_value(&self, id: u16) -> Option<f32> {
+    fn scalar_param_value(&self, id: u16) -> Option<f32> {
         (id == 0).then_some(self.gain)
     }
 
-    fn set_param(&mut self, id: u16, value: f32) {
-        if id == 0 {
+    fn apply(&mut self, id: u16, payload: Payload) {
+        if let (0, Payload::F32(value)) = (id, payload) {
             self.gain = value;
         }
     }
@@ -114,17 +116,18 @@ mod tests {
     #[test]
     fn controller_owns_its_parameter_and_telemetry() {
         let mut controller = FixtureController::new();
-        assert_eq!(FixtureController::param_names(), &["fixture_gain"]);
-        controller.set_param(0, 2.0);
-        assert_eq!(controller.param_value(0), Some(2.0));
-
-        assert_eq!(controller.tick(&[1.0], 3.0, 0.001), 4.0);
+        assert_eq!(
+            <FixtureController as StandardControl<2>>::scalar_param_names(),
+            &["fixture_gain"]
+        );
+        <FixtureController as StandardControl<2>>::apply(&mut controller, 0, Payload::F32(2.0));
+        assert_eq!(
+            <FixtureController as StandardControl<2>>::scalar_param_value(&controller, 0),
+            Some(2.0)
+        );
         let mut telemetry = [0.0];
-        controller.telemetry(&mut telemetry);
-        assert_eq!(telemetry, [2.0]);
-
-        controller.reset();
-        controller.telemetry(&mut telemetry);
+        <FixtureController as StandardControl<2>>::reset(&mut controller);
+        <FixtureController as StandardControl<2>>::telemetry(&controller, &mut telemetry);
         assert_eq!(telemetry, [0.0]);
     }
 

@@ -194,7 +194,14 @@ mod tests {
         const SIGNALS: &'static [(&'static str, &'static str)] = &[("phase", "turn")];
 
         fn apply(&mut self, _domain: u8, _id: u16, _payload: Payload) {}
-        fn step(&mut self, _inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, _outputs: &mut [f32]) {}
+        fn step(
+            &mut self,
+            _inputs: &[f32],
+            _enabled: bool,
+            _ctx: &StepCtx<'_>,
+            _outputs: &mut [f32],
+        ) {
+        }
         fn write_signals(&self, _out: &mut [f32]) {}
     }
 
@@ -222,7 +229,14 @@ mod tests {
         const SIGNALS: &'static [(&'static str, &'static str)] = &[];
 
         fn apply(&mut self, _domain: u8, _id: u16, _payload: Payload) {}
-        fn step(&mut self, _inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, _outputs: &mut [f32]) {}
+        fn step(
+            &mut self,
+            _inputs: &[f32],
+            _enabled: bool,
+            _ctx: &StepCtx<'_>,
+            _outputs: &mut [f32],
+        ) {
+        }
         fn write_signals(&self, _out: &mut [f32]) {}
     }
 
@@ -241,7 +255,14 @@ mod tests {
         const SIGNALS: &'static [(&'static str, &'static str)] = &[];
 
         fn apply(&mut self, _domain: u8, _id: u16, _payload: Payload) {}
-        fn step(&mut self, _inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, _outputs: &mut [f32]) {}
+        fn step(
+            &mut self,
+            _inputs: &[f32],
+            _enabled: bool,
+            _ctx: &StepCtx<'_>,
+            _outputs: &mut [f32],
+        ) {
+        }
         fn write_signals(&self, _out: &mut [f32]) {}
     }
 
@@ -280,7 +301,14 @@ mod tests {
         const SIGNALS: &'static [(&'static str, &'static str)] = &[];
 
         fn apply(&mut self, _domain: u8, _id: u16, _payload: Payload) {}
-        fn step(&mut self, _inputs: &[f32], _dt: f32, _ctx: &StepCtx<'_>, _outputs: &mut [f32]) {}
+        fn step(
+            &mut self,
+            _inputs: &[f32],
+            _enabled: bool,
+            _ctx: &StepCtx<'_>,
+            _outputs: &mut [f32],
+        ) {
+        }
         fn write_signals(&self, _out: &mut [f32]) {}
     }
 

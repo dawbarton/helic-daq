@@ -12,7 +12,7 @@ use crate::{CommandProducer, Payload, RtCommand, RtShared, SampleRate, DOMAIN_RI
 mod groups;
 
 pub use groups::{
-    ControllerGroup, GeneratorGroup, PlatformGroup, RigGroup, TableGroup, TelemetryGroup,
+    GeneratorGroup, PlatformGroup, RigGroup, ScalarControlGroup, TableGroup, TelemetryGroup,
 };
 
 /// Number of serialized Fourier coefficients for a selected harmonic count.
@@ -494,12 +494,11 @@ mod tests {
     use std::boxed::Box;
 
     use heapless::spsc::Queue;
-    use helic_core::controller::{Controller, PassThrough};
     use helic_core::generator::FourierCoeffs;
     use helic_core::{DoubleBuffer, TableBuffer};
 
     use super::*;
-    use crate::{CommandConsumer, Rig, COMMAND_QUEUE_LEN};
+    use crate::{CommandConsumer, PassThrough, Rig, StandardControl, COMMAND_QUEUE_LEN};
 
     const TEST_HARMONICS: usize = crate::DEFAULT_HARMONICS;
     const COEFF_COUNT: u16 = coeff_count::<TEST_HARMONICS>();
@@ -568,10 +567,9 @@ mod tests {
             table,
             SampleRate::Hz8000,
         ))));
-        store.push(Box::leak(Box::new(ControllerGroup::new(
-            &PassThrough,
-            TestRig::INPUTS.len(),
-        ))));
+        store.push(Box::leak(Box::new(
+            ScalarControlGroup::<_, TEST_HARMONICS>::new(&PassThrough, TestRig::INPUTS.len()),
+        )));
         store.push(Box::leak(Box::new(RigGroup::<TestRig>::new())));
         store.push(Box::leak(Box::new(TelemetryGroup::new(EXTRAS))));
         store.validate(<crate::StandardProgram<PassThrough> as crate::Program>::DOMAINS);
@@ -595,7 +593,6 @@ mod tests {
             "arm",
             "clock_jitter",
             "cmd_backlog_max",
-            "ctrl_reset",
             "diag_reset",
             "experiment",
             "extra",
@@ -683,16 +680,23 @@ mod tests {
 
     struct AdjustableController;
 
-    impl Controller for AdjustableController {
-        fn tick(&mut self, _inputs: &[f32], reference: f32, _dt: f32) -> f32 {
-            reference
+    impl StandardControl<TEST_HARMONICS> for AdjustableController {
+        fn step(
+            &mut self,
+            inputs: crate::StandardControlInputs<'_, TEST_HARMONICS>,
+            _ctx: &crate::StepCtx<'_>,
+        ) -> crate::ControlStep {
+            crate::ControlStep {
+                output: inputs.reference,
+                next_increment: None,
+            }
         }
 
-        fn param_names() -> &'static [&'static str] {
+        fn scalar_param_names() -> &'static [&'static str] {
             &["adjustment"]
         }
 
-        fn param_value(&self, id: u16) -> Option<f32> {
+        fn scalar_param_value(&self, id: u16) -> Option<f32> {
             (id == 0).then_some(1.0)
         }
     }
@@ -703,28 +707,17 @@ mod tests {
         let (producer, mut consumer) = queue.split();
         let shared = Box::leak(Box::new(RtShared::new()));
         let mut store = ParamStore::new(producer, shared, SampleRate::Hz8000);
-        store.push(Box::leak(Box::new(ControllerGroup::new(
-            &AdjustableController,
-            1,
-        ))));
+        store.push(Box::leak(Box::new(
+            ScalarControlGroup::<_, TEST_HARMONICS>::new(&AdjustableController, 1),
+        )));
         store.validate(&[crate::DOMAIN_CONTROLLER]);
 
-        store.set(0, &1_u32.to_le_bytes()).unwrap();
+        store.set(0, &2.0_f32.to_le_bytes()).unwrap();
         assert!(matches!(
             consumer.dequeue(),
             Some(RtCommand {
                 domain: crate::DOMAIN_CONTROLLER,
-                id: crate::command_id::controller::RESET,
-                payload: Payload::Unit,
-            })
-        ));
-
-        store.set(1, &2.0_f32.to_le_bytes()).unwrap();
-        assert!(matches!(
-            consumer.dequeue(),
-            Some(RtCommand {
-                domain: crate::DOMAIN_CONTROLLER,
-                id: 1,
+                id: 0,
                 payload: Payload::F32(2.0),
             })
         ));

@@ -25,7 +25,7 @@ use helic_fw_support::identity::Identity;
 use helic_fw_support::net;
 use helic_fw_support::net::cyw43::WifiParts;
 use helic_rt::params::{
-    ControllerGroup, GeneratorGroup, ParamStore, PlatformGroup, RigGroup, TableGroup,
+    GeneratorGroup, ParamStore, PlatformGroup, RigGroup, ScalarControlGroup, TableGroup,
     TelemetryGroup,
 };
 use helic_rt::{Program, RecordConsumer, Rig, RtShared, StandardProgram};
@@ -77,7 +77,9 @@ static FORCING_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<{ config::HARM
 static PLATFORM_GROUP: StaticCell<PlatformGroup> = StaticCell::new();
 static GENERATOR_GROUP: StaticCell<GeneratorGroup<{ config::HARMONICS }>> = StaticCell::new();
 static TABLE_GROUP: StaticCell<TableGroup<{ config::TABLE_CAPACITY }>> = StaticCell::new();
-static CONTROLLER_GROUP: StaticCell<ControllerGroup<config::ActiveController>> = StaticCell::new();
+static CONTROLLER_GROUP: StaticCell<
+    ScalarControlGroup<config::ActiveController, { config::HARMONICS }>,
+> = StaticCell::new();
 static RIG_GROUP: StaticCell<RigGroup<PicoDacRig>> = StaticCell::new();
 static TELEMETRY_GROUP: StaticCell<TelemetryGroup> = StaticCell::new();
 static LASER_RX_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
@@ -110,7 +112,10 @@ fn main() -> ! {
         config::SAMPLE_RATE,
     )));
     store.push(TABLE_GROUP.init(TableGroup::new(table_staging, config::SAMPLE_RATE)));
-    store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, PicoDacRig::INPUTS.len())));
+    store.push(CONTROLLER_GROUP.init(ScalarControlGroup::new(
+        &controller,
+        PicoDacRig::INPUTS.len(),
+    )));
     store.push(RIG_GROUP.init(RigGroup::<PicoDacRig>::new()));
     store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));
     store.validate(<config::ActiveProgram as Program>::DOMAINS);

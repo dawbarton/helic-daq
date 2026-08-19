@@ -6,7 +6,6 @@
 
 #![cfg_attr(not(test), no_std)]
 
-pub mod controller;
 pub mod filter;
 pub mod fourier;
 pub mod generator;
@@ -19,7 +18,6 @@ pub mod safety;
 pub mod table;
 mod table_buffer;
 
-pub use controller::{Controller, PassThrough, PidController};
 pub use filter::{BiquadCoeffs, SosFilter};
 pub use fourier::FourierEstimator;
 pub use generator::{FourierCoeffs, GenSample, PeriodicGenerator};

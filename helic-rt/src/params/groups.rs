@@ -4,7 +4,6 @@ use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
 
 use heapless::Vec;
-use helic_core::controller::Controller;
 use helic_core::generator::FourierCoeffs;
 use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableInterpolation, TableMode};
@@ -16,8 +15,8 @@ use super::{
     MAX_EXTRA_PARAMS, MAX_RIG_PARAMS,
 };
 use crate::{
-    CoeffStaging, Payload, Rig, RtShared, SampleRate, DEFAULT_HARMONICS, DOMAIN_CONTROLLER,
-    DOMAIN_GENERATOR, DOMAIN_TABLE, MAX_HARMONICS,
+    CoeffStaging, Payload, Rig, RtShared, SampleRate, StandardControl, DEFAULT_HARMONICS,
+    DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_TABLE, MAX_HARMONICS,
 };
 
 const PLATFORM_PARAMS: &[ParamDef] = &[
@@ -683,32 +682,29 @@ impl<R: Rig> ParamGroup for RigGroup<R> {
     }
 }
 
-/// Statically selected controller reset and scalar parameter shadow.
-pub struct ControllerGroup<C: Controller> {
+/// Scalar parameter shadow for a statically selected standard control.
+pub struct ScalarControlGroup<C: StandardControl<H>, const H: usize> {
     defs: Vec<ParamDef, MAX_CTRL_PARAMS>,
     values: [f32; MAX_CTRL_PARAMS],
     input_count: usize,
     pending: Option<(usize, f32)>,
-    controller: PhantomData<C>,
+    controller: PhantomData<(C, [f32; H])>,
 }
 
-impl<C: Controller> ControllerGroup<C> {
+impl<C: StandardControl<H>, const H: usize> ScalarControlGroup<C, H> {
     pub fn new(controller: &C, input_count: usize) -> Self {
         assert!(
-            C::param_names().len() < MAX_CTRL_PARAMS,
+            C::scalar_param_names().len() <= MAX_CTRL_PARAMS,
             "too many controller parameters"
         );
         let mut defs = Vec::new();
-        defs.push(ParamDef::writable("ctrl_reset", ParamType::U32, 1))
-            .ok()
-            .unwrap();
         let mut values = [0.0; MAX_CTRL_PARAMS];
-        for (index, name) in C::param_names().iter().enumerate() {
+        for (index, name) in C::scalar_param_names().iter().enumerate() {
             defs.push(ParamDef::writable(name, ParamType::F32, 1))
                 .ok()
                 .unwrap();
-            values[index + 1] = controller
-                .param_value(index as u16)
+            values[index] = controller
+                .scalar_param_value(index as u16)
                 .expect("controller parameters must report initial values");
         }
         Self {
@@ -721,7 +717,7 @@ impl<C: Controller> ControllerGroup<C> {
     }
 }
 
-impl<C: Controller> ParamGroup for ControllerGroup<C> {
+impl<C: StandardControl<H>, const H: usize> ParamGroup for ScalarControlGroup<C, H> {
     fn target(&self) -> CommandTarget {
         CommandTarget::Program(DOMAIN_CONTROLLER)
     }
@@ -732,30 +728,18 @@ impl<C: Controller> ParamGroup for ControllerGroup<C> {
 
     fn get(&self, id: u16, out: &mut [u8]) -> Result<usize, ErrorCode> {
         let size = checked_output(&self.defs, id, out)?;
-        if id == 0 {
-            write_u32(&mut out[..size], 0);
-        } else {
-            out[..size].copy_from_slice(
-                &self
-                    .values
-                    .get(id as usize)
-                    .ok_or(ErrorCode::BadIndex)?
-                    .to_le_bytes(),
-            );
-        }
+        out[..size].copy_from_slice(
+            &self
+                .values
+                .get(id as usize)
+                .ok_or(ErrorCode::BadIndex)?
+                .to_le_bytes(),
+        );
         Ok(size)
     }
 
     fn stage(&mut self, id: u16, data: &[u8]) -> Result<Staged, ErrorCode> {
-        if id == 0 {
-            return if read_u32(data)? == 0 {
-                Ok(Staged::Local(ParamAction::None))
-            } else {
-                Ok(Staged::Rt(Payload::Unit))
-            };
-        }
-        let controller_id = id - 1;
-        let value = C::normalise_param(controller_id, read_f32(data)?, self.input_count)
+        let value = C::normalise_scalar_param(id, read_f32(data)?, self.input_count)
             .ok_or(ErrorCode::BadValue)?;
         self.pending = Some((id as usize, value));
         Ok(Staged::Rt(Payload::F32(value)))

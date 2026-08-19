@@ -33,7 +33,7 @@ use helic_fw_support::net::wiznet::EthernetParts;
 use helic_fw_support::net::NetConfig;
 use helic_fw_support::{comms, net};
 use helic_rt::params::{
-    ControllerGroup, GeneratorGroup, ParamStore, PlatformGroup, RigGroup, TableGroup,
+    GeneratorGroup, ParamStore, PlatformGroup, RigGroup, ScalarControlGroup, TableGroup,
     TelemetryGroup,
 };
 use helic_rt::{Program, RecordConsumer, Rig, RtShared, SampleRate, StandardProgram};
@@ -86,7 +86,8 @@ static FORCING_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<HARMONICS>>> =
 static PLATFORM_GROUP: StaticCell<PlatformGroup> = StaticCell::new();
 static GENERATOR_GROUP: StaticCell<GeneratorGroup<HARMONICS>> = StaticCell::new();
 static TABLE_GROUP: StaticCell<TableGroup<TABLE_CAPACITY>> = StaticCell::new();
-static CONTROLLER_GROUP: StaticCell<ControllerGroup<FixtureController>> = StaticCell::new();
+static CONTROLLER_GROUP: StaticCell<ScalarControlGroup<FixtureController, HARMONICS>> =
+    StaticCell::new();
 static RIG_GROUP: StaticCell<RigGroup<ServiceRig>> = StaticCell::new();
 static TELEMETRY_GROUP: StaticCell<TelemetryGroup> = StaticCell::new();
 
@@ -175,7 +176,10 @@ fn main() -> ! {
         SAMPLE_RATE,
     )));
     store.push(TABLE_GROUP.init(TableGroup::new(table_staging, SAMPLE_RATE)));
-    store.push(CONTROLLER_GROUP.init(ControllerGroup::new(&controller, ServiceRig::INPUTS.len())));
+    store.push(CONTROLLER_GROUP.init(ScalarControlGroup::new(
+        &controller,
+        ServiceRig::INPUTS.len(),
+    )));
     store.push(RIG_GROUP.init(RigGroup::<ServiceRig>::new()));
     store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(&[])));
     store.validate(<ActiveProgram as Program>::DOMAINS);

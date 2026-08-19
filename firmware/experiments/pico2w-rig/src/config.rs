@@ -3,9 +3,8 @@
 //! The CYW43439 radio provides the only network transport for this rig. See
 //! the `pico2w-rig` connection instructions in `docs/user_guide.md`.
 
-use helic_core::controller::PassThrough;
 use helic_fw_support::net::NetConfig;
-pub use helic_rt::SampleRate;
+pub use helic_rt::{PassThrough, SampleRate};
 
 /// Name advertised to discovery clients.
 pub const EXPERIMENT: &str = "pico2w-rig";

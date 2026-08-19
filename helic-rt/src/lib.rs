@@ -9,6 +9,7 @@
 extern crate std;
 
 pub mod channels;
+mod control;
 pub mod params;
 mod program;
 pub mod rig;
@@ -21,6 +22,9 @@ pub use channels::{
     Record, RecordConsumer, RecordProducer, RtChannels, RtCommand, COMMANDS_PER_TICK,
     COMMAND_QUEUE_LEN, DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_RIG, DOMAIN_TABLE,
     MAX_FORCE_VALUES, RECORD_QUEUE_LEN,
+};
+pub use control::{
+    ControlStep, PassThrough, PidController, StandardControl, StandardControlInputs,
 };
 pub use program::{Program, StandardProgram, StepCtx};
 pub use rig::{

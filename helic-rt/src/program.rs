@@ -2,15 +2,14 @@
 
 use core::sync::atomic::Ordering;
 
-use helic_core::controller::Controller;
 use helic_core::lut::SinLut;
-use helic_core::phase::PhaseAccumulator;
 use helic_core::table::{TableInterpolation, TableMode, TablePlayer};
-use helic_core::MAX_TABLE_LEN;
+use helic_core::{HarmonicGenerator, MAX_TABLE_LEN};
 
 use crate::{
-    command_id, ActiveCoeffs, ActiveTable, Payload, RtShared, SampleRate, DEFAULT_HARMONICS,
-    DOMAIN_CONTROLLER, DOMAIN_GENERATOR, DOMAIN_TABLE, MAX_HARMONICS,
+    command_id, ActiveCoeffs, ActiveTable, ControlStep, Payload, RtShared, SampleRate,
+    StandardControl, StandardControlInputs, DEFAULT_HARMONICS, DOMAIN_CONTROLLER, DOMAIN_GENERATOR,
+    DOMAIN_TABLE, MAX_HARMONICS,
 };
 
 /// Immutable services supplied to one programme step by the loop driver.
@@ -27,7 +26,13 @@ pub trait Program {
     const SIGNALS: &'static [(&'static str, &'static str)];
 
     fn apply(&mut self, domain: u8, id: u16, payload: Payload);
-    fn step(&mut self, inputs: &[f32], dt: f32, ctx: &StepCtx<'_>, outputs: &mut [f32]);
+    fn step(
+        &mut self,
+        inputs: &[f32],
+        output_enabled: bool,
+        ctx: &StepCtx<'_>,
+        outputs: &mut [f32],
+    );
     fn write_signals(&self, out: &mut [f32]);
 
     /// Number of programme-owned stream signals.
@@ -53,26 +58,16 @@ pub trait Program {
     }
 }
 
-const STANDARD_SIGNALS: &[(&str, &str)] = &[
-    ("target", "V"),
-    ("forcing", "V"),
-    ("table", "V"),
-    ("phase", "turn"),
-];
-
-#[inline(always)]
-fn phase_turns(phase: u32) -> f32 {
-    phase as f32 * (1.0 / 4_294_967_296.0)
-}
-
 /// Current controller, Fourier generator, and waveform-table programme.
 pub struct StandardProgram<
-    C: Controller,
+    C: StandardControl<H>,
     const H: usize = DEFAULT_HARMONICS,
     const N: usize = MAX_TABLE_LEN,
 > {
     controller: C,
-    phase: PhaseAccumulator,
+    generator: HarmonicGenerator<H>,
+    nominal_increment: u32,
+    frequency_overridden: bool,
     target_coeffs: ActiveCoeffs<H>,
     forcing_coeffs: ActiveCoeffs<H>,
     table_player: TablePlayer,
@@ -82,9 +77,10 @@ pub struct StandardProgram<
     forcing: f32,
     table: f32,
     phase_turns: f32,
+    output_enabled: bool,
 }
 
-impl<C: Controller, const H: usize, const N: usize> StandardProgram<C, H, N> {
+impl<C: StandardControl<H>, const H: usize, const N: usize> StandardProgram<C, H, N> {
     pub fn new(
         controller: C,
         target_coeffs: ActiveCoeffs<H>,
@@ -95,7 +91,9 @@ impl<C: Controller, const H: usize, const N: usize> StandardProgram<C, H, N> {
         assert!(H <= MAX_HARMONICS);
         Self {
             controller,
-            phase: PhaseAccumulator::new(),
+            generator: HarmonicGenerator::new(),
+            nominal_increment: 0,
+            frequency_overridden: false,
             target_coeffs,
             forcing_coeffs,
             table_player: TablePlayer::new(),
@@ -105,24 +103,31 @@ impl<C: Controller, const H: usize, const N: usize> StandardProgram<C, H, N> {
             forcing: 0.0,
             table: 0.0,
             phase_turns: 0.0,
+            output_enabled: false,
         }
     }
 }
 
-impl<C: Controller, const H: usize, const N: usize> Program for StandardProgram<C, H, N> {
+impl<C: StandardControl<H>, const H: usize, const N: usize> Program for StandardProgram<C, H, N> {
     const OUTPUTS: usize = 1;
-    const INPUTS_REQUIRED: usize = 0;
+    const INPUTS_REQUIRED: usize = C::INPUTS_REQUIRED;
     const DOMAINS: &'static [u8] = &[DOMAIN_GENERATOR, DOMAIN_TABLE, DOMAIN_CONTROLLER];
-    // Controller telemetry is prepended by `signal` and `write_signals`; this
-    // slice names the fixed part shared by every controller selection.
-    const SIGNALS: &'static [(&'static str, &'static str)] = STANDARD_SIGNALS;
+    const SIGNALS: &'static [(&'static str, &'static str)] = &[
+        ("target", C::REFERENCE_UNIT),
+        ("forcing", "V"),
+        ("table", "V"),
+        ("phase", "turn"),
+    ];
 
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn apply(&mut self, domain: u8, id: u16, payload: Payload) {
         match (domain, id, payload) {
             (DOMAIN_GENERATOR, command_id::generator::SET_INCREMENT, Payload::U32(increment)) => {
-                self.phase.set_increment(increment)
+                self.nominal_increment = increment;
+                if !self.frequency_overridden {
+                    self.generator.set_increment(increment);
+                }
             }
             (DOMAIN_GENERATOR, command_id::generator::SET_TARGET, Payload::Buffer(token)) => {
                 self.target_coeffs.activate(token);
@@ -166,36 +171,65 @@ impl<C: Controller, const H: usize, const N: usize> Program for StandardProgram<
                     .active_table_len
                     .store(self.active_table.get().len() as u32, Ordering::Relaxed);
             }
-            (DOMAIN_CONTROLLER, command_id::controller::RESET, Payload::Unit) => {
-                self.controller.reset()
-            }
-            (DOMAIN_CONTROLLER, id, Payload::F32(value)) if id != command_id::controller::RESET => {
-                self.controller.set_param(id - 1, value)
-            }
+            (DOMAIN_CONTROLLER, id, payload) => self.controller.apply(id, payload),
             _ => {}
         }
     }
 
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
-    fn step(&mut self, inputs: &[f32], dt: f32, ctx: &StepCtx<'_>, outputs: &mut [f32]) {
+    fn step(
+        &mut self,
+        inputs: &[f32],
+        output_enabled: bool,
+        ctx: &StepCtx<'_>,
+        outputs: &mut [f32],
+    ) {
         debug_assert!(!outputs.is_empty());
-        let (phase, period_start) = self.phase.step();
-        self.target = self.target_coeffs.get().evaluate(ctx.lut, phase);
-        self.forcing = self.forcing_coeffs.get().evaluate(ctx.lut, phase);
-        let controller = self.controller.tick(inputs, self.target, dt);
-        self.table = self
-            .table_player
-            .step(self.active_table.get(), phase, period_start);
-        self.phase_turns = phase_turns(phase);
-        outputs[0] = controller + self.forcing + self.table;
+        let current_increment = self.generator.increment();
+        let frame = self.generator.step(ctx.lut);
+        let target_coeffs = self.target_coeffs.get();
+        self.target = frame.project(target_coeffs);
+        self.forcing = frame.project(self.forcing_coeffs.get());
+        self.table =
+            self.table_player
+                .step(self.active_table.get(), frame.phase, frame.period_start);
+        self.phase_turns = frame.phase_turns();
+
+        if output_enabled && !self.output_enabled {
+            self.controller.reset();
+        }
+        self.controller.set_output_enabled(output_enabled);
+        self.output_enabled = output_enabled;
+        let ControlStep {
+            output,
+            next_increment,
+        } = self.controller.step(
+            StandardControlInputs {
+                measured: inputs,
+                reference: self.target,
+                reference_mean: target_coeffs.mean,
+                forcing: self.forcing,
+                table: self.table,
+                frame,
+                current_increment,
+            },
+            ctx,
+        );
+        self.frequency_overridden = output_enabled && next_increment.is_some();
+        self.generator.set_increment(if output_enabled {
+            next_increment.unwrap_or(self.nominal_increment)
+        } else {
+            self.nominal_increment
+        });
+        outputs[0] = if output_enabled { output } else { 0.0 };
     }
 
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     fn write_signals(&self, out: &mut [f32]) {
         let telemetry = C::TELEMETRY.len();
-        debug_assert!(out.len() >= telemetry + STANDARD_SIGNALS.len());
+        debug_assert!(out.len() >= telemetry + Self::SIGNALS.len());
         self.controller.telemetry(&mut out[..telemetry]);
         out[telemetry] = self.target;
         out[telemetry + 1] = self.forcing;
@@ -204,14 +238,20 @@ impl<C: Controller, const H: usize, const N: usize> Program for StandardProgram<
     }
 
     fn signal_count() -> usize {
-        C::TELEMETRY.len() + STANDARD_SIGNALS.len()
+        C::TELEMETRY.len() + Self::SIGNALS.len()
     }
 
     fn signal(index: usize) -> Option<(&'static str, &'static str)> {
         C::TELEMETRY
             .get(index)
-            .or_else(|| STANDARD_SIGNALS.get(index.checked_sub(C::TELEMETRY.len())?))
+            .or_else(|| Self::SIGNALS.get(index.checked_sub(C::TELEMETRY.len())?))
             .copied()
+    }
+
+    #[inline(always)]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
+    fn fault(&self) -> bool {
+        self.controller.fault()
     }
 }
 
@@ -230,13 +270,20 @@ mod tests {
         observed: f32,
     }
 
-    impl Controller for TestController {
-        fn tick(&mut self, inputs: &[f32], reference: f32, _dt: f32) -> f32 {
-            self.observed = inputs[0];
-            reference
-        }
-
+    impl StandardControl<TEST_HARMONICS> for TestController {
         const TELEMETRY: &'static [(&'static str, &'static str)] = &[("observed", "V")];
+
+        fn step(
+            &mut self,
+            inputs: StandardControlInputs<'_, TEST_HARMONICS>,
+            _ctx: &StepCtx<'_>,
+        ) -> ControlStep {
+            self.observed = inputs.measured[0];
+            ControlStep {
+                output: inputs.reference + inputs.forcing + inputs.table,
+                next_increment: None,
+            }
+        }
 
         fn telemetry(&self, out: &mut [f32]) {
             out[0] = self.observed;
@@ -327,7 +374,7 @@ mod tests {
             sample_rate: SampleRate::Hz8000,
         };
         let mut output = [0.0];
-        program.step(&[2.0], SampleRate::Hz8000.dt(), &ctx, &mut output);
+        program.step(&[2.0], true, &ctx, &mut output);
         assert_eq!(output[0], 1.375);
         let mut signals = [0.0; 5];
         program.write_signals(&mut signals);
@@ -351,7 +398,8 @@ mod tests {
     fn phase_signal_meets_the_half_f32_ulp_bound() {
         for phase in [0, 1, (1 << 24) - 1, 1 << 30, u32::MAX - 1, u32::MAX] {
             let exact = phase as f64 / 4_294_967_296.0;
-            let error = (phase_turns(phase) as f64 - exact).abs();
+            let turns = phase as f32 * (1.0 / 4_294_967_296.0);
+            let error = (turns as f64 - exact).abs();
             assert!(
                 error <= 2.0_f64.powi(-25),
                 "phase={phase:#x}, error={error}"

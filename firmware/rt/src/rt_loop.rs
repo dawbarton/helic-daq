@@ -9,8 +9,8 @@ use helic_core::lut::SinLut;
 use helic_core::{DoubleBuffer, FourierCoeffs};
 use helic_rt::{
     safety_decide, source_count, CommandConsumer, Payload, Program, Record, RecordProducer, Rig,
-    RtChannels, RtCommand, RtShared, SampleRate, StepCtx, TickSource, COMMANDS_PER_TICK,
-    COMMAND_QUEUE_LEN, DOMAIN_RIG, MAX_ACTUATORS, MAX_SOURCES, RECORD_QUEUE_LEN,
+    RtChannels, RtCommand, RtShared, SafetyInputs, SampleRate, StepCtx, TickSource,
+    COMMANDS_PER_TICK, COMMAND_QUEUE_LEN, DOMAIN_RIG, MAX_ACTUATORS, MAX_SOURCES, RECORD_QUEUE_LEN,
 };
 use static_cell::StaticCell;
 
@@ -55,13 +55,14 @@ pub fn init_channels<const H: usize>(
 fn safety_gate<R: Rig>(
     rig: &mut R,
     shared: &RtShared,
+    safety_inputs: SafetyInputs,
     inputs: &[f32],
     program_fault: bool,
     commanded: &[f32],
     applied: &mut [f32],
 ) {
     let fault = rig.output_fault(inputs) || program_fault;
-    let outcome = safety_decide(rig, shared.safety.load_inputs(), fault, commanded, applied);
+    let outcome = safety_decide(rig, safety_inputs, fault, commanded, applied);
     if outcome.newly_tripped {
         shared.safety.latch_trip();
     }
@@ -100,11 +101,11 @@ fn apply_program(program: &mut impl Program, domain: u8, id: u16, payload: Paylo
 fn step_program(
     program: &mut impl Program,
     inputs: &[f32],
-    dt: f32,
+    output_enabled: bool,
     ctx: &StepCtx<'_>,
     outputs: &mut [f32],
 ) {
-    program.step(inputs, dt, ctx, outputs);
+    program.step(inputs, output_enabled, ctx, outputs);
 }
 
 #[unsafe(link_section = ".data.ram_func")]
@@ -152,7 +153,6 @@ fn run_rt_tick<R: Rig>(
     shared: &RtShared,
     program: &mut impl Program,
     sample_rate: SampleRate,
-    dt: f32,
     commands: &mut CommandConsumer,
     records: &mut RecordProducer,
     ctx: &StepCtx<'_>,
@@ -235,11 +235,13 @@ fn run_rt_tick<R: Rig>(
     let m0 = now_us();
     measure_rig(rig, &mut values[..n_inputs]);
     let measure_us = now_us().wrapping_sub(m0);
+    let safety_inputs = shared.safety.load_inputs();
+    let output_enabled = !R::SAFETY_GATED || (safety_inputs.armed && !safety_inputs.tripped);
     let mut commanded = [0.0; MAX_ACTUATORS];
     step_program(
         program,
         &values[..n_inputs],
-        dt,
+        output_enabled,
         ctx,
         &mut commanded[..n_actuators],
     );
@@ -250,6 +252,7 @@ fn run_rt_tick<R: Rig>(
         safety_gate::<R>(
             rig,
             shared,
+            safety_inputs,
             &values[..n_inputs],
             program_fault(program),
             &commanded[..n_actuators],
@@ -344,7 +347,6 @@ struct RtLoopState<R: Rig, P: Program, T: TickSource> {
     shared: &'static RtShared,
     tick: T,
     sample_rate: SampleRate,
-    dt: f32,
     commands: CommandConsumer,
     records: RecordProducer,
     ctx: StepCtx<'static>,
@@ -393,7 +395,6 @@ pub fn run_rt_loop<R: Rig, P: Program, T: TickSource>(
         shared,
         tick,
         sample_rate,
-        dt: sample_rate.dt(),
         commands,
         records,
         ctx: StepCtx { lut, sample_rate },
@@ -433,7 +434,6 @@ fn run_hot_loop<R: Rig, P: Program, T: TickSource>(mut state: RtLoopState<R, P, 
             state.shared,
             &mut state.program,
             state.sample_rate,
-            state.dt,
             &mut state.commands,
             &mut state.records,
             &state.ctx,
