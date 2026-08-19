@@ -249,7 +249,7 @@ def main(argv=None) -> int:
     sub.add_parser("stop", help="zero the forcing and target").set_defaults(fn=cmd_stop)
 
     p = sub.add_parser("capture", help="capture streamed data")
-    p.add_argument("--sources", default="adc0,out", help="comma-separated (default adc0,out)")
+    p.add_argument("--sources", default="laser,out", help="comma-separated (default laser,out)")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--seconds", type=float)
     group.add_argument("--samples", type=int)

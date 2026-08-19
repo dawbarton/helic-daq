@@ -88,7 +88,7 @@ class TestDevice(unittest.TestCase):
 
     def test_get_scalar_and_string(self):
         self.assertEqual(self.dev.get("firmware"), "helic-daq sim")
-        self.assertEqual(self.dev.get("experiment"), "magnetoelastic")
+        self.assertEqual(self.dev.get("experiment"), "pico2w-rig")
         self.assertEqual(self.dev.get("sample_freq"), 8000.0)
         self.assertEqual(self.dev.get("ticks"), 0)
 
@@ -163,28 +163,28 @@ class TestDevice(unittest.TestCase):
         status = self.dev.status()
         self.assertEqual(status["sample_rate"], 8000.0)
         self.assertEqual(status["n_params"], len(self.sim.params))
-        self.assertEqual(status["n_sources"], 15)
+        self.assertEqual(status["n_sources"], 7)
         self.assertGreaterEqual(status["uptime_s"], 0.0)
 
     def test_stream_setup_and_start(self):
-        names = self.dev.stream_setup(["adc0", "out"], decimation=4, count=0)
-        self.assertEqual(names, ["adc0", "out"])
-        self.assertEqual(self.sim.stream_setup, (4, 0, [0, 13]))
+        names = self.dev.stream_setup(["laser", "out"], decimation=4, count=0)
+        self.assertEqual(names, ["laser", "out"])
+        self.assertEqual(self.sim.stream_setup, (4, 0, [0, 5]))
         self.dev.stream_start(2351)
         self.assertEqual(self.sim.stream_target, ("127.0.0.1", 2351))
         self.dev.stream_stop()
         self.assertIsNone(self.sim.stream_target)
 
     def test_unknown_source_rejected(self):
-        with self.assertRaisesRegex(DeviceError, r"adc0 \[V\].*laser \[mm\]"):
+        with self.assertRaisesRegex(DeviceError, r"laser \[mm\].*out \[V\]"):
             self.dev.stream_setup(["bogus"])
         with self.assertRaises(DeviceError):
             self.dev.stream_setup([-1])
 
     def test_source_discovery(self):
-        self.assertEqual((self.dev.sources[8].name, self.dev.sources[8].unit), ("laser", "mm"))
+        self.assertEqual((self.dev.sources[0].name, self.dev.sources[0].unit), ("laser", "mm"))
         self.assertEqual(
-            (self.dev.sources[12].name, self.dev.sources[12].unit),
+            (self.dev.sources[4].name, self.dev.sources[4].unit),
             ("phase", "turn"),
         )
         self.assertEqual(

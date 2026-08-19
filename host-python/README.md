@@ -17,7 +17,7 @@ from helic_daq import Device, StreamReceiver
 dev = Device("192.168.1.235")
 print(dev.params)                 # discovered parameter list
 dev.par.freq = 10.0               # attribute-style access
-data = dev.capture(["adc0", "out"], seconds=2.0)
+data = dev.capture(["laser", "out"], seconds=2.0)
 dev.upload_table(
     [0.0, 1.0, 0.0, -1.0],
     duration=0.2,
@@ -31,7 +31,7 @@ For host-side development without hardware, run the protocol-v3 simulator:
 
 ```sh
 python3 -m helic_daq.sim
-helic-daq --host 127.0.0.1 capture --sources adc0,out --samples 1000
+helic-daq --host 127.0.0.1 capture --sources laser,out --samples 1000
 ```
 
 See the repository [user guide](../docs/user_guide.md) for installation,
