@@ -49,7 +49,7 @@ class FakeDevice:
             "uptime_s": self.clock.now,
         }
 
-    def get(self, *names: str) -> object:
+    def get_parameters(self, names: tuple[str, ...]) -> list[object]:
         ticks = int(self.clock.now * 1000.0)
         values: dict[str, object] = {
             "experiment": "fixture-rig",
@@ -67,10 +67,12 @@ class FakeDevice:
             "t_actuate_max": 1,
             "t_rest_max": 97,
         }
-        selected = [values[name] for name in names]
-        return selected[0] if len(selected) == 1 else selected
+        return [values[name] for name in names]
 
-    def set(self, name: str, value: object) -> None:
+    def get_parameter(self, name: str) -> object:
+        return self.get_parameters((name,))[0]
+
+    def set_parameter(self, name: str, value: object) -> None:
         self.writes.append((name, value))
 
     def capture(
