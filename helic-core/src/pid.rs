@@ -92,10 +92,11 @@ impl Pid {
 
         // Conditional integration: freeze the integrator when it would push
         // the output further into saturation.
-        let saturated_high = unclamped > c.out_max && error > 0.0;
-        let saturated_low = unclamped < c.out_min && error < 0.0;
+        let integral_increment = c.ki * error * dt;
+        let saturated_high = unclamped > c.out_max && integral_increment > 0.0;
+        let saturated_low = unclamped < c.out_min && integral_increment < 0.0;
         if !(saturated_high || saturated_low) {
-            self.integral += c.ki * error * dt;
+            self.integral += integral_increment;
         }
 
         out
@@ -178,6 +179,24 @@ mod tests {
         // unwinding a huge integral.
         let out = pid.update(-10.0, DT);
         assert!(out <= -1.0 + 1e-6, "out {out} still saturated high");
+    }
+
+    #[test]
+    fn anti_windup_uses_integral_direction_for_negative_gain() {
+        let mut pid = Pid::new(PidConfig {
+            ki: -100.0,
+            out_min: -1.0,
+            out_max: 1.0,
+            ..Default::default()
+        });
+        for _ in 0..8000 {
+            pid.update(-10.0, DT);
+        }
+        assert_eq!(pid.update(-10.0, DT), 1.0);
+        for _ in 0..100 {
+            pid.update(10.0, DT);
+        }
+        assert_eq!(pid.update(10.0, DT), -1.0);
     }
 
     #[test]
