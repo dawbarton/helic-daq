@@ -57,7 +57,6 @@ def default_params(sample_rate: float) -> list[SimParam]:
         SimParam("freq", "f", 1, True, 0.0),
         SimParam("target_coeffs", "f", 33, True, coefficients.copy()),
         SimParam("forcing_coeffs", "f", 33, True, coefficients.copy()),
-        SimParam("ctrl_reset", "I", 1, True, 0),
         SimParam("table", "f", 4096, True, [0.0] * 4096),
         SimParam("table_len", "H", 1, False, 0),
         SimParam("table_freq", "f", 1, True, 0.0),
@@ -343,7 +342,7 @@ class Simulator:
             if param.name == "mcu_reboot" and value != protocol.MCU_REBOOT_CONFIRMATION:
                 return self._error(6, msg_type)
             queues_command = param.name not in ("diag_reset", "arm", "mcu_reboot") and not (
-                param.name in ("ctrl_reset", "table_trigger") and value == 0
+                param.name == "table_trigger" and value == 0
             )
             with self._lock:
                 param.value = value

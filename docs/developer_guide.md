@@ -19,7 +19,7 @@ implementation details:
    cross-core synchronisation, and uses `f32` because the Cortex-M33 has no
    hardware double-precision support.
 3. **Composition is static where timing matters.** Each physical experiment
-   is a firmware crate. `Rig`, `TickSource` and `Controller` are static generic
+   is a firmware crate. `Rig`, `TickSource` and `Program` are static generic
    choices, so extension does not introduce virtual dispatch in the tick.
 4. **Logic is portable; wiring is local.** DSP, codecs and peripheral logic
    live in host-testable `no_std` crates. `firmware/rt` contains mandatory
@@ -579,8 +579,8 @@ so every group's event counters share one lifecycle. Add a platform or reusable
 programme parameter beside the component that owns it, using a group-local ID
 that is also its real-time command ID. Experiment telemetry uses the typed
 `ExtraParam::f32`/`u32` constructors, whose definition cannot disagree with its
-atomic storage. Controller and rig parameters continue to come from their trait
-hooks and need no central schema edit.
+atomic storage. Control and rig parameters continue to come from their own
+groups and need no central schema edit.
 
 ## Extending
 
@@ -854,32 +854,39 @@ are per tick in `RtShared::diagnostics` and the status log; the `safety` param
 packs armed/tripped/
 clamped/quieted into one word. The pure vector decision lives in
 `helic-rt`; the reusable channel-window clamp and stale-counter guard live in
-`helic-core::safety`.
+`helic-core::safety`. One safety snapshot determines both the output-enabled
+flag observed by `Program::step` and the downstream gate decision for a tick.
 
 Verify with the root host tests, a release build and clippy of the complete
 firmware workspace, and all host-language suites. Then flash the single new
 package and check its pins, tick rate, `loop_time_max`, overruns, discovery,
 source table and output fail-safe behaviour on hardware.
 
-### Writing a controller
+### Writing a standard control
 
-Implement `helic_core::controller::Controller`:
+Implement `helic_rt::StandardControl<H>`:
 
 ```rust
 pub struct MyController { /* gains, filters, state */ }
 
-impl Controller for MyController {
-    fn tick(&mut self, inputs: &[f32], reference: f32, dt: f32) -> f32 {
-        // Input slot names and units come from the active rig.
-        reference - inputs[0]
+impl<const H: usize> StandardControl<H> for MyController {
+    const INPUTS_REQUIRED: usize = 1;
+    const REFERENCE_UNIT: &'static str = "mm";
+
+    fn step(&mut self, inputs: StandardControlInputs<'_, H>, ctx: &StepCtx<'_>) -> ControlStep {
+        let error = inputs.reference - inputs.measured[0];
+        ControlStep {
+            output: self.gain * error + inputs.forcing + inputs.table,
+            next_increment: None,
+        }
     }
     fn reset(&mut self) { /* clear integrators/filters */ }
-    fn param_names() -> &'static [&'static str] { &["ctrl_gain"] }
-    fn param_value(&self, id: u16) -> Option<f32> { /* report construction value */ }
-    fn normalise_param(id: u16, value: f32, input_count: usize) -> Option<f32> {
+    fn scalar_param_names() -> &'static [&'static str] { &["ctrl_gain"] }
+    fn scalar_param_value(&self, id: u16) -> Option<f32> { /* construction value */ }
+    fn normalise_scalar_param(id: u16, value: f32, input_count: usize) -> Option<f32> {
         /* reject or canonicalise before acknowledgement */
     }
-    fn set_param(&mut self, id: u16, value: f32) { /* id indexes param_names */ }
+    fn apply(&mut self, id: u16, payload: Payload) { /* raw group-local id */ }
     const TELEMETRY: &'static [(&'static str, &'static str)] = &[("error", "V")];
     fn telemetry(&self, out: &mut [f32]) { /* fill after tick */ }
 }
@@ -892,22 +899,22 @@ pub type ActiveController = MyController;
 pub fn make_controller() -> ActiveController { ... }
 ```
 
-`param_names` entries appear automatically in the registry (and therefore
-in `helic-daq list`) as writable f32 parameters; writes arrive via
-`set_param` at a sample boundary. `param_value` must report the values used
-by `make_controller`; the exact instance used to seed the host shadow is then
-moved to core 1. `normalise_param` runs before a write is acknowledged, so
-the returned value must be exactly what `set_param` applies. The firmware
-currently supports up to
-eight controller parameters and fails at boot if the active controller exposes
-more, so an over-large controller configuration is caught before an
-experiment. Everything in `helic-core` is available:
-`SosFilter` biquad cascades, `Pid`, `FourierEstimator` (feed it the shared
-phase for phase-locked harmonic estimates), and the generators.
+Register `ScalarControlGroup<C, H>` when every parameter is `f32` and has only
+local validation. Its metadata appears automatically in the registry and raw
+group-local ids reach `apply` at a sample boundary. It injects no reset
+parameter. A control with enums, pulses, cross-parameter invariants, or unit
+conversion owns a dedicated `ParamGroup` instead.
 
-Controllers are plain `no_std` structs. Write host unit tests next to
-them (see `controller.rs` for the pattern of closing the loop around a
-simulated plant).
+The control returns the complete raw output, not merely a feedback
+contribution. It may also return the phase increment for the next sample.
+`None` restores the nominal `freq`; it never means retain the last override.
+Declare the largest fixed measurement index through `INPUTS_REQUIRED`, and
+keep every enabled-path method SRAM-resident. See
+`docs/standard_control_and_pll.md` for lifecycle, ordering, and PLL details.
+
+Controls are plain `no_std` structs. Write host unit tests beside them,
+including output composition, raw command ids, disabled-state freezing,
+reset-on-arm, telemetry ordering, and frequency-override timing.
 
 ### Budget
 

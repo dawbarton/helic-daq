@@ -13,7 +13,7 @@ an out-of-tree rig can use:
   dependency policy forbids `helic-fw-support` so that a transitive dependency
   cannot creep in unnoticed.
 - `fw-fixture-service-rig` composes the services every production rig actually
-  uses: `control_run` over locally defined `Rig`, `Program` and `Controller`
+  uses: `control_run` over locally defined `Rig`, `Program` and `StandardControl`
   types, UDP streaming, discovery, status, the time watchdog, and build
   identity derived from this workspace. That half is generic, macro-bearing and
   build-script-bearing, which is where boundary defects live, and the first
@@ -22,7 +22,7 @@ an out-of-tree rig can use:
 Neither is flashed. Both are compile, link and layout fixtures; they establish
 the repository boundary, not electrical behaviour.
 
-The manifests request exact `=0.1.0` HELIC crate versions. Until those crates
+The manifests request exact `=0.3.0` HELIC crate versions. Until those crates
 are published, `[patch.crates-io]` substitutes the repository checkout; remove
 that table to exercise released packages unchanged.
 

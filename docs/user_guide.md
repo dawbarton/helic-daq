@@ -444,7 +444,7 @@ the magneto-elastic rig's defaults:
 | Setting | Constant | Default |
 |---|---|---|
 | Sample rate | `SAMPLE_RATE` | 8 kHz |
-| Controller | `ActiveController` + `make_controller()` | pass-through |
+| Programme | `ActiveProgram` + `make_program()` | standard pass-through control |
 | Fourier harmonics | `HARMONICS` | 16 |
 | Waveform-table capacity | `TABLE_CAPACITY` | 4096 samples |
 | Output channel | `OUTPUT_CHANNEL` | 0 |

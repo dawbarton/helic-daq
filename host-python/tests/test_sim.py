@@ -79,7 +79,7 @@ class TestSimulator(unittest.TestCase):
 
         self.dev.set("freq", 10.0)
         self.dev.set("diag_reset", 1)
-        self.dev.set("ctrl_reset", 0)
+        self.dev.set("table_trigger", 0)
         changed = self.dev.capture(["cmd_epoch"], samples=1, port=0)
         self.assertEqual(changed["cmd_epoch"][0], 1.0)
 
@@ -135,8 +135,9 @@ class TestSimulator(unittest.TestCase):
 
     def test_timing_diagnostics_match_firmware_registry(self):
         names = [param.name for param in self.dev.params]
+        start = names.index("wake_phase_min")
         self.assertEqual(
-            names[23:33],
+            names[start : start + 10],
             [
                 "wake_phase_min",
                 "wake_phase_max",

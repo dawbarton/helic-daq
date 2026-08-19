@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "fw-pico2w-rig"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -992,25 +992,25 @@ dependencies = [
 
 [[package]]
 name = "helic-core"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "helic-drivers"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "embedded-hal 1.0.0",
 ]
 
 [[package]]
 name = "helic-fw-build"
-version = "0.2.5"
+version = "0.3.0"
 
 [[package]]
 name = "helic-fw-optoncdt"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "defmt 1.1.1",
  "embassy-rp",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "helic-fw-rt"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "defmt 1.1.1",
  "embassy-rp",
@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "helic-fw-support"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "cyw43",
  "cyw43-firmware",
@@ -1060,11 +1060,11 @@ dependencies = [
 
 [[package]]
 name = "helic-proto"
-version = "0.2.5"
+version = "0.3.0"
 
 [[package]]
 name = "helic-rt"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "heapless",
  "helic-core",

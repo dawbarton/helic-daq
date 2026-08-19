@@ -17,8 +17,9 @@ control and streaming while a dedicated core drives the DAC.
 
 ## Control and network
 
-`ActiveController` is currently `PassThrough`; the common RT loop adds forcing
-and arbitrary-table signals before DAC actuation. The mandatory tick body and
+`ActiveController` is currently `PassThrough`; `StandardProgram` supplies its
+forcing and arbitrary-table candidates, and pass-through composes both into
+the complete output. The mandatory tick body and
 raw SPI1 DAC transaction run from SRAM with no executor on core 1. Wi-Fi uses
 station mode and DHCP by default. Supply `HELIC_WIFI_SSID` and
 `HELIC_WIFI_PASSWORD` in the build environment; no tracked source edit is

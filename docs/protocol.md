@@ -163,7 +163,6 @@ The v3 base registry is:
 | freq | f | rw | master Fourier frequency, Hz |
 | target_coeffs | f×33 | rw | target Fourier coefficients |
 | forcing_coeffs | f×33 | rw | forcing Fourier coefficients |
-| ctrl_reset | I | rw | write non-zero to reset the controller |
 | table | f×4096 | block | staged arbitrary-waveform storage; GetPar is too large |
 | table_len | H | ro | active table length |
 | table_freq | f | rw | free-running table playback frequency, Hz |
@@ -215,7 +214,7 @@ success response before the broker retires the upstream generation. The broker
 then closes every downstream connection, clears stream state and history,
 finalises an active recording as an incomplete MCU-reboot close, and reconnects.
 
-Experiment read-only values, rig parameters and controller parameters follow
+Experiment read-only values, rig parameters and programme parameters follow
 the base registry. For `magnetoelastic`, these include `laser`,
 `laser_frames_received`, `laser_uart_errors`, `laser_parse_errors`,
 `laser_invalid_frames`, `laser_unexpected_values`, `laser_sync_errors`,
@@ -224,8 +223,8 @@ monotonic total since binary-stream synchronisation. The UART, parser,
 invalid-frame, unexpected-value, and synchronisation error counters are totals
 since boot or the last `diag_reset`. `laser_sync_errors` counts UART and
 parser faults while acquiring eight consecutive well-formed distance frames
-after `OUTPUT RS422`. Controller names depend on the compile-time selected
-controller.
+after `OUTPUT RS422`. Control names depend on the compile-time selected
+programme and its parameter group.
 
 Fourier coefficients use `[mean, a_1..a_K, b_1..b_K]`, representing
 `mean + Σ_k a_k cos(kθ) + b_k sin(kθ)`. The default build uses K = 16.

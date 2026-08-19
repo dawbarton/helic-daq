@@ -40,13 +40,6 @@ pub mod command_id {
         pub const SET_PHASE: u16 = 6;
         pub const TRIGGER: u16 = 7;
     }
-
-    pub mod controller {
-        /// Reset is the controller group's first parameter. Controller-specific
-        /// parameters follow it and are translated to zero-based trait ids by
-        /// the programme's core-1 adapter.
-        pub const RESET: u16 = 0;
-    }
 }
 
 /// Address-independent data carried by an [`RtCommand`].
