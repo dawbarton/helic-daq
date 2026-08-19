@@ -37,7 +37,7 @@ per-period processing.
 
 The common real-time loop advances the master phase once per hardware-timed
 sample, evaluates target and forcing, evaluates any arbitrary-waveform table,
-runs the controller, and actuates the selected rig. It intentionally does not
+runs the selected control, and actuates the selected rig. It intentionally does not
 generate DMA-sized blocks: acquisition, feedback and output must complete for
 each individual sample.
 
@@ -51,6 +51,8 @@ At 8 kHz and 150 MHz there are 18,750 cycles per tick. Two 16-harmonic series
 occupy only a small part of that budget, but timing claims must be checked on
 hardware through `loop_time_max`, `overruns` and the experiment's timing pin.
 
-Keep output headroom for the sum of controller, forcing and table
-contributions. `FourierCoeffs::amplitude_bound` bounds an individual series,
-but firmware does not currently impose a combined per-channel clipping policy.
+Keep output headroom for the control's complete output. The standard
+pass-through composition includes target, forcing, and table contributions.
+`FourierCoeffs::amplitude_bound` bounds an individual series. A safety-gated
+rig additionally applies its hard per-actuator clamp after programme output
+composition; an ungated rig deliberately applies the programme output verbatim.

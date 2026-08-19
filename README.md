@@ -9,7 +9,8 @@ Embassy, and succeeds the BeagleBone Black-based
 HELIC-DAQ can run a hardware-timed 1–8 kHz control loop, generate
 phase-coherent Fourier and arbitrary waveforms, expose experiment parameters
 at run time, and stream discovered signals over Ethernet or Wi-Fi. The
-controller, rig and network transport are selected at compile time; the host
+programme, control implementation, rig, and network transport are selected at
+compile time. A selected control may itself expose run-time modes; the host
 interface discovers their parameters and stream sources.
 
 An optional Rust broker can hold the MCU connection for long-running
@@ -56,7 +57,7 @@ repository".
 
 | Directory | Contents |
 |---|---|
-| `helic-core/` | Hardware-independent DSP, controllers and generators; `no_std`, host-tested |
+| `helic-core/` | Hardware-independent DSP, control primitives, and generators; `no_std`, host-tested |
 | `helic-drivers/` | Portable peripheral drivers over `embedded-hal` traits; host-tested |
 | `helic-proto/` | Protocol framing, payloads and stream codec shared with firmware |
 | `helic-broker/` | Loopback-only shared stream broker with optional HDF5 recording |

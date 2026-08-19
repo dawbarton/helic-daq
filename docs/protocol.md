@@ -189,10 +189,11 @@ phase. `diag_reset` clears the `*_max`/`*_min` diagnostics along with
 `records_dropped`, `cmd_backlog_max`, the safety clamp/quiet tick counts, and
 experiment event counters such as the laser error diagnostics; total counters
 such as `ticks` and `laser_frames_received` keep running. `arm`/`safety` act
-only on an experiment whose rig opts into the safety gate (`magnetoelastic`);
-elsewhere `arm` is inert and `safety` reads 0. The output is disarmed after
-every reset and on control-connection loss. A connection closed by the host
-takes effect at once; a host that vanishes silently is detected by unanswered
+only on an experiment whose rig opts into the safety gate (including the
+external magneto-elastic rig); elsewhere `arm` is inert and `safety` reads 0.
+The output is disarmed after every reset and on control-connection loss. A
+connection closed by the host takes effect at once; a host that vanishes
+silently is detected by unanswered
 TCP keep-alive probes, which bounds the loss to about 10 s. Streaming stops at
 the same moment: records are sent only while a control connection is open.
 
@@ -215,7 +216,7 @@ then closes every downstream connection, clears stream state and history,
 finalises an active recording as an incomplete MCU-reboot close, and reconnects.
 
 Experiment read-only values, rig parameters and programme parameters follow
-the base registry. For `magnetoelastic`, these include `laser`,
+the base registry. For `pico2w-rig`, these include `laser`,
 `laser_frames_received`, `laser_uart_errors`, `laser_parse_errors`,
 `laser_invalid_frames`, `laser_unexpected_values`, `laser_sync_errors`,
 `rig_laser_range`, and `rig_out_channel`. `laser_frames_received` is a
@@ -235,16 +236,17 @@ GetSources returns the source table. A source id is its zero-based position
 in this table. The table is assembled as:
 
 1. experiment inputs;
-2. programme signals: controller telemetry, then `target`, `forcing`, and
+2. programme signals: control telemetry, then `target`, `forcing`, and
    `table` in volts, and `phase` in turns for the standard programme;
 3. experiment actuator outputs declared by `Rig::ACTUATORS`, after the safety
    gate; the current production rigs each declare one `out` in volts;
 4. `cmd_epoch`, in counts.
 
 Names are unique ASCII strings of at most 15 bytes; units are at most 7
-bytes. `magnetoelastic` currently begins with `adc0` through `adc7` in volts and
-`laser` in millimetres. Hosts resolve requested source names from this table;
-there are no protocol-wide fixed source ids.
+bytes. The in-tree `pico2w-rig` exposes `laser`, `target`, `forcing`, `table`,
+`phase`, `out`, and `cmd_epoch`, in that order. External rigs assemble their
+own tables. Hosts resolve requested source names from discovery; there are no
+protocol-wide fixed source ids.
 
 `cmd_epoch` starts at zero and advances once for every `RtCommand` that core 1
 applies at a sample boundary. It wraps modulo 2²⁴, so every emitted value is
@@ -328,5 +330,5 @@ at build time. Untracked files are ignored.
   `01 1F 0F 00 10 27 00 00 2A 00 00 00 04 00 00 00 00 00 02 00 03 00 08 0C`.
 - Beacon request: `48 4C 01`.
 - Beacon response for protocol 3, port 2350, MAC `02:48:4c:00:00:01`,
-  experiment `magnetoelastic`, firmware `helic-daq sim`:
-  `48 4C 02 03 2E 09 02 48 4C 00 00 01 6D 61 67 6E 65 74 6F 65 6C 61 73 74 69 63 00 00 68 65 6C 69 63 2D 64 61 71 20 73 69 6D 00 00 00`.
+  experiment `pico2w-rig`, firmware `helic-daq sim`:
+  `48 4C 02 03 2E 09 02 48 4C 00 00 01 70 69 63 6F 32 77 2D 72 69 67 00 00 00 00 00 00 68 65 6C 69 63 2D 64 61 71 20 73 69 6D 00 00 00`.

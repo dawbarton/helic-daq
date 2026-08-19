@@ -78,6 +78,9 @@ pre-step fault path.
 - provides checked live setters, explicit reacquisition, and coherent phase,
   amplitude, increment, state, validity, and saturation views.
 
+The PLL state is not parameterised by harmonic count. Its `update` method
+accepts any non-empty `HarmonicFrame<H>` and demodulates the fundamental.
+
 `LockLost` can be left only by `reset`; replayed enable and `reacquire` do not
 clear it. Frequency gains and stationarity tolerance are supplied in phase
 increment units. A rig parameter group should expose hertz units and convert

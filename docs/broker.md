@@ -94,7 +94,7 @@ Python:
 from helic_daq import Device, StreamReceiver
 
 monitor = Device("127.0.0.1")
-monitor.stream_setup(["adc0", "out"], count=0)
+monitor.stream_setup(["laser", "out"], count=0)
 monitor_rx = StreamReceiver(port=0)
 monitor_rx.prime(monitor.host)
 monitor.stream_start(monitor_rx.port)  # ordinary live monitor
@@ -110,7 +110,7 @@ Julia:
 using HelicDAQ
 
 monitor = Device("127.0.0.1")
-configure_stream!(monitor, [:adc0, :out]; count = 0)
+configure_stream!(monitor, [:laser, :out]; count = 0)
 monitor_rx = StreamReceiver(port = 0)
 prime!(monitor_rx, monitor.host)
 start_stream!(monitor, monitor_rx.port)
@@ -123,7 +123,7 @@ MATLAB:
 
 ```matlab
 monitor = helicdaq.Device("127.0.0.1");
-monitor.configureStream(["adc0", "out"], 'Count', 0);
+monitor.configureStream(["laser", "out"], 'Count', 0);
 monitorRx = helicdaq.StreamReceiver('Port', 0);
 monitorRx.prime(monitor.Host, helicdaq.Protocol.STREAM_PORT);
 monitor.startStream(monitorRx.Port);

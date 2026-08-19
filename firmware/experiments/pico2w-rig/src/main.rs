@@ -77,9 +77,8 @@ static FORCING_COEFFS: ConstStaticCell<DoubleBuffer<FourierCoeffs<{ config::HARM
 static PLATFORM_GROUP: StaticCell<PlatformGroup> = StaticCell::new();
 static GENERATOR_GROUP: StaticCell<GeneratorGroup<{ config::HARMONICS }>> = StaticCell::new();
 static TABLE_GROUP: StaticCell<TableGroup<{ config::TABLE_CAPACITY }>> = StaticCell::new();
-static CONTROLLER_GROUP: StaticCell<
-    ScalarControlGroup<config::ActiveController, { config::HARMONICS }>,
-> = StaticCell::new();
+static CONTROL_GROUP: StaticCell<ScalarControlGroup<config::ActiveControl, { config::HARMONICS }>> =
+    StaticCell::new();
 static RIG_GROUP: StaticCell<RigGroup<PicoDacRig>> = StaticCell::new();
 static TELEMETRY_GROUP: StaticCell<TelemetryGroup> = StaticCell::new();
 static LASER_RX_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
@@ -98,7 +97,7 @@ fn main() -> ! {
     // Commands flow to core 1; non-blocking sample records flow back to core 0.
     let channels = shared_rt::init_channels(TARGET_COEFFS.take(), FORCING_COEFFS.take());
     let (table_staging, active_table) = TABLE.take().split();
-    let controller = config::make_controller();
+    let control = config::make_control();
     let mut store = Store::new(channels.command_tx, &RT_SHARED, config::SAMPLE_RATE);
     store.push(PLATFORM_GROUP.init(PlatformGroup::new(
         &RT_SHARED,
@@ -112,16 +111,13 @@ fn main() -> ! {
         config::SAMPLE_RATE,
     )));
     store.push(TABLE_GROUP.init(TableGroup::new(table_staging, config::SAMPLE_RATE)));
-    store.push(CONTROLLER_GROUP.init(ScalarControlGroup::new(
-        &controller,
-        PicoDacRig::INPUTS.len(),
-    )));
+    store.push(CONTROL_GROUP.init(ScalarControlGroup::new(&control, PicoDacRig::INPUTS.len())));
     store.push(RIG_GROUP.init(RigGroup::<PicoDacRig>::new()));
     store.push(TELEMETRY_GROUP.init(TelemetryGroup::new(telemetry::EXTRA_PARAMS)));
     store.validate(<config::ActiveProgram as Program>::DOMAINS);
     helic_rt::validate_sources::<PicoDacRig, config::ActiveProgram>();
     let program = StandardProgram::new(
-        controller,
+        control,
         channels.target_active,
         channels.forcing_active,
         active_table,

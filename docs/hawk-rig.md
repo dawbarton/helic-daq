@@ -556,7 +556,7 @@ Use the predictable experiment structure:
 - `Cargo.toml`, `build.rs`, `memory.x`, and `README.md`: follow `pico2w-rig`
   with a concise hawk-specific description.
 
-`ActiveController` should initially be `PassThrough`. This exercises the whole
+`ActiveControl` should initially be `PassThrough`. This exercises the whole
 measurement, generator, clamp, and actuator path without introducing an
 untested flight-dynamics controller. Any later controller belongs in
 `helic-core` with a simulated host test.

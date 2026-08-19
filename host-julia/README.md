@@ -24,9 +24,9 @@ open(Device, "192.168.1.235") do device
     coefficients[18] = 1f0  # b₁ in Julia's one-based indexing
     device[:forcing_coeffs] = coefficients
 
-    data = capture(device, [:adc0, :out]; seconds=2)
+    data = capture(device, [:laser, :out]; seconds=2)
     columns = Tables.columntable(data)
-    @show columns.adc0[1:5]
+    @show columns.laser[1:5]
     @show data.dropped data.lost_packets
 end
 ```

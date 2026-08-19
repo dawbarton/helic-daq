@@ -26,8 +26,8 @@ coefficients = zeros(1, 33, "single");
 coefficients(18) = 1; % b1 with one-based indexing
 device.setParameter("forcing_coeffs", coefficients);
 
-data = device.capture(["adc0", "out"], 'Seconds', 2);
-mean(data.adc0)
+data = device.capture(["laser", "out"], 'Seconds', 2);
+mean(data.laser)
 data.Properties.VariableUnits
 data.Properties.UserData
 ```

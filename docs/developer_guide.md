@@ -29,7 +29,7 @@ implementation details:
    adaptation; reusable mechanisms do not live there.
 5. **Host-visible state is discoverable.** Parameter and source names, types,
    sizes and units come from the connected firmware. Adding an experiment,
-   rig parameter or controller signal must not require hard-coded host
+   rig parameter or control signal must not require hard-coded host
    indices or a protocol revision.
 6. **State changes are sample-coherent.** Cross-core commands are copied
    through bounded queues and applied at a tick boundary. Large waveform
@@ -76,7 +76,7 @@ Two Cargo workspaces plus Python, Julia, and MATLAB packages:
 
 | Path | What | Builds for |
 |---|---|---|
-| `helic-core/` | DSP: phase and harmonic bases, generators, filters, PID, controller trait, Fourier estimator, and bounded PLL | host + firmware (`no_std`, no alloc) |
+| `helic-core/` | DSP: phase and harmonic bases, generators, filters, PID, Fourier estimator, and bounded PLL | host + firmware (`no_std`, no alloc) |
 | `helic-rt/` | Portable rig/tick contracts, cross-core types and state, source assembly, and parameter registry | host + firmware (`no_std`, no Embassy) |
 | `helic-drivers/` | AD7609, AD5064, optoNCDT, PWM and SSI logic over `embedded-hal` 1.0 traits | host + firmware |
 | `helic-proto/` | Wire protocol: framing, CRC, stream header, type codes | host + firmware |
@@ -182,7 +182,7 @@ explicit regression-gated stages. It moved the cross-core state and portable
 contracts into `helic-rt`, split firmware support by
 execution domain, replaced the global waveform buffers with owner-checked
 endpoints, composed component-owned parameter groups, and moved the standard
-target/forcing/controller/table graph behind the statically selected
+target/forcing/control/table graph behind the statically selected
 `Program`, and generalised the rig/program boundary to a bounded actuator
 vector. Table and harmonic capacities are experiment-selected const generics,
 the single-consumer RPM estimator lives in the whirl rig package's host-tested
@@ -200,7 +200,7 @@ core 1 (real-time)                       core 0 (everything else)
 │  ≤2 queued commands/tick    │  SPSC    │ laser UART task → atomic      │
 │  selected Program           │          │ status task (1 Hz defmt)      │
 │   target+forcing+table      │          │                               │
-│   controller → rig output   │ records  │ embassy-net + net backend     │
+│   control → rig output      │ records  │ embassy-net + net backend     │
 │  injected RtShared atomics  │─────────►│ heartbeat LED                 │
 └─────────────────────────────┘  SPSC    └───────────────────────────────┘
 ```
@@ -228,7 +228,7 @@ runner with the PWM peripheral's latched wrap flag. Each tick then runs
    series against that phase (all harmonics of both stay locked forever
    through wrapping-multiply phases; see
    [periodic_signal_generator.md](periodic_signal_generator.md)), steps the
-   waveform table, and calls the controller;
+   waveform table, and calls the selected control;
 4. the bounded programme output vector is passed through the safety gate and
    into slice-based rig actuation;
 5. rig inputs, programme signals including coherent master `phase`, applied
@@ -331,7 +331,7 @@ on core 0. The hardware evidence and upstream-report summary are retained in
 ### RT regression checklist
 
 Run this after any change that touches `run_rt_tick`, `run_hot_loop`,
-`BusyEdgeSpinTick`, `analog_spi`, the `Rig` implementation, controllers,
+`BusyEdgeSpinTick`, `analog_spi`, the `Rig` implementation, controls,
 generators, or the record/command queues — and after dependency bumps of
 embassy or heapless. The failure mode being guarded against is quiet: the
 loop keeps producing valid-looking data while stretching or skipping ticks,
@@ -386,7 +386,7 @@ one profile because the control service is single-client and hardware runs must
 remain sequential.
 
 The independent [external-rig fixture](../tests/external-rig/README.md) is the
-repository-boundary acceptance test. It owns a programme, controller, two
+repository-boundary acceptance test. It owns a programme, control, two
 firmware members, a lockfile, verification profiles, and a dependency policy,
 and CI builds and tests it separately from both HELIC-DAQ Cargo workspaces. The
 two members cover opposite halves of the platform on purpose: `fw-fixture-rig`
@@ -570,7 +570,7 @@ and staging; `ParamStore` alone maps a discovered global index to a group-local
 identifier and constructs the corresponding core-1 address. A write is
 accepted into its shadow only after queueing succeeds, and a rejected buffered
 write receives its linear token back. The standard composition has platform,
-generator, table, controller, rig, and experiment-telemetry groups.
+generator, table, control, rig, and experiment-telemetry groups.
 
 At start-up, `ParamStore::validate()` rejects duplicate names, definitions that
 cannot fit discovery, malformed blob bounds, duplicate or unclaimed programme
@@ -594,7 +594,7 @@ closest. An experiment crate has a deliberately predictable anatomy:
    `net-wiznet-w5500`, `net-wiznet-w6100` or `net-cyw43`.
 2. In `board.rs`, assign pins and construct unassembled peripheral parts only.
    Its short file should be sufficient to audit every pin and core owner.
-3. In `config.rs`, set `EXPERIMENT`, `SAMPLE_RATE`, `NET_CONFIG`, controller
+3. In `config.rs`, set `EXPERIMENT`, `SAMPLE_RATE`, `NET_CONFIG`, control
    alias/factory, `HARMONICS`, `TABLE_CAPACITY`, and rig-specific constants.
    Both capacities are const generics, so each rig pays only for its selected
    coefficient and table banks. Harmonic count must not exceed the reviewed
@@ -622,7 +622,7 @@ closest. An experiment crate has a deliberately predictable anatomy:
    `firmware/rt`, and universal core-0 services in `firmware/support`. Put
    optional hardware services in a focused crate under `firmware/integrations`.
 
-The statically selected programme owns controller telemetry and appends it
+The statically selected programme owns control telemetry and appends it
 after rig inputs, followed by `target`, `forcing`, `table`, and coherent master
 `phase`; the common loop then appends every `Rig::ACTUATORS` entry and
 `cmd_epoch`. No experiment assigns those indices. Streamed actuator values are
@@ -895,8 +895,8 @@ impl<const H: usize> StandardControl<H> for MyController {
 Then point the rig's `src/config.rs` at it:
 
 ```rust
-pub type ActiveController = MyController;
-pub fn make_controller() -> ActiveController { ... }
+pub type ActiveControl = MyControl;
+pub fn make_control() -> ActiveControl { ... }
 ```
 
 Register `ScalarControlGroup<C, H>` when every parameter is `f32` and has only
@@ -920,21 +920,21 @@ reset-on-arm, telemetry ordering, and frequency-override timing.
 
 At 8 kHz / 150 MHz there are 18,750 cycles per tick; the fixed costs (SPI
 read ~12 µs, DAC write ~2 µs, two 16-harmonic series ~2k cycles) leave
-roughly half the period for the controller. Check `loop_time_max` and
+roughly half the period for the selected control. Check `loop_time_max` and
 `overruns` after changes; the GP14 pin shows the same thing on a scope.
 Avoid `f64` in the tick path (the M33 FPU is single-precision; doubles are
 software-emulated).
 
 For the worst-case 8 kHz rig, the design estimate is roughly 30 µs of the
 125 µs period. Treat that as an argument, not a measurement. After any RT-path
-change, clear/reboot the device, exercise the intended controller and table
+change, clear/reboot the device, exercise the intended control and table
 mode, then record:
 
 ```sh
 helic-daq get loop_time_last loop_time_max overruns tick_timeouts records_dropped
 helic-daq sources
 helic-daq capture \
-  --sources adc0,adc1,adc2,adc3,adc4,adc5,adc6,adc7,laser,target,forcing,table,phase,out,cmd_epoch \
+  --sources laser,target,forcing,table,phase,out,cmd_epoch \
   --seconds 30
 helic-daq --host 192.168.1.238 capture \
   --sources pitch,yaw,rev_period,rpm,rev_pulse,rpm_valid,target,forcing,table,phase,out,cmd_epoch \
@@ -965,7 +965,7 @@ experiment merely to make it look used.
 
 Experiment inputs are declared by `Rig::INPUTS`; write their values in the
 same order from `Rig::measure`. `Program::signal` declares programme-owned
-signals, and `write_signals` fills them; `StandardProgram` prepends controller
+signals, and `write_signals` fills them; `StandardProgram` prepends control
 telemetry, then `target`, `forcing`, `table`, and master `phase`. The common
 loop appends applied actuator values in `Rig::ACTUATORS` order and the wrapping
 `cmd_epoch`, so neither rigs nor programmes manage global numeric slots.

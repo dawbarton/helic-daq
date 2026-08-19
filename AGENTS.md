@@ -180,7 +180,9 @@ experiment in which it was first needed:
   tracker, not a commanded-oscillator tracker. Preserve its explicit
   `Fixed`/`Acquiring`/`Locked`/latched-`LockLost` state machine: acquisition
   never faults or removes its own excitation, only post-lock loss faults, and
-  the commanded increment remains bounded by host-set limits.
+  the commanded increment remains bounded by host-set limits. `Pll` itself is
+  not const-generic; its `update<const H>` accepts the programme's non-empty
+  harmonic frame and uses its fundamental.
 - Network transport is selected per experiment behind `embassy_net::Stack`.
   The W5500 is the full-rate path; CYW43439 Wi-Fi is station-mode and should
   use decimation for heavier streams. Pico 2W credentials come only from the
@@ -221,6 +223,9 @@ experiment in which it was first needed:
   owner-checked token. Do not widen copied command payloads or introduce a raw
   mutable cross-core buffer. Activation occurs at a sample boundary; rejected
   commands return their token and leave the active bank unchanged.
+  `ValueBuffer`, `ActiveValues`, `ValueStaging`, and `MAX_FORCE_VALUES` are the
+  intentional public route for such wide vectors, not unused compatibility
+  aliases: retain them until that reviewed extension boundary is replaced.
 
 ## Safety rails and regression helpers
 

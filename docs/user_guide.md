@@ -22,21 +22,21 @@ sources by name from whatever firmware it connects to.
   with hardware-timed conversion starts.
 - In `pico2w-rig`, updates an AD5064 output at a hardware-timed **8 kHz** while
   Wi-Fi control, streaming and optional laser logging run on the other core.
-- Runs a **real-time control loop** every sample: measurements → controller →
-  actuation where output hardware is fitted. The default builds select
-  open-loop pass-through; a PID controller is provided and others can be
-  added in firmware. A rig without output hardware retains these calculations
-  and has no actuation.
+- Runs a **real-time control loop** every sample: measurements → control →
+  actuation where output hardware is fitted. The in-tree build selects
+  open-loop pass-through; external rigs may expose run-time open-loop, PID,
+  and PLL modes through their selected control implementation. A rig without
+  output hardware retains these calculations and has no actuation.
 - Generates a **periodic reference/forcing signal** as a Fourier series
   (16 harmonics by default) with µHz-resolution frequency control and
   glitch-free, phase-continuous updates, so the reference can be changed while
   the experiment runs.
 - Lets a host computer **change parameters on the fly** (frequency, Fourier
-  coefficients, controller gains) over the network, safely: updates take
+  coefficients, control gains) over the network, safely: updates take
   effect atomically at a sample boundary.
 - **Streams discovered live data** to the host over UDP, with optional
   decimation and finite captures. Available sources depend on the experiment
-  and controller and carry names and units.
+  and control implementation and carry names and units.
 
 ## Putting the firmware on the device
 
@@ -117,7 +117,7 @@ helic-daq --host 192.168.1.235 status
 
 To use a different address, edit `NET_CONFIG` in the selected experiment's
 `config.rs` and reflash. Select `NetConfig::Dhcp` to request an address from
-the network instead. The sample rate, laser measuring range and controller
+the network instead. The sample rate, laser measuring range and control
 are selected there too. Discovery uses local UDP broadcasts; on Wi-Fi, disable
 access-point client isolation if `find` sees nothing but direct connections
 still work.
@@ -156,8 +156,8 @@ To exercise the host tools without hardware, start the protocol-v3 simulator
 in one terminal and connect to it from another:
 
 ```sh
-python3 -m helic_daq.sim
-helic-daq --host 127.0.0.1 capture --sources adc0,out --samples 1000
+uv run -m helic_daq.sim
+uv run helic-daq --host 127.0.0.1 capture --sources laser,out --samples 1000
 ```
 
 The simulator exposes the same discoverable parameter/source tables, supports
@@ -245,8 +245,8 @@ helic-daq set ctrl_kp 0.8            # PID gain (when the PID build is flashed)
 helic-daq diag-reset                 # clear timing and event diagnostics
 helic-daq reboot                     # safely reboot the MCU
 helic-daq sources
-helic-daq capture --sources adc0,out --seconds 2 -o capture.npz
-helic-daq capture --sources adc0,target,out --seconds 1 --plot
+helic-daq capture --sources laser,out --seconds 2 -o capture.npz
+helic-daq capture --sources laser,target,out --seconds 1 --plot
 helic-daq upload wave.npy --duration 2.0
 helic-daq stop                       # zero the forcing and target
 ```
@@ -269,8 +269,8 @@ coeffs[17] = 1.0                      # b_1
 dev.par.forcing_coeffs = coeffs
 
 # Capture 2 s of data as numpy arrays:
-data = dev.capture(["adc0", "out"], seconds=2.0)
-print(data["adc0"].mean(), data["dropped"])
+data = dev.capture(["laser", "out"], seconds=2.0)
+print(data["laser"].mean(), data["dropped"])
 ```
 
 Julia:
@@ -286,9 +286,9 @@ open(Device, "192.168.1.235") do dev
     coeffs[18] = 1f0                    # b₁ with one-based indexing
     dev[:forcing_coeffs] = coeffs
 
-    data = capture(dev, [:adc0, :out]; seconds=2)
+    data = capture(dev, [:laser, :out]; seconds=2)
     columns = Tables.columntable(data)
-    @show columns.adc0[1:5] data.dropped data.lost_packets
+    @show columns.laser[1:5] data.dropped data.lost_packets
 end
 ```
 
@@ -307,8 +307,8 @@ coefficients = zeros(1, 33, "single");
 coefficients(18) = 1;                  % b1 with one-based indexing
 device.setParameter("forcing_coeffs", coefficients);
 
-data = device.capture(["adc0", "out"], 'Seconds', 2);
-mean(data.adc0)
+data = device.capture(["laser", "out"], 'Seconds', 2);
+mean(data.laser)
 data.Properties.UserData
 ```
 
@@ -412,11 +412,11 @@ free-running mode for a table slower than the master.
 
 The uploaded table is staged in chunks and switched atomically at a sample
 boundary. Its contribution is available as the discovered `table` stream
-source and is added to controller output plus Fourier forcing.
+source and is incorporated according to the selected control implementation.
 
-The `target_coeffs` series is the reference the controller tracks; the
-`forcing_coeffs` series is added directly to the output. With the default
-pass-through controller the output is simply `target + forcing`.
+The `target_coeffs` series is the control reference. With the default
+pass-through control, the output is `target + forcing + table`; another
+control may use those candidates differently.
 
 ## Signal connections
 
@@ -428,7 +428,7 @@ pass-through controller the output is simply `target + forcing`.
 
 Output-channel polarity must match your analogue board's output stages, and is
 declared by the rig rather than by the platform: check the rig's own
-`DAC_POLARITY` against the board in front of you. The controller writes to
+`DAC_POLARITY` against the board in front of you. The selected control writes to
 output channel 0 by default. The laser sensor must be preconfigured (via
 Micro-Epsilon's tool) only if its baud rate has changed from the factory
 921.6 kBaud. The firmware configures its measuring rate, disables output
@@ -444,7 +444,8 @@ the magneto-elastic rig's defaults:
 | Setting | Constant | Default |
 |---|---|---|
 | Sample rate | `SAMPLE_RATE` | 8 kHz |
-| Programme | `ActiveProgram` + `make_program()` | standard pass-through control |
+| Programme | `ActiveProgram` | `StandardProgram` |
+| Control | `ActiveControl` + `make_control()` | pass-through |
 | Fourier harmonics | `HARMONICS` | 16 |
 | Waveform-table capacity | `TABLE_CAPACITY` | 4096 samples |
 | Output channel | `OUTPUT_CHANNEL` | 0 |
