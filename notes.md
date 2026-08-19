@@ -1202,3 +1202,38 @@ apply. Verified both ways against this repository's own rigs, and unit tested.
 The regression keeps its part as the backstop that catches a rig whose gate
 was somehow bypassed, and its `control link lost` message now names blocking
 RTT as the first suspect, since that message misdirected me for most of a day.
+
+## 2026-08-19T12:24+00:00 Platform 0.3 release clean-up is software-gated
+
+The pre-release cruft audit removed the superseded `PeriodicGenerator` and
+`GenSample`, the duplicate `clamp_channel_command`, unused
+`HarmonicGenerator` accessors, unused direct firmware dependencies, and the
+tracked `host-python/build` package copy. `Pll` is now non-generic because it
+stores no harmonic-sized state; `update<const H>` accepts the programme's
+non-empty harmonic frame. `FourierEstimator`, `SosFilter`, `BiquadCoeffs`,
+`PidController`, and `PhaseAccumulator` remain.
+
+`ValueBuffer`, `ActiveValues`, `ValueStaging`, and `MAX_FORCE_VALUES` also
+remain deliberately. The most recent buffer/command notes distinguish the
+removed inline `Payload::Values` command from the owner-checked double-buffer
+route for a future wide force vector. The generic mechanism is already used
+for coefficient and table publication, its value specialisation has
+activation and cross-type token tests, and the reviewed 132-value bound is
+part of the external-programme contract. Deleting these names would remove the
+bounded route that justified deleting the copied command, not merely clear
+dead implementation.
+
+Passed on this checkout: root formatting, all-feature clippy, and tests;
+firmware dependency gates, release clippy/build, build-helper tests, and the
+Pico 2W SRAM layout gate; external-rig formatting, release clippy/build, host
+programme tests, dependency gate, and both SRAM layout profiles; 80 Python
+tests plus the external-rig Python test; and all Julia package tests. The
+MATLAB suite was not run because `matlab` is not installed in this environment.
+No firmware was flashed, so this establishes no electrical, RF, throughput,
+phase-accuracy, or real-time timing evidence.
+
+The source and crate versions are prepared as 0.3.0, while the latest
+published tag remains v0.2.5. No tag or remote release was created. The
+magneto-elastic rig must retain its documented sibling patch until v0.3.0 is
+published, then move its crate pins, CI gate version, and host-tool install
+reference together and remove the patch.
