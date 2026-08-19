@@ -1237,3 +1237,24 @@ published tag remains v0.2.5. No tag or remote release was created. The
 magneto-elastic rig must retain its documented sibling patch until v0.3.0 is
 published, then move its crate pins, CI gate version, and host-tool install
 reference together and remove the patch.
+
+## 2026-08-19T13:16+00:00 Host APIs are aligned for the breaking release
+
+- The Python and Julia host packages move to 0.2.0. Python now uses descriptive
+  parameter and stream methods (`get_parameter`, `set_parameter`,
+  `configure_stream`, and the corresponding family), and Julia exports only
+  the common high-level operations. Generic Julia types and lower-level
+  operations remain available under `HelicDAQ.`. MATLAB already had the target
+  namespace and camel-case names, so its API is unchanged.
+- Compatibility aliases are deliberately absent. The migration is recorded in
+  `docs/host_api_migration.md`, including the old-to-new Python mapping and the
+  exact Julia export boundary. Python's `__version__` now comes from installed
+  package metadata rather than a second hard-coded value.
+- Passed after the change: 84 Python tests and the full Julia suite. MATLAB was
+  checked statically against the cross-language mapping but not executed,
+  because MATLAB is unavailable in this environment.
+- The magneto-elastic rig has no Python calls requiring migration. The CBC
+  rig's commissioning script does, but its platform submodule remains pinned
+  to the old API. Change that script in the same commit that advances its
+  submodule after v0.3.0 is published; changing it before the pin would break
+  the currently reproducible checkout.

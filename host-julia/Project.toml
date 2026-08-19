@@ -1,7 +1,7 @@
 name = "HelicDAQ"
 uuid = "6b88281e-bae6-4915-a49f-494816281d59"
 authors = ["HELIC-DAQ contributors"]
-version = "0.1.0"
+version = "0.2.0"
 
 [deps]
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"

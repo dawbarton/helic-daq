@@ -105,6 +105,24 @@ when it runs on core 0 and every production rig uses it; non-universal services
 belong in a separate integration crate. `helic-deps-check` enforces
 the critical crate boundaries in CI.
 
+## Host API conventions
+
+Keep conceptual operation names aligned across Python, Julia, and MATLAB,
+while retaining each language's conventions. The canonical families are
+`parameter`, `get parameter(s)`, `set parameter`, `configure/start/stop stream`,
+`receive`, and `capture`; Python uses snake case, Julia uses compact established
+names and `!` for mutation, and MATLAB uses camel case. The user guide contains
+the exact mapping.
+
+Do not promote generic implementation types merely to save one qualification.
+Python's top level is limited to `Device`, `DeviceError`, `StreamReceiver`, and
+`find_devices`, and examples use `import helic_daq as hdaq`. Julia exports the
+common high-level operations, but callers qualify types, errors, protocol
+details, status, reboot, and receiver primitives with `HelicDAQ.`. MATLAB types
+remain under the `helicdaq` package namespace. When adding a host operation,
+update all applicable clients and their mapping together; document any
+intentional language-specific omission.
+
 ## Host broker architecture
 
 The optional broker is entirely host-side and does not alter firmware timing,

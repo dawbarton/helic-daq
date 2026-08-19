@@ -28,7 +28,7 @@ class TestPublicSurface(unittest.TestCase):
         self.assertIs(hdaq.protocol, protocol)
 
     def test_version_comes_from_package_metadata(self):
-        self.assertEqual(hdaq.__version__, "0.1.3")
+        self.assertEqual(hdaq.__version__, "0.2.0")
 
 
 class TestCliValueParsing(unittest.TestCase):

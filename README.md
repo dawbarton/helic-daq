@@ -26,6 +26,8 @@ record segmented HDF5 files without changing the firmware.
 - [Wire protocol](docs/protocol.md): authoritative protocol v3 specification.
 - [Shared broker](docs/broker.md): multi-client stream semantics, optional
   recording, host APIs, and recovery behaviour.
+- [Host API migration](docs/host_api_migration.md): breaking Python and Julia
+  naming and export changes for the 0.2 host packages.
 - [Periodic signal generator](docs/periodic_signal_generator.md): numerical
   design and error bounds.
 - [Hardware status](notes.md): verified paths, outstanding checks and bring-up

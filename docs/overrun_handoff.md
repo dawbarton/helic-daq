@@ -260,15 +260,15 @@ Run a normal host status check:
 
 ```sh
 PYTHONPATH=host-python uv run --with numpy --env-file /dev/null python - <<'PY'
-from helic_daq import Device
-with Device("192.168.1.235") as dev:
-    print(dev.get("firmware"))
+import helic_daq as hdaq
+with hdaq.Device("192.168.1.235") as dev:
+    print(dev.get_parameter("firmware"))
     print(dev.status())
     counters = (
         "ticks", "loop_time_last", "loop_time_max", "clock_jitter",
         "overruns", "tick_timeouts", "records_dropped",
     )
-    print(dict(zip(counters, dev.get(*counters))))
+    print(dict(zip(counters, dev.get_parameters(counters))))
 PY
 ```
 

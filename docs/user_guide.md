@@ -205,9 +205,9 @@ a continuous stream, another Python client can retrieve the preceding second
 without interrupting it:
 
 ```python
-from helic_daq import Device
+import helic_daq as hdaq
 
-snapshot = Device("127.0.0.1")
+snapshot = hdaq.Device("127.0.0.1")
 print(snapshot.broker_info())
 data = snapshot.capture_recent(seconds=1.0, port=0)
 # This connection remains attached and quiet; the global stream keeps running.
@@ -232,6 +232,34 @@ quietness-change methods are also available for clients that keep their own
 
 ## Using it
 
+The three host modules use the same operation names, adjusted for each
+language's conventions. Python examples import the package as `hdaq`; Julia
+exports only the common high-level functions, while types and lower-level
+operations remain under `HelicDAQ`. MATLAB already uses the `helicdaq`
+namespace.
+
+| Operation | Python | Julia | MATLAB |
+|---|---|---|---|
+| Connect | `hdaq.Device` | `HelicDAQ.Device` | `helicdaq.Device` |
+| Discover devices | `hdaq.find_devices` | `find_devices` | `helicdaq.findDevices` |
+| Parameter definition | `dev.parameter` | `HelicDAQ.parameter` | `dev.parameter` |
+| Read one | `dev.get_parameter` | `getparam` | `dev.getParameter` |
+| Read several | `dev.get_parameters` | `getparams` | `dev.getParameters` |
+| Write | `dev.set_parameter` | `setparam!` | `dev.setParameter` |
+| Configure stream | `dev.configure_stream` | `configure_stream!` | `dev.configureStream` |
+| Start stream | `dev.start_stream` | `start_stream!` | `dev.startStream` |
+| Stop stream | `dev.stop_stream` | `stop_stream!` | `dev.stopStream` |
+| Receive packet | `receiver.receive` | `HelicDAQ.receive` | `receiver.receive` |
+| Finite capture | `dev.capture` | `capture` | `dev.capture` |
+
+In Python, `Device`, `DeviceError`, `StreamReceiver`, and `find_devices` are
+the deliberately small top-level API. The protocol module remains available
+as `hdaq.protocol`; parameter and source definition types live in
+`helic_daq.device`. In Julia, qualify types, errors, `Protocol`, `status`,
+`reboot!`, and receiver primitives with `HelicDAQ.`. This avoids generic names
+such as `Device`, `Parameter`, and `Source` entering a Julia session merely
+through `using HelicDAQ`.
+
 Command line (`--host <ip>` or `export HELIC_DAQ_HOST=<ip>` if not the
 default):
 
@@ -254,9 +282,9 @@ helic-daq stop                       # zero the forcing and target
 Python:
 
 ```python
-from helic_daq import Device
+import helic_daq as hdaq
 
-dev = Device("192.168.1.235")
+dev = hdaq.Device("192.168.1.235")
 print(dev.status())
 print([p.name for p in dev.params])   # discovered parameter registry
 
@@ -276,10 +304,12 @@ print(data["laser"].mean(), data["dropped"])
 Julia:
 
 ```julia
-using HelicDAQ, Tables
+import HelicDAQ
+using HelicDAQ: capture
+using Tables
 
-open(Device, "192.168.1.235") do dev
-    @show status(dev)
+open(HelicDAQ.Device, "192.168.1.235") do dev
+    @show HelicDAQ.status(dev)
     dev[:freq] = 10f0
 
     coeffs = zeros(Float32, 33)
@@ -292,9 +322,9 @@ open(Device, "192.168.1.235") do dev
 end
 ```
 
-`Capture` implements Tables.jl with `index` followed by the requested sources.
-The cumulative device-side drop count and UDP packet loss remain metadata on
-the capture rather than being repeated in each row.
+`HelicDAQ.Capture` implements Tables.jl with `index` followed by the requested
+sources. The cumulative device-side drop count and UDP packet loss remain
+metadata on the capture rather than being repeated in each row.
 
 MATLAB:
 
@@ -326,7 +356,7 @@ dev.reboot()
 ```
 
 ```julia
-reboot!(dev)
+HelicDAQ.reboot!(dev)
 ```
 
 ```matlab
@@ -519,12 +549,14 @@ the gate.
 Arm from the same Python session that performs the experiment:
 
 ```python
-with Device("192.168.1.235") as dev:
-    dev.set("arm", 1)
+import helic_daq as hdaq
+
+with hdaq.Device("192.168.1.235") as dev:
+    dev.set_parameter("arm", 1)
     # Configure and run the experiment while this connection remains open.
 ```
 
-**If `capture` times out with no data** while `status`/`get`/`set` work, check
+**If `capture` times out with no data** while control requests work, check
 whether a host firewall is blocking inbound UDP on the stream port. The host
 libraries send a small UDP primer from the receive socket before starting the
 stream, which lets ordinary stateful firewalls classify stream packets as

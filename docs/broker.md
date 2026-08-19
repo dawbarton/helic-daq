@@ -91,15 +91,15 @@ is connected directly to firmware.
 Python:
 
 ```python
-from helic_daq import Device, StreamReceiver
+import helic_daq as hdaq
 
-monitor = Device("127.0.0.1")
-monitor.stream_setup(["laser", "out"], count=0)
-monitor_rx = StreamReceiver(port=0)
+monitor = hdaq.Device("127.0.0.1")
+monitor.configure_stream(["laser", "out"], count=0)
+monitor_rx = hdaq.StreamReceiver(port=0)
 monitor_rx.prime(monitor.host)
-monitor.stream_start(monitor_rx.port)  # ordinary live monitor
+monitor.start_stream(monitor_rx.port)  # ordinary live monitor
 
-snapshot = Device("127.0.0.1")
+snapshot = hdaq.Device("127.0.0.1")
 data = snapshot.capture_recent(seconds=1.0, port=0)
 # snapshot remains attached and quiet
 ```
@@ -107,15 +107,16 @@ data = snapshot.capture_recent(seconds=1.0, port=0)
 Julia:
 
 ```julia
-using HelicDAQ
+import HelicDAQ
+using HelicDAQ: capture_recent, configure_stream!, start_stream!
 
-monitor = Device("127.0.0.1")
+monitor = HelicDAQ.Device("127.0.0.1")
 configure_stream!(monitor, [:laser, :out]; count = 0)
-monitor_rx = StreamReceiver(port = 0)
-prime!(monitor_rx, monitor.host)
+monitor_rx = HelicDAQ.StreamReceiver(port = 0)
+HelicDAQ.prime!(monitor_rx, monitor.host)
 start_stream!(monitor, monitor_rx.port)
 
-snapshot = Device("127.0.0.1")
+snapshot = HelicDAQ.Device("127.0.0.1")
 data = capture_recent(snapshot; seconds = 1, port = 0)
 ```
 
