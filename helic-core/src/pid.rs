@@ -58,6 +58,8 @@ impl Pid {
     }
 
     /// Reset integrator and derivative history (e.g. when enabling control).
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn reset(&mut self) {
         self.integral = 0.0;
         self.prev_error = 0.0;

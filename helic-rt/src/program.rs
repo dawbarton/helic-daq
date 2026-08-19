@@ -268,6 +268,7 @@ mod tests {
     #[derive(Default)]
     struct TestController {
         observed: f32,
+        next_increment: Option<u32>,
     }
 
     impl StandardControl<TEST_HARMONICS> for TestController {
@@ -281,7 +282,13 @@ mod tests {
             self.observed = inputs.measured[0];
             ControlStep {
                 output: inputs.reference + inputs.forcing + inputs.table,
-                next_increment: None,
+                next_increment: self.next_increment,
+            }
+        }
+
+        fn apply(&mut self, id: u16, payload: Payload) {
+            if let (0, Payload::U32(value)) = (id, payload) {
+                self.next_increment = (value != 0).then_some(value);
             }
         }
 
@@ -405,5 +412,35 @@ mod tests {
                 "phase={phase:#x}, error={error}"
             );
         }
+    }
+
+    #[test]
+    fn returned_increment_first_affects_the_following_tick_and_none_restores_nominal() {
+        let (mut program, ..) = program();
+        program.apply(
+            DOMAIN_GENERATOR,
+            command_id::generator::SET_INCREMENT,
+            Payload::U32(1 << 29),
+        );
+        program.apply(DOMAIN_CONTROLLER, 0, Payload::U32(1 << 30));
+        let lut = SinLut::new();
+        let ctx = StepCtx {
+            lut: &lut,
+            sample_rate: SampleRate::Hz8000,
+        };
+        let mut output = [0.0];
+        let mut signals = [0.0; 5];
+        program.step(&[0.0], true, &ctx, &mut output);
+        program.write_signals(&mut signals);
+        assert_eq!(signals[4], 0.125);
+        program.step(&[0.0], true, &ctx, &mut output);
+        program.write_signals(&mut signals);
+        assert_eq!(signals[4], 0.375);
+
+        program.apply(DOMAIN_CONTROLLER, 0, Payload::U32(0));
+        program.step(&[0.0], true, &ctx, &mut output);
+        program.step(&[0.0], true, &ctx, &mut output);
+        program.write_signals(&mut signals);
+        assert_eq!(signals[4], 0.75);
     }
 }

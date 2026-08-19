@@ -64,10 +64,14 @@ impl<const H: usize> HarmonicGenerator<H> {
         }
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_increment(&mut self, increment: u32) {
         self.phase.set_increment(increment);
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn increment(&self) -> u32 {
         self.phase.increment()
     }

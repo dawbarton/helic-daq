@@ -244,6 +244,7 @@ pub struct GeneratorGroup<const H: usize = DEFAULT_HARMONICS> {
     frequency: f32,
     target: FourierCoeffs<H>,
     forcing: FourierCoeffs<H>,
+    forcing_amplitude_limit: f32,
     pending: GeneratorPending<H>,
 }
 
@@ -262,8 +263,16 @@ impl<const H: usize> GeneratorGroup<H> {
             frequency: 0.0,
             target: FourierCoeffs::zero(),
             forcing: FourierCoeffs::zero(),
+            forcing_amplitude_limit: f32::MAX,
             pending: GeneratorPending::None,
         }
+    }
+
+    /// Reject forcing coefficients whose conservative absolute bound exceeds
+    /// the rig's independently established output window.
+    pub fn set_forcing_amplitude_limit(&mut self, limit: f32) {
+        assert!(limit.is_finite() && limit >= 0.0);
+        self.forcing_amplitude_limit = limit;
     }
 }
 
@@ -303,6 +312,9 @@ impl<const H: usize> ParamGroup for GeneratorGroup<H> {
             }
             1 | 2 => {
                 let coefficients = deserialize_coeffs(data)?;
+                if id == 2 && coefficients.amplitude_bound() > self.forcing_amplitude_limit {
+                    return Err(ErrorCode::BadValue);
+                }
                 let buffer = if id == 1 {
                     &mut self.target_buffer
                 } else {

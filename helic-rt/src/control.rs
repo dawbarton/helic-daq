@@ -174,3 +174,70 @@ impl<const H: usize, const FEEDBACK: usize> StandardControl<H> for PidController
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use helic_core::{HarmonicFrame, PidConfig, SinLut};
+
+    use super::*;
+    use crate::SampleRate;
+
+    const H: usize = 2;
+
+    fn inputs<'a>(
+        measured: &'a [f32],
+        frame: &'a HarmonicFrame<H>,
+    ) -> StandardControlInputs<'a, H> {
+        StandardControlInputs {
+            measured,
+            reference: 1.0,
+            reference_mean: 0.0,
+            forcing: 0.25,
+            table: 0.5,
+            frame,
+            current_increment: 123,
+        }
+    }
+
+    fn ctx(lut: &SinLut) -> StepCtx<'_> {
+        StepCtx {
+            lut,
+            sample_rate: SampleRate::Hz8000,
+        }
+    }
+
+    #[test]
+    fn pass_through_composes_reference_forcing_and_table() {
+        let mut control = PassThrough;
+        let frame = HarmonicFrame::zero();
+        let lut = SinLut::new();
+        let result = <PassThrough as StandardControl<H>>::step(
+            &mut control,
+            inputs(&[], &frame),
+            &ctx(&lut),
+        );
+        assert_eq!(result.output, 1.75);
+        assert_eq!(result.next_increment, None);
+        assert!(<PassThrough as StandardControl<H>>::scalar_param_names().is_empty());
+    }
+
+    #[test]
+    fn fixed_input_pid_uses_raw_parameter_ids_and_complete_composition() {
+        let mut control = PidController::<1>::new(Pid::new(PidConfig::default()));
+        <PidController<1> as StandardControl<H>>::apply(&mut control, 0, Payload::F32(2.0));
+        <PidController<1> as StandardControl<H>>::set_output_enabled(&mut control, true);
+        let frame = HarmonicFrame::zero();
+        let lut = SinLut::new();
+        let result = <PidController<1> as StandardControl<H>>::step(
+            &mut control,
+            inputs(&[99.0, 0.5], &frame),
+            &ctx(&lut),
+        );
+        assert_eq!(result.output, 1.75);
+        assert_eq!(<PidController<1> as StandardControl<H>>::INPUTS_REQUIRED, 2);
+        assert_eq!(
+            <PidController<1> as StandardControl<H>>::scalar_param_names(),
+            &["ctrl_kp", "ctrl_ki", "ctrl_kd", "ctrl_tau_d"]
+        );
+    }
+}

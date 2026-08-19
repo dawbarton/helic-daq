@@ -329,8 +329,8 @@ impl<const H: usize> Pll<H> {
             self.measured_phase_deg =
                 wrap_degrees_full(value.phase_deg + 360.0 * frequency_hz * self.delay_s);
             self.phase_error_deg = wrap_degrees(self.measured_phase_deg - self.target_phase_deg);
-            self.excitation_amplitude = libm::sqrtf(value.excitation_amplitude_sq);
-            self.response_amplitude = libm::sqrtf(value.response_amplitude_sq);
+            self.excitation_amplitude = sqrtf_rt(value.excitation_amplitude_sq);
+            self.response_amplitude = sqrtf_rt(value.response_amplitude_sq);
             self.observation_valid = true;
             self.saturated = self.apply_correction(dt_s);
         } else {
@@ -455,7 +455,7 @@ impl<const H: usize> Pll<H> {
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_enabled(&mut self, enabled: bool) {
-        if !enabled {
+        if !enabled && self.state != PllState::LockLost {
             self.reset();
         } else if self.state == PllState::Fixed {
             self.reset_loop(true);
@@ -540,6 +540,8 @@ impl<const H: usize> Pll<H> {
         self.lock_correction_max = self.unquantised_correction;
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_centre_increment(&mut self, increment: u32) -> bool {
         if !(self.min_increment..=self.max_increment).contains(&increment) {
             return false;
@@ -553,6 +555,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_min_increment(&mut self, increment: u32) -> bool {
         if increment > self.centre_increment {
             return false;
@@ -562,6 +566,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_max_increment(&mut self, increment: u32) -> bool {
         if increment < self.centre_increment {
             return false;
@@ -571,6 +577,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_proportional_gain(&mut self, gain: f32) -> bool {
         if !gain.is_finite() {
             return false;
@@ -579,6 +587,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_integral_gain(&mut self, gain: f32) -> bool {
         if !gain.is_finite() {
             return false;
@@ -587,6 +597,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_target_phase(&mut self, degrees: f32) -> bool {
         if !valid_phase_degrees(degrees) {
             return false;
@@ -599,6 +611,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_delay(&mut self, seconds: f32) -> bool {
         if !seconds.is_finite() {
             return false;
@@ -607,6 +621,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_dc_time_constant(&mut self, seconds: f32) -> bool {
         if !positive_finite(seconds) {
             return false;
@@ -615,6 +631,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_demod_time_constant(&mut self, seconds: f32) -> bool {
         if !non_negative_finite(seconds) {
             return false;
@@ -623,6 +641,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_min_excitation_amplitude(&mut self, amplitude: f32) -> bool {
         if !non_negative_finite(amplitude) {
             return false;
@@ -631,6 +651,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_min_response_amplitude(&mut self, amplitude: f32) -> bool {
         if !non_negative_finite(amplitude) {
             return false;
@@ -639,6 +661,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_lock_phase_tolerance(&mut self, degrees: f32) -> bool {
         if !non_negative_finite(degrees) || degrees > self.unlock_phase_tolerance_deg {
             return false;
@@ -647,6 +671,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_unlock_phase_tolerance(&mut self, degrees: f32) -> bool {
         if !non_negative_finite(degrees) || degrees < self.lock_phase_tolerance_deg {
             return false;
@@ -655,6 +681,8 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_lock_frequency_tolerance(&mut self, tolerance: f32) -> bool {
         if !non_negative_finite(tolerance) {
             return false;
@@ -663,20 +691,30 @@ impl<const H: usize> Pll<H> {
         true
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_lock_dwell(&mut self, seconds: f32) -> bool {
         set_non_negative(&mut self.lock_dwell_s, seconds)
     }
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_unlock_dwell(&mut self, seconds: f32) -> bool {
         set_non_negative(&mut self.unlock_dwell_s, seconds)
     }
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_acquire_timeout(&mut self, seconds: f32) -> bool {
         set_non_negative(&mut self.acquire_timeout_s, seconds)
     }
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_saturation_dwell(&mut self, seconds: f32) -> bool {
         set_non_negative(&mut self.saturation_dwell_s, seconds)
     }
 }
 
+#[inline]
+#[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
 fn set_non_negative(destination: &mut f32, value: f32) -> bool {
     if !non_negative_finite(value) {
         return false;
@@ -687,6 +725,20 @@ fn set_non_negative(destination: &mut f32, value: f32) -> bool {
 
 const fn square(value: f32) -> f32 {
     value * value
+}
+
+/// Hardware-FPU square root kept in the SRAM closure without a `libm` call.
+#[inline]
+#[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
+fn sqrtf_rt(value: f32) -> f32 {
+    if value <= 0.0 {
+        return 0.0;
+    }
+    let mut estimate = f32::from_bits((value.to_bits() >> 1) + 0x1fc0_0000);
+    for _ in 0..4 {
+        estimate = 0.5 * (estimate + value / estimate);
+    }
+    estimate
 }
 
 #[inline]
@@ -983,5 +1035,17 @@ mod tests {
             }
         }
         assert!(max_error < 0.1, "maximum error {max_error}");
+    }
+
+    #[test]
+    fn sram_square_root_is_accurate_across_amplitude_scales() {
+        for value in [1.0e-12, 1.0e-6, 0.1, 1.0, 10.0, 1.0e6, 1.0e12] {
+            let expected = libm::sqrtf(value);
+            let relative_error = (sqrtf_rt(value) - expected).abs() / expected;
+            assert!(
+                relative_error < 2.0e-6,
+                "value {value}, error {relative_error}"
+            );
+        }
     }
 }
