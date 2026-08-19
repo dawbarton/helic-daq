@@ -20,13 +20,13 @@ mod table_buffer;
 
 pub use filter::{BiquadCoeffs, SosFilter};
 pub use fourier::FourierEstimator;
-pub use generator::{FourierCoeffs, GenSample, PeriodicGenerator};
+pub use generator::FourierCoeffs;
 pub use harmonics::{HarmonicFrame, HarmonicGenerator};
 pub use lut::SinLut;
 pub use phase::PhaseAccumulator;
 pub use pid::{Pid, PidConfig};
 pub use pll::{Pll, PllConfig, PllState};
-pub use safety::{clamp_channel_command, StaleCounter};
+pub use safety::StaleCounter;
 pub use table::{TableInterpolation, TableMode, TablePlayer, WaveTable, MAX_TABLE_LEN};
 pub use table_buffer::{
     Active, ActiveTable, ActiveValues, BufferError, CommitToken, DoubleBuffer, Staging,

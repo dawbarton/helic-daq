@@ -4,13 +4,11 @@
 //! shared harmonic frame. Acquisition failure is non-faulting; only loss of a
 //! previously established lock enters the latched fault state.
 
-use core::marker::PhantomData;
-
 use crate::HarmonicFrame;
 
 const RAD_TO_DEG: f32 = 180.0 / core::f32::consts::PI;
 /// Conservative settling time after resetting or explicitly reacquiring.
-pub const PLL_WARMUP_TIME_CONSTANTS: f32 = 5.0;
+const PLL_WARMUP_TIME_CONSTANTS: f32 = 5.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -74,9 +72,8 @@ impl Default for PllConfig {
 }
 
 impl PllConfig {
-    pub fn is_valid<const H: usize>(&self) -> bool {
-        H > 0
-            && self.min_increment <= self.centre_increment
+    pub fn is_valid(&self) -> bool {
+        self.min_increment <= self.centre_increment
             && self.centre_increment <= self.max_increment
             && self.proportional_gain.is_finite()
             && self.integral_gain.is_finite()
@@ -189,7 +186,7 @@ impl FundamentalDemodulator {
 }
 
 /// Fundamental measured-excitation/measured-response PLL with bounded frequency.
-pub struct Pll<const H: usize> {
+pub struct Pll {
     state: PllState,
     centre_increment: u32,
     min_increment: u32,
@@ -226,12 +223,11 @@ pub struct Pll<const H: usize> {
     lock_correction_min: f32,
     lock_correction_max: f32,
     demodulator: FundamentalDemodulator,
-    harmonics: PhantomData<[f32; H]>,
 }
 
-impl<const H: usize> Pll<H> {
+impl Pll {
     pub fn new(config: PllConfig) -> Self {
-        assert!(config.is_valid::<H>(), "invalid PLL configuration");
+        assert!(config.is_valid(), "invalid PLL configuration");
         Self {
             state: PllState::Fixed,
             centre_increment: config.centre_increment,
@@ -269,7 +265,6 @@ impl<const H: usize> Pll<H> {
             lock_correction_min: 0.0,
             lock_correction_max: 0.0,
             demodulator: FundamentalDemodulator::default(),
-            harmonics: PhantomData,
         }
     }
 
@@ -280,7 +275,7 @@ impl<const H: usize> Pll<H> {
     /// `frame`, so delay compensation and telemetry refer to the same sample.
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
-    pub fn update(
+    pub fn update<const H: usize>(
         &mut self,
         frame: &HarmonicFrame<H>,
         excitation: f32,
@@ -288,6 +283,7 @@ impl<const H: usize> Pll<H> {
         current_increment: u32,
         dt_s: f32,
     ) -> u32 {
+        assert!(H > 0, "PLL requires at least one harmonic");
         if matches!(self.state, PllState::Fixed | PllState::LockLost) || !valid_dt(dt_s) {
             return self.commanded_increment;
         }
@@ -878,7 +874,7 @@ mod tests {
         }
     }
 
-    fn warm(pll: &mut Pll<1>) {
+    fn warm(pll: &mut Pll) {
         for _ in 0..5 {
             pll.update_observation(Some(observation(0.0)), 100, DT);
         }
@@ -900,7 +896,7 @@ mod tests {
         cfg.lock_frequency_tolerance = 100.0;
         cfg.lock_dwell_s = 0.02;
         cfg.acquire_timeout_s = 4.0;
-        let mut pll = Pll::<1>::new(cfg);
+        let mut pll = Pll::new(cfg);
         let mut generator = HarmonicGenerator::<1>::new();
         generator.set_increment(increment);
         let lut = SinLut::new();
@@ -920,7 +916,7 @@ mod tests {
 
     #[test]
     fn warmup_precedes_acquisition_timeout() {
-        let mut pll = Pll::<1>::new(config());
+        let mut pll = Pll::new(config());
         pll.set_enabled(true);
         for _ in 0..4 {
             pll.update_observation(None, 100, DT);
@@ -952,7 +948,7 @@ mod tests {
         cfg.integral_gain = 0.25;
         cfg.lock_phase_tolerance_deg = 0.0;
         cfg.acquire_timeout_s = 10.0;
-        let mut pll = Pll::<1>::new(cfg);
+        let mut pll = Pll::new(cfg);
         pll.set_enabled(true);
         warm(&mut pll);
         for _ in 0..5 {
@@ -963,7 +959,7 @@ mod tests {
 
     #[test]
     fn lock_loss_is_latched_against_enable_and_reacquire() {
-        let mut pll = Pll::<1>::new(config());
+        let mut pll = Pll::new(config());
         pll.set_enabled(true);
         warm(&mut pll);
         for _ in 0..3 {
@@ -983,7 +979,7 @@ mod tests {
 
     #[test]
     fn reacquire_preserves_frequency_and_replayed_enable_preserves_lock() {
-        let mut pll = Pll::<1>::new(config());
+        let mut pll = Pll::new(config());
         pll.set_enabled(true);
         warm(&mut pll);
         for _ in 0..3 {
@@ -1000,7 +996,7 @@ mod tests {
 
     #[test]
     fn public_setters_reject_invalid_values_without_panicking() {
-        let mut pll = Pll::<1>::new(config());
+        let mut pll = Pll::new(config());
         assert!(!pll.set_centre_increment(89));
         assert!(!pll.set_min_increment(101));
         assert!(!pll.set_max_increment(99));

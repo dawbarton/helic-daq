@@ -64,16 +64,16 @@ impl<const K: usize> FourierEstimator<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generator::PeriodicGenerator;
+    use crate::{HarmonicGenerator, PhaseAccumulator};
 
     const FS: f64 = 8000.0;
 
     #[test]
     fn converges_to_known_coefficients() {
         let lut = SinLut::new();
-        let mut gen = PeriodicGenerator::<5>::new();
-        gen.phase.set_frequency(20.0, FS);
-        gen.coeffs = FourierCoeffs {
+        let mut generator = HarmonicGenerator::<5>::new();
+        generator.set_increment(PhaseAccumulator::increment_for(20.0, FS));
+        let coefficients = FourierCoeffs {
             mean: 0.3,
             a: [0.8, 0.0, -0.25, 0.1, 0.0],
             b: [1.2, -0.5, 0.0, 0.0, 0.05],
@@ -83,14 +83,22 @@ mod tests {
         let mut est = FourierEstimator::<5>::new(2.0, FS as f32);
         // 20 s of data = 10 time constants.
         for _ in 0..160_000 {
-            let s = gen.step(&lut);
-            est.update(&lut, s.value, gen.phase.phase());
+            let frame = generator.step(&lut);
+            est.update(&lut, frame.project(&coefficients), frame.phase);
         }
         let e = est.estimate();
         assert!((e.mean - 0.3).abs() < 0.01, "mean {}", e.mean);
         for k in 0..5 {
-            assert!((e.a[k] - gen.coeffs.a[k]).abs() < 0.02, "a[{k}] {}", e.a[k]);
-            assert!((e.b[k] - gen.coeffs.b[k]).abs() < 0.02, "b[{k}] {}", e.b[k]);
+            assert!(
+                (e.a[k] - coefficients.a[k]).abs() < 0.02,
+                "a[{k}] {}",
+                e.a[k]
+            );
+            assert!(
+                (e.b[k] - coefficients.b[k]).abs() < 0.02,
+                "b[{k}] {}",
+                e.b[k]
+            );
         }
     }
 
@@ -98,20 +106,22 @@ mod tests {
     fn estimate_of_reconstructed_signal_round_trips() {
         // Estimate coefficients, regenerate the signal from them, compare.
         let lut = SinLut::new();
-        let mut gen = PeriodicGenerator::<3>::new();
-        gen.phase.set_frequency(35.0, FS);
-        gen.coeffs.a[1] = 0.6;
-        gen.coeffs.b[2] = -0.4;
+        let mut generator = HarmonicGenerator::<3>::new();
+        generator.set_increment(PhaseAccumulator::increment_for(35.0, FS));
+        let mut coefficients = FourierCoeffs::zero();
+        coefficients.a[1] = 0.6;
+        coefficients.b[2] = -0.4;
         let mut est = FourierEstimator::<3>::new(0.5, FS as f32);
         for _ in 0..40_000 {
-            let s = gen.step(&lut);
-            est.update(&lut, s.value, gen.phase.phase());
+            let frame = generator.step(&lut);
+            est.update(&lut, frame.project(&coefficients), frame.phase);
         }
         let mut rms = 0.0f64;
         for _ in 0..1000 {
-            let s = gen.step(&lut);
-            let rebuilt = est.estimate().evaluate(&lut, gen.phase.phase());
-            rms += ((s.value - rebuilt) as f64).powi(2);
+            let frame = generator.step(&lut);
+            let signal = frame.project(&coefficients);
+            let rebuilt = est.estimate().evaluate(&lut, frame.phase);
+            rms += ((signal - rebuilt) as f64).powi(2);
         }
         rms = (rms / 1000.0).sqrt();
         assert!(rms < 0.02, "reconstruction rms {rms}");
@@ -121,13 +131,14 @@ mod tests {
     fn uncorrelated_harmonic_estimates_stay_near_zero() {
         // Signal at 3× the fundamental must not leak into k=1, 2, 4, 5.
         let lut = SinLut::new();
-        let mut gen = PeriodicGenerator::<5>::new();
-        gen.phase.set_frequency(20.0, FS);
-        gen.coeffs.b[2] = 1.0; // third harmonic only
+        let mut generator = HarmonicGenerator::<5>::new();
+        generator.set_increment(PhaseAccumulator::increment_for(20.0, FS));
+        let mut coefficients = FourierCoeffs::zero();
+        coefficients.b[2] = 1.0; // third harmonic only
         let mut est = FourierEstimator::<5>::new(0.5, FS as f32);
         for _ in 0..32_000 {
-            let s = gen.step(&lut);
-            est.update(&lut, s.value, gen.phase.phase());
+            let frame = generator.step(&lut);
+            est.update(&lut, frame.project(&coefficients), frame.phase);
         }
         let e = est.estimate();
         for k in [0usize, 1, 3, 4] {

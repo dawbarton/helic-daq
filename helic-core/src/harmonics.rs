@@ -76,15 +76,6 @@ impl<const H: usize> HarmonicGenerator<H> {
         self.phase.increment()
     }
 
-    pub fn frequency_hz(&self, sample_rate_hz: f32) -> f32 {
-        self.phase.increment() as f32 * (sample_rate_hz / 4_294_967_296.0)
-    }
-
-    pub fn reset(&mut self) {
-        self.phase.reset();
-        self.frame = HarmonicFrame::zero();
-    }
-
     #[inline]
     #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn step(&mut self, lut: &SinLut) -> &HarmonicFrame<H> {
