@@ -70,7 +70,7 @@ rtc analogue cape:
   index-contiguous records and zero UDP loss. The previous async loop
   stretched tick phases ~10× under core-0 network load through the shared
   XIP cache and silently skipped up to 13 % of BUSY edges (see
-  `docs/overrun_handoff.md`);
+  `docs/archive/overrun_handoff.md`);
 - the phase-resolved timing diagnostics (`wake_phase_*`, `t_*_max`,
   `diag_reset`) and the TIMER0 alarm-1 time watchdog. A lost embassy-time
   alarm was observed freezing all core-0 timers (drain, status log, TCP
@@ -281,7 +281,7 @@ need a persistent explicit UDP 2351 allow rule.
 
 The detailed sequence of failed async-loop mitigations, diagnostic variants,
 and the final SRAM/latch resolution is historical evidence rather than current
-bring-up guidance; it is retained in `docs/overrun_handoff.md`.
+bring-up guidance; it is retained in `docs/archive/overrun_handoff.md`.
 
 
 ## Resource audit
@@ -441,7 +441,7 @@ evidence:
 
 ## 2026-08-11T12:08+00:00 Rig-decoupling implementation stage 0
 
-- Stage 0 of `docs/rig_decoupling_proposal.md` is complete: the new portable
+- Stage 0 of `docs/proposals/rig_decoupling_proposal.md` is complete: the new portable
   `helic-rt` crate owns injected `RtShared` diagnostic, safety, and reboot
   state, and each production firmware crate owns one const-initialised
   instance shared by both cores.

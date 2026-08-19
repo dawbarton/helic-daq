@@ -1,8 +1,8 @@
 # Real-time programme ownership proposal
 
 Status: implemented and retained as a design record. The normative current
-contracts are [the rig extension guide](developer_guide.md#extending) and
-[standard control and bounded phase locking](standard_control_and_pll.md).
+contracts are [the rig extension guide](../developer_guide.md#extending) and
+[standard control and bounded phase locking](../standard_control_and_pll.md).
 
 This proposal moves experiment-level signal generation, controller ownership
 and output mixing out of the common real-time loop and into a statically

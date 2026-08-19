@@ -9,10 +9,11 @@ in their own repositories against a pinned platform tag.
 
 - `docs/developer_guide.md`: architecture, design constraints and extension
   points.
-- `docs/rig_decoupling_proposal.md`: the completed component-ownership design,
+- `docs/proposals/rig_decoupling_proposal.md`: the completed
+  component-ownership design,
   platform capacities, crate boundaries and external-rig contract. It
-  supersedes conflicting parts of `docs/rt_program_proposal.md`.
-- `docs/rt_program_proposal.md`: programme ownership, tick ordering and table
+  supersedes conflicting parts of `docs/proposals/rt_program_proposal.md`.
+- `docs/proposals/rt_program_proposal.md`: programme ownership, tick ordering and table
   phase semantics; use the rig-decoupling document where the two differ.
 - `docs/protocol.md`: authoritative wire protocol, including shared
   known-answer vectors.
@@ -119,7 +120,7 @@ experiment in which it was first needed:
   latch. Do not replace either with software timing or an interrupt future.
 - Keep `helic_fw_support::time_watchdog` bound to `TIMER0_IRQ_1` and started
   on core 0 in every experiment that uses embassy-time. The embassy-rp time
-  driver can lose its alarm (`docs/overrun_handoff.md`); without the
+  driver can lose its alarm (`docs/archive/overrun_handoff.md`); without the
   watchdog every core-0 timer can freeze until unrelated network traffic
   arrives.
 - Core 0 and core 1 communicate only through fixed-capacity SPSC queues and

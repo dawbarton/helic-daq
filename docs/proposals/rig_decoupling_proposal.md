@@ -1,7 +1,7 @@
 # Rig decoupling: component-owned parameters, signals, and buffers
 
 Status: implementation completed; stages 0–13 completed 2026-08-11. Revision
-19. Supersedes parts of `docs/rt_program_proposal.md`. Revision history and
+19. Supersedes parts of `docs/proposals/rt_program_proposal.md`. Revision history and
 review responses are at the end.
 
 ## Goal
@@ -305,7 +305,7 @@ construction, against developer-guide principle 4 (`developer_guide.md:24`).
 **Discipline.** `helic-fw-common` also conflates the two cores: `net/`,
 `comms/`, `laser.rs`, `time_watchdog.rs` (core 0, Embassy, flash) alongside
 `rt_loop.rs`, `rt_mem.rs`, `analog_spi.rs`, PIO (core 1, SRAM, bounded WCET).
-`docs/overrun_handoff.md` records an entire debugging saga caused by core-0 work
+`docs/archive/overrun_handoff.md` records an entire debugging saga caused by core-0 work
 reaching the tick. The split is clean: `rt_loop.rs`'s only `embassy-time` use is
 `status_run` (line 7).
 

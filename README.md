@@ -28,6 +28,10 @@ record segmented HDF5 files without changing the firmware.
   recording, host APIs, and recovery behaviour.
 - [Host API migration](docs/host_api_migration.md): breaking Python and Julia
   naming and export changes for the 0.2 host packages.
+- [Design proposals](docs/proposals/README.md): completed or prospective design
+  records, including the selectable controller and PLL proposal.
+- [Documentation archive](docs/archive/README.md): resolved investigations and
+  superseded operational handoffs.
 - [Periodic signal generator](docs/periodic_signal_generator.md): numerical
   design and error bounds.
 - [Hardware status](notes.md): verified paths, outstanding checks and bring-up

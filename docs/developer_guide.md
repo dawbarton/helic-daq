@@ -195,7 +195,7 @@ uses; ADC-free rigs replace CONVST/BUSY with a PWM-wrap tick and omit the ADC
 read.
 
 The component-ownership refactor in
-[rig_decoupling_proposal.md](rig_decoupling_proposal.md) was completed in 13
+[rig_decoupling_proposal.md](proposals/rig_decoupling_proposal.md) was completed in 13
 explicit regression-gated stages. It moved the cross-core state and portable
 contracts into `helic-rt`, split firmware support by
 execution domain, replaced the global waveform buffers with owner-checked
@@ -325,7 +325,7 @@ Embassy erases SPI chip-select pin types, so each experiment has one documented
 `unsafe RawSpiDevice::new` construction beside its pin constants; all later
 ADC/DAC hot-path operations are safe, bound device methods.
 
-Measured effect (see `docs/overrun_handoff.md`): overruns under TCP polling
+Measured effect (see `docs/archive/overrun_handoff.md`): overruns under TCP polling
 and UDP capture went from ~120–500/s to zero, wake phase is constant at
 36 µs with no measurable spread, and captures are index-contiguous at the
 full 8 kHz under all tested load.
@@ -344,7 +344,7 @@ heartbeat that re-pends `TIMER0_IRQ_0`, so the driver re-checks its queue
 and any lost alarm is recovered within 50 ms. Experiments bind
 `TimeWatchdogHandler` to `TIMER0_IRQ_1` and call `time_watchdog::start()`
 on core 0. The hardware evidence and upstream-report summary are retained in
-[the overrun handoff](overrun_handoff.md#second-failure-found-lost-embassy-time-alarms).
+[the overrun handoff](archive/overrun_handoff.md#second-failure-found-lost-embassy-time-alarms).
 
 ### RT regression checklist
 
@@ -465,7 +465,7 @@ helic-rt-regression --profile rig-profile.toml \
 ```
 
 The tool asserts contiguous indices and zero loss. The original manual
-procedure and diagnostic evidence remain in `docs/overrun_handoff.md`.
+procedure and diagnostic evidence remain in `docs/archive/overrun_handoff.md`.
 
 **4. Timer-freeze check** (when the change touches core-0 tasks, timers or
 the network stack): leave the device idle for ≥5 minutes after

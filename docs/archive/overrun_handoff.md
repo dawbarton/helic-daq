@@ -1,5 +1,8 @@
 # CBC W5500 Overrun Investigation Handoff
 
+Archived: the investigation is resolved and retained only as historical
+evidence.
+
 Date: 2026-07-15
 
 ## RESOLVED (later the same day)

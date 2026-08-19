@@ -19,16 +19,16 @@ directory, which is gitignored and therefore exists only on the machine where
 the material was gathered. The findings below summarise everything this plan
 relies on from those files. The reviewed material is:
 
-- servo specification: `../tmp/hawk-rig/servos/Specification - Servo.pdf`;
-- Feetech HLS Arduino SDK: `../tmp/hawk-rig/servos/sdk/`;
-- encoder specification: `../tmp/hawk-rig/encoder/Specification - Encoder.pdf`;
-- AS5048A Arduino API: `../tmp/hawk-rig/encoder/AS5048A-master/`;
-- IMU guide: `../tmp/hawk-rig/imu/lsm6dsox-and-ism330dhc-6-dof-imu.pdf`;
-- Adafruit LSM6DS Arduino API: `../tmp/hawk-rig/imu/Adafruit_LSM6DS-master/`.
+- servo specification: `../../tmp/hawk-rig/servos/Specification - Servo.pdf`;
+- Feetech HLS Arduino SDK: `../../tmp/hawk-rig/servos/sdk/`;
+- encoder specification: `../../tmp/hawk-rig/encoder/Specification - Encoder.pdf`;
+- AS5048A Arduino API: `../../tmp/hawk-rig/encoder/AS5048A-master/`;
+- IMU guide: `../../tmp/hawk-rig/imu/lsm6dsox-and-ism330dhc-6-dof-imu.pdf`;
+- Adafruit LSM6DS Arduino API: `../../tmp/hawk-rig/imu/Adafruit_LSM6DS-master/`.
 
 The repository architecture, wire protocol, supported host workflow, and current
-hardware-verification boundary are defined in `developer_guide.md`,
-`protocol.md`, `user_guide.md`, and `../notes.md` respectively.
+hardware-verification boundary are defined in `../developer_guide.md`,
+`../protocol.md`, `../user_guide.md`, and `../../notes.md` respectively.
 
 ## Component findings
 
@@ -572,7 +572,7 @@ own repositories. Update all places that enumerate it:
 - `firmware/tools/rt_regression.py` with a `hawk` profile;
 - `developer_guide.md` architecture, extension, build, and verification text;
 - `user_guide.md` flashing, Wi-Fi, wiring, source, safety, and example workflow;
-- `../notes.md`, marking every hawk path software-only until physical evidence
+- `../../notes.md`, marking every hawk path software-only until physical evidence
   is recorded.
 
 Protocol v3, the broker, and the host-language codecs should not require a
@@ -667,12 +667,12 @@ Only after those tests should the model be installed in the tunnel. Repeat the
 low-amplitude sequence with airflow increased in controlled steps, while an
 operator retains an independent emergency power-off. Record exact firmware
 identity, wiring revision, calibration, safety policy, timing, stream results,
-and every physical observation in `../notes.md`.
+and every physical observation in `../../notes.md`.
 
 ## Software regression requirements
 
 Before calling the implementation complete, run the full repository checks
-listed in `../AGENTS.md`, including root formatting, clippy, and tests; the
+listed in `../../AGENTS.md`, including root formatting, clippy, and tests; the
 complete release firmware workspace; the real-time layout checker; the wired
 variants; and all available Python, Julia, and MATLAB tests.
 
