@@ -14,10 +14,12 @@ Pkg.develop(path="host-julia")
 Connect and capture:
 
 ```julia
-using HelicDAQ, Tables
+import HelicDAQ
+using HelicDAQ: capture, find_devices, upload_table!
+using Tables
 
-open(Device, "192.168.1.235") do device
-    @show status(device)
+open(HelicDAQ.Device, "192.168.1.235") do device
+    @show HelicDAQ.status(device)
     device[:freq] = 10f0
 
     coefficients = zeros(Float32, 33)
@@ -31,7 +33,7 @@ open(Device, "192.168.1.235") do device
 end
 ```
 
-`Capture` is a column-access table whose first column is `index`; each
+`HelicDAQ.Capture` is a column-access table whose first column is `index`; each
 requested source follows by its discovered name. Device-side source-ring drops
 and UDP packet loss are capture metadata rather than repeated table columns.
 Any Tables.jl consumer can use the result directly.
@@ -39,11 +41,12 @@ Any Tables.jl consumer can use the result directly.
 Parameters can be read with `device[:name]` or `getparam`, and written with
 assignment or `setparam!`. `getparams(device, (:name1, :name2))` performs one
 round trip and returns a named tuple. Source selection is by name or by a
-discovered `Source`, never by a cached registry index. For continuous streams,
-combine `configure_stream!`, `StreamReceiver`, `start_stream!`, `receive`, and
-`stop_stream!`.
-`reboot!(device)` safely schedules a normal MCU reboot and closes the invalid
-connection; reconnect with a new `Device` after the board reappears.
+discovered `HelicDAQ.Source`, never by a cached registry index. For continuous
+streams, combine `configure_stream!`, `HelicDAQ.StreamReceiver`,
+`start_stream!`, `HelicDAQ.receive`, and `stop_stream!`.
+`HelicDAQ.reboot!(device)` safely schedules a normal MCU reboot and closes the
+invalid connection; reconnect with a new `HelicDAQ.Device` after the board
+reappears.
 
 Discover devices and upload an arbitrary waveform with:
 
@@ -72,9 +75,10 @@ After another client has started a stream, the optional local broker adds
 concurrent clients:
 
 ```julia
-using HelicDAQ
+import HelicDAQ
+using HelicDAQ: capture_recent
 
-open(Device, "127.0.0.1") do device
+open(HelicDAQ.Device, "127.0.0.1") do device
     recent = capture_recent(device; seconds = 1, port = 0)
 end
 ```

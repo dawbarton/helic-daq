@@ -10,9 +10,13 @@ function stream_packet(header::P.StreamHeader, rows)
 end
 
 @testset "stream timeout" begin
-    receiver = StreamReceiver(; port = 0, bind_address = ip"127.0.0.1", timeout = 0.02)
+    receiver = HelicDAQ.StreamReceiver(;
+        port = 0,
+        bind_address = ip"127.0.0.1",
+        timeout = 0.02,
+    )
     try
-        @test_throws StreamTimeout receive(receiver)
+        @test_throws HelicDAQ.StreamTimeout HelicDAQ.receive(receiver)
         @test !isopen(receiver)
     finally
         isopen(receiver) && close(receiver)
@@ -20,10 +24,10 @@ end
 end
 
 @testset "stream receiver binding" begin
-    receiver = StreamReceiver(; port = 0, bind_address = ip"127.0.0.1")
+    receiver = HelicDAQ.StreamReceiver(; port = 0, bind_address = ip"127.0.0.1")
     try
         @test receiver.port != 0
-        @test_throws Base.IOError StreamReceiver(;
+        @test_throws Base.IOError HelicDAQ.StreamReceiver(;
             port = receiver.port, bind_address = ip"127.0.0.1",
         )
     finally
@@ -32,12 +36,12 @@ end
 end
 
 @testset "stream receiver primer" begin
-    receiver = StreamReceiver(; port = 0, bind_address = ip"127.0.0.1")
+    receiver = HelicDAQ.StreamReceiver(; port = 0, bind_address = ip"127.0.0.1")
     sink = UDPSocket()
     try
         bind(sink, ip"127.0.0.1", 0)
         sink_port = HelicDAQ._bound_port(sink)
-        prime!(receiver, ip"127.0.0.1"; port = sink_port)
+        HelicDAQ.prime!(receiver, ip"127.0.0.1"; port = sink_port)
         address, packet = recvfrom(sink)
         @test address.host == ip"127.0.0.1"
         @test address.port == receiver.port
@@ -49,7 +53,7 @@ end
 end
 
 @testset "stream receiver and Tables.jl" begin
-    receiver = StreamReceiver(; port = 0, bind_address = ip"127.0.0.1", timeout = 1)
+    receiver = HelicDAQ.StreamReceiver(; port = 0, bind_address = ip"127.0.0.1", timeout = 1)
     port = Int(receiver.port)
     sender = UDPSocket()
     try
@@ -78,7 +82,7 @@ end
                 Float32[5],
             ),
         )
-        receive(receiver)
+        HelicDAQ.receive(receiver)
         @test receiver.lost_packets == 1
     finally
         close(sender)

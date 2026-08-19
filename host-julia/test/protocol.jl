@@ -58,10 +58,10 @@ const P = HelicDAQ.Protocol
             ('i', Int32(-2_000_000_000)),
             ('f', Float32(1.25)),
         )
-        definition = Parameter(0, "value", code, 1, true)
+        definition = HelicDAQ.Parameter(0, "value", code, 1, true)
         @test HelicDAQ._unpack_value(definition, HelicDAQ._pack_value(definition, value)) == value
     end
-    text = Parameter(0, "text", 'c', 8, true)
+    text = HelicDAQ.Parameter(0, "text", 'c', 8, true)
     @test HelicDAQ._unpack_value(text, HelicDAQ._pack_value(text, "magneto")) == "magneto"
 
     beacon = P.BeaconResponse(

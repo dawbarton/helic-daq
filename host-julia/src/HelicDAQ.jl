@@ -9,31 +9,17 @@ include("stream.jl")
 include("device.jl")
 include("discovery.jl")
 
-export Capture,
-    Device,
-    DeviceError,
-    DiscoveredDevice,
-    Parameter,
-    Protocol,
-    Source,
-    StreamReceiver,
-    StreamTimeout,
-    broker_info,
+export broker_info,
     capture,
     capture_recent,
     configure_stream!,
     find_devices,
     getparam,
     getparams,
-    parameter,
-    prime!,
-    receive,
-    reboot!,
     setparam!,
     set_stream_quiet!,
     start_stream!,
     start_stream_quiet!,
-    status,
     stop_stream!,
     upload_table!
 

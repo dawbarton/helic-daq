@@ -246,12 +246,12 @@ end
 
 @testset "device" begin
     mock = start_mock_device()
-    device = Device("127.0.0.1"; port = mock.port)
+    device = HelicDAQ.Device("127.0.0.1"; port = mock.port)
     try
         @test length(device.parameters) == 64
-        @test parameter(device, :freq).index == 2
+        @test HelicDAQ.parameter(device, :freq).index == 2
         @test device["firmware"] == "helic-daq test"
-        @test status(device) == (
+        @test HelicDAQ.status(device) == (
             protocol_version = P.VERSION,
             n_params = 64,
             n_sources = 2,
@@ -260,7 +260,7 @@ end
         )
         device[:freq] = 12.5f0
         @test device[:freq] == 12.5f0
-        @test parameter(device, :paged_extra_049).index == 63
+        @test HelicDAQ.parameter(device, :paged_extra_049).index == 63
         @test device[:paged_extra_049] == 49.0f0
         device[:paged_extra_049] = 12.5f0
         @test device[:paged_extra_049] == 12.5f0
@@ -268,7 +268,7 @@ end
         @test values.firmware == "helic-daq test"
         @test values.freq == 12.5f0
         @test_throws ArgumentError getparams(device, (:freq, :freq))
-        @test_throws DeviceError setparam!(device, :firmware, "x")
+        @test_throws HelicDAQ.DeviceError setparam!(device, :firmware, "x")
 
         upload_table!(
             device,
@@ -304,7 +304,7 @@ end
         @test recent[:index] == UInt64[100, 102, 104, 106]
         @test recent[:out] == Float32[0, 2, 4, 6]
         set_stream_quiet!(device, false)
-        reboot!(device)
+        HelicDAQ.reboot!(device)
         @test !isopen(device)
     finally
         close(device)
@@ -313,7 +313,7 @@ end
     end
 
     opened = start_mock_device()
-    answer = open(Device, "127.0.0.1"; port = opened.port) do connected
+    answer = open(HelicDAQ.Device, "127.0.0.1"; port = opened.port) do connected
         connected[:freq]
     end
     @test answer == 0.0f0
@@ -323,13 +323,13 @@ end
 
 @testset "device request serialisation" begin
     mock = start_mock_device()
-    device = Device("127.0.0.1"; port = mock.port)
+    device = HelicDAQ.Device("127.0.0.1"; port = mock.port)
     try
         # Each request yields inside its socket read, so without serialisation
         # concurrent tasks interleave frames and the sequence check fails.
         tasks = map(1:8) do _
             return @async for _ in 1:20
-                status(device)
+                HelicDAQ.status(device)
                 device[:freq]
             end
         end
@@ -342,7 +342,7 @@ end
             end
         end
         @test failures == 0
-        @test status(device).n_params == 64
+        @test HelicDAQ.status(device).n_params == 64
     finally
         close(device)
         wait(mock.task)
@@ -355,7 +355,11 @@ end
     silent = listen(ip"127.0.0.1", 0)
     _, silent_port = getsockname(silent)
     try
-        @test_throws DeviceError Device("127.0.0.1"; port = Int(silent_port), timeout = 0.05)
+        @test_throws HelicDAQ.DeviceError HelicDAQ.Device(
+            "127.0.0.1";
+            port = Int(silent_port),
+            timeout = 0.05,
+        )
     finally
         close(silent)
     end
