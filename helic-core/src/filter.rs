@@ -1,6 +1,9 @@
 //! Cascaded biquad (second-order section) IIR filters, Direct Form II
 //! transposed, f32 states. Coefficient design helpers run in f64 and are for
-//! the non-RT path (init / parameter updates).
+//! the non-RT path (init / parameter updates). The per-sample methods,
+//! `process`, `set_coeffs`, and `reset`, are SRAM-resident under `rt-sram`:
+//! being generic and `#[inline]` is not enough, since a caller the compiler
+//! declines to inline them into would leave a flash call on the tick path.
 
 /// One second-order section. Transfer function
 /// `H(z) = (b0 + b1·z⁻¹ + b2·z⁻²) / (1 + a1·z⁻¹ + a2·z⁻²)`.
@@ -73,16 +76,21 @@ impl<const N: usize> SosFilter<N> {
 
     /// Replace coefficients, keeping filter state (for small live retunes;
     /// call `reset` too if the change is large).
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn set_coeffs(&mut self, coeffs: [BiquadCoeffs; N]) {
         self.coeffs = coeffs;
     }
 
+    #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn reset(&mut self) {
         self.state = [BiquadState::default(); N];
     }
 
     /// Process one sample through all sections.
     #[inline]
+    #[cfg_attr(feature = "rt-sram", unsafe(link_section = ".data.ram_func"))]
     pub fn process(&mut self, x: f32) -> f32 {
         let mut y = x;
         for (c, s) in self.coeffs.iter().zip(self.state.iter_mut()) {
