@@ -364,8 +364,10 @@ fn parameter_page(request: &[u8]) -> Vec<u8> {
 
 fn parameter_values(request: &[u8]) -> Vec<u8> {
     request
-        .chunks_exact(2)
-        .flat_map(|index| match u16::from_le_bytes([index[0], index[1]]) {
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .flat_map(|index| match u16::from_le_bytes(*index) {
             0 => fixed_text("helic-daq test").to_vec(),
             1 => fixed_text("magnetoelastic").to_vec(),
             2 => 0u32.to_le_bytes().to_vec(),

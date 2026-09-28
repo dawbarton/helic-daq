@@ -201,8 +201,9 @@ fn handle<R: Rig, P: Program>(
                 return Err(ErrorCode::BadLength);
             }
             let mut off = 0;
-            for pair in payload.chunks_exact(2) {
-                let index = u16::from_le_bytes([pair[0], pair[1]]) as usize;
+            // The length check above leaves no remainder to discard.
+            for pair in payload.as_chunks::<2>().0 {
+                let index = u16::from_le_bytes(*pair) as usize;
                 off += store.get(index, &mut resp[off..])?;
             }
             Ok(off)

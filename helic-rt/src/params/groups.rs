@@ -532,8 +532,10 @@ impl<const N: usize> ParamGroup for TableGroup<N> {
             return Err(ErrorCode::BadLength);
         }
         let staging = self.staging.buffer().map_err(map_buffer_error)?;
-        for (index, raw) in data.chunks_exact(4).enumerate() {
-            let value = f32::from_le_bytes(raw.try_into().unwrap());
+        // The length check above leaves no remainder to discard.
+        let (words, _) = data.as_chunks::<4>();
+        for (index, raw) in words.iter().enumerate() {
+            let value = f32::from_le_bytes(*raw);
             let written = staging.write_block(offset + index, &[value]);
             debug_assert!(written);
         }
