@@ -1279,3 +1279,29 @@ reference together and remove the patch.
   builds, dependency policy, and SRAM layout gate.
 - No firmware was flashed for either release or repin. Existing electrical,
   PID, PLL, and real-time hardware-evidence boundaries are unchanged.
+
+## 2026-09-28T12:40+00:00 Platform v0.3.1 released and the live rig repinned
+
+- Annotated tag and GitHub release `v0.3.1` point to `c83b92f`. Local release
+  gates passed, apart from MATLAB, which is not installed locally; GitHub CI run
+  36422325200 passed all five jobs on that exact commit, including MATLAB.
+  Compatible patch: `SosFilter`'s `process`, `set_coeffs`, and `reset` gain the
+  `rt-sram` link section, and three `chunks_exact` sites use `as_chunks`.
+- Why the link section: in the magneto-elastic rig's new PID error filter the
+  compiler declined to inline `process` into the large programme step, which
+  left a flash call on every tick through an SRAM veneer. `helic-rt-layout`
+  checks named symbols only and passed. Reproduced against this checkout with
+  the rig's wrapper inlined again: `process` is emitted as its own symbol, now
+  at an SRAM address, and the SRAM veneer set is back to the panic paths. No
+  in-tree experiment uses `SosFilter`, so this repository's own layout profiles
+  could not see it.
+- Why `as_chunks`: `rust-toolchain.toml` tracks stable, and clippy 1.98
+  (2026-09-01) added `chunks_exact_to_as_chunks`, which failed the root and
+  firmware `-D warnings` gates on `main` from that date. Each site already
+  guaranteed or discarded the remainder.
+- `helic-magneto-elastic-rig` was repinned in `3ff4490`: all eight crate tags,
+  the CI verification-tool tag, and the README install command now use v0.3.1,
+  and its lockfile resolves `v0.3.1#c83b92f`. Its push CI run 36422831356
+  passed the W5500 and W6100 builds, dependency policy, and SRAM layout gate.
+- No firmware was flashed for either release or repin. Existing electrical and
+  real-time hardware-evidence boundaries are unchanged.
