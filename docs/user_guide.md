@@ -41,7 +41,7 @@ sources by name from whatever firmware it connects to.
 ## Putting the firmware on the device
 
 Install [`rustup`](https://rustup.rs/), then open a new terminal and initialise
-the repository's required stable toolchain, components and RP2350 target:
+the repository's pinned toolchain, components and RP2350 target:
 
 ```sh
 cd helic-daq

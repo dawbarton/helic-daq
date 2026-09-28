@@ -671,7 +671,7 @@ only files a rig repository duplicates are its own configuration.
 | `Cargo.toml` | Workspace root, with `[workspace.dependencies]` pinning the platform crates and the Embassy versions |
 | `Cargo.lock` | Committed; the rig owns its resolution |
 | `.cargo/config.toml` | `thumbv8m.main-none-eabihf` target, `probe-rs` runner, `--nmagic`/`link.x`/`defmt.x` link args, `DEFMT_LOG` |
-| `rust-toolchain.toml` | Toolchain channel, `rustfmt`/`clippy`, and the ARM target |
+| `rust-toolchain.toml` | Pinned toolchain release, `rustfmt`/`clippy`, and the ARM target |
 | `build.rs` | Two calls into `helic-fw-build` (see below) |
 | `rig-profile.toml` | Static and hardware verification contract, exactly as an in-tree experiment owns one |
 | `dependency-policy.toml` | The rig's own crate-layering rules for `helic-deps-check` |
