@@ -22,7 +22,7 @@ an out-of-tree rig can use:
 Neither is flashed. Both are compile, link and layout fixtures; they establish
 the repository boundary, not electrical behaviour.
 
-The manifests request exact `=0.3.0` HELIC crate versions. Until those crates
+The manifests request exact `=0.3.1` HELIC crate versions. Until those crates
 are published, `[patch.crates-io]` substitutes the repository checkout; remove
 that table to exercise released packages unchanged.
 
