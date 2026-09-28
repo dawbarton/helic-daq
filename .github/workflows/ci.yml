@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly, for the toolchain-drift job; the pinned jobs run too, which also
+    # catches rot in the actions and registries they depend on.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -115,3 +120,66 @@ jobs:
           cargo build --release --workspace
       - name: Check out-of-workspace real-time symbols
         run: helic-rt-layout --profile ../tests/external-rig/rig-profile.toml --profile ../tests/external-rig/service-rig-profile.toml --elf-dir ../tests/external-rig/target/thumbv8m.main-none-eabihf/release
+
+  toolchain-drift:
+    name: Rust gates on latest stable
+    # Scheduled or manual only. rust-toolchain.toml pins the release every other
+    # job uses; this runs the Rust gates on the newest stable instead, so a new
+    # compiler or clippy lint shows up here before an upgrade rather than
+    # breaking main, as clippy 1.98 did on 2026-09-01. A failure is advance
+    # notice of what the next toolchain upgrade must fix, not a defect in the
+    # pinned build. Each check runs even if an earlier one fails, so one run
+    # reports everything.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # Takes precedence over rust-toolchain.toml for every cargo invocation.
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: thumbv8m.main-none-eabihf
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - run: pip install -e host-python
+      - name: Report the toolchain under test
+        run: |
+          rustc --version
+          cargo clippy --version
+      - name: Host crates
+        if: ${{ !cancelled() }}
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test
+      - name: Firmware workspace
+        if: ${{ !cancelled() }}
+        working-directory: firmware
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --release --workspace -- -D warnings
+          cargo build --release --workspace
+      - name: Host build-script helpers
+        if: ${{ !cancelled() }}
+        working-directory: firmware
+        run: |
+          cargo clippy --manifest-path build/Cargo.toml --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+          cargo test --manifest-path build/Cargo.toml --target x86_64-unknown-linux-gnu
+      - name: Real-time symbols are SRAM-resident
+        # A new compiler can change inlining, which is how tick-path calls into
+        # flash appear.
+        if: ${{ !cancelled() }}
+        working-directory: firmware
+        run: helic-rt-layout
+      - name: Out-of-workspace firmware and its real-time symbols
+        if: ${{ !cancelled() }}
+        working-directory: tests/external-rig
+        run: |
+          cargo clippy --release --workspace -- -D warnings
+          cargo build --release --workspace
+          helic-rt-layout --profile rig-profile.toml --profile service-rig-profile.toml --elf-dir target/thumbv8m.main-none-eabihf/release

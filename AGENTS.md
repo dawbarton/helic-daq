@@ -310,6 +310,16 @@ experiment in which it was first needed:
   control server is single-client and hardware evidence must come from ordered
   interactions.
 - Format Julia code with Runic.jl via the `runic` command.
+- The Rust toolchain is pinned to an exact release, and the version appears in
+  two files that must move together: `rust-toolchain.toml`, and both
+  `toolchain:` inputs in `.github/workflows/ci.yml`. Upgrade in one commit that
+  changes both, passes the complete check set, and fixes whatever the new
+  compiler and clippy report; keep it separate from any release commit, so a
+  regression can be attributed to one or the other. The weekly
+  `toolchain-drift` job runs the Rust gates on the newest stable: a failure
+  there is notice of what the next upgrade must fix, not a broken `main`. A
+  toolchain upgrade is not consumer-visible and needs no release, because rigs
+  build the platform crates with their own toolchain.
 
 Before declaring a change complete, run the checks relevant to it. The full
 set is:
